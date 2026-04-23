@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 
+function basenameWithoutExtension(filename: string): string {
+  const base = filename.split(/[\\/]/).pop() ?? filename;
+  const idx = base.lastIndexOf(".");
+  return idx > 0 ? base.slice(0, idx) : base;
+}
+
 interface ImportDialogProps {
   open: boolean;
   onClose: () => void;
@@ -26,7 +32,56 @@ export function ImportDialog({
 }: ImportDialogProps) {
   const [name, setName] = useState(initialName);
   const [body, setBody] = useState(initialBody);
+  const [dragging, setDragging] = useState(false);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function ingestFile(file: File) {
+    const text = await file.text();
+    setBody(text);
+    if (!name.trim()) {
+      setName(basenameWithoutExtension(file.name));
+    }
+  }
+
+  async function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setDragging(false);
+    if (busy !== null) return;
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    try {
+      await ingestFile(file);
+    } catch {
+      /* ignore read failures */
+    }
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
+    if (busy !== null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDragging(true);
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLDivElement>) {
+    if (event.currentTarget === event.target) {
+      setDragging(false);
+    }
+  }
+
+  async function handleFileInput(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      await ingestFile(file);
+    } catch {
+      /* ignore */
+    } finally {
+      event.target.value = "";
+    }
+  }
 
   useEffect(() => {
     if (open) {
@@ -91,13 +146,43 @@ export function ImportDialog({
           </label>
 
           <label className="field field--grow">
-            <span>Paste OpenAPI JSON/YAML or a cURL command</span>
-            <textarea
-              value={body}
-              onChange={(event) => setBody(event.target.value)}
-              placeholder={'{\n  "openapi": "3.0.3",\n  ...\n}'}
-              spellCheck={false}
-              disabled={busy !== null}
+            <span className="field__label-row">
+              <span>Paste OpenAPI JSON/YAML or a cURL command</span>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy !== null}
+              >
+                <Icon name="import" size={12} />
+                <span>Choose file…</span>
+              </button>
+            </span>
+            <div
+              className={dragging ? "dropzone dropzone--active" : "dropzone"}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <textarea
+                value={body}
+                onChange={(event) => setBody(event.target.value)}
+                placeholder={
+                  'Drop a .json / .yaml / .txt file here, or paste content…\n\n{\n  "openapi": "3.0.3",\n  ...\n}'
+                }
+                spellCheck={false}
+                disabled={busy !== null}
+              />
+              {dragging ? (
+                <div className="dropzone__hint">Release to load file…</div>
+              ) : null}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              hidden
+              accept=".json,.yaml,.yml,.txt,application/json,text/yaml,text/plain"
+              onChange={handleFileInput}
             />
           </label>
 

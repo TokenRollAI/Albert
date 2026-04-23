@@ -363,4 +363,162 @@ paths:
 
         assert!(matches!(error, crate::ParseError::UnsupportedInput));
     }
+
+    #[test]
+    fn parses_array_response_schema() {
+        let source = r#"
+openapi: 3.0.3
+info: { title: users, version: 1.0.0 }
+paths:
+  /users:
+    get:
+      responses:
+        "200":
+          description: list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id]
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+"#;
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: source.to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        let response = &endpoint.responses[0];
+        let schema = response.schema.as_ref().unwrap();
+        assert_eq!(schema.node_type, SchemaNodeType::Array);
+        let item = schema.items.as_ref().unwrap();
+        assert_eq!(item.node_type, SchemaNodeType::Object);
+        assert!(item.properties.contains_key("id"));
+        // synthesized example should be an array of one object
+        let success = endpoint
+            .examples
+            .iter()
+            .find(|e| matches!(e.kind, albert_core::MockExampleKind::Success))
+            .unwrap();
+        let arr = success.payload.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert!(arr[0].get("id").is_some());
+    }
+
+    #[test]
+    fn parses_all_of_merges_properties() {
+        let source = r#"
+openapi: 3.0.3
+info: { title: api, version: 1.0.0 }
+paths:
+  /thing:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Thing'
+components:
+  schemas:
+    Base:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+    Extra:
+      type: object
+      properties:
+        color: { type: string }
+    Thing:
+      allOf:
+        - $ref: '#/components/schemas/Base'
+        - $ref: '#/components/schemas/Extra'
+"#;
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: source.to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        let schema = endpoint.responses[0].schema.as_ref().unwrap();
+        assert_eq!(schema.node_type, SchemaNodeType::Object);
+        // allOf merge should fold both ids and colors into the same object
+        assert!(schema.properties.contains_key("id"));
+        assert!(schema.properties.contains_key("color"));
+    }
+
+    #[test]
+    fn parses_parameter_ref_from_components() {
+        let source = r#"
+openapi: 3.0.3
+info: { title: api, version: 1.0.0 }
+paths:
+  /items:
+    get:
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        "200": { description: ok }
+components:
+  parameters:
+    PageSize:
+      name: page_size
+      in: query
+      required: true
+      schema:
+        type: integer
+"#;
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: source.to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        assert_eq!(endpoint.parameters.len(), 1);
+        let param = &endpoint.parameters[0];
+        assert_eq!(param.name, "page_size");
+        assert!(param.required);
+        assert_eq!(param.schema.node_type, SchemaNodeType::Integer);
+    }
+
+    #[test]
+    fn synthesizes_enum_string_example() {
+        let source = r#"
+openapi: 3.0.3
+info: { title: api, version: 1.0.0 }
+paths:
+  /status:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [state]
+                properties:
+                  state:
+                    type: string
+                    enum: [active, archived, draft]
+"#;
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: source.to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        let success = endpoint
+            .examples
+            .iter()
+            .find(|e| matches!(e.kind, albert_core::MockExampleKind::Success))
+            .unwrap();
+        assert_eq!(success.payload["state"], "active");
+    }
 }

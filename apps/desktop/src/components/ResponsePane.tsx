@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Icon } from "./Icon";
+import { JsonView } from "./JsonView";
 import type {
   EndpointTab,
   ExampleKind,
@@ -49,27 +50,29 @@ export function ResponsePane({
     ) ?? endpoint.responses[0];
   const currentExample = endpoint.examples.find((e) => e.kind === example);
 
-  const renderedBody = useMemo(() => {
+  const renderedValue = useMemo(() => {
     if (currentExample?.payload !== undefined && currentExample?.payload !== null) {
-      try {
-        return JSON.stringify(currentExample.payload, null, 2);
-      } catch {
-        /* fall through */
-      }
+      return currentExample.payload;
     }
-    return JSON.stringify(
-      {
-        status: selectedResponse?.status_code ?? "200",
-        contentType: selectedResponse?.content_type ?? "application/json",
-        example,
-        schemaRoot: selectedResponse?.schema?.node_type ?? null,
-        note:
-          "No sample payload persisted yet. Use ✨ Generate to produce one via AI."
-      },
-      null,
-      2
-    );
+    return {
+      status: selectedResponse?.status_code ?? "200",
+      contentType: selectedResponse?.content_type ?? "application/json",
+      example,
+      schemaRoot: selectedResponse?.schema?.node_type ?? null,
+      note:
+        "No sample payload persisted yet. Use ✨ Generate to produce one via AI."
+    };
   }, [currentExample, selectedResponse, example]);
+  const renderedBody = useMemo(
+    () => {
+      try {
+        return JSON.stringify(renderedValue, null, 2);
+      } catch {
+        return String(renderedValue ?? "");
+      }
+    },
+    [renderedValue]
+  );
 
   const canGenerate =
     connected && !!provider.base_url && !!provider.model;
@@ -213,7 +216,7 @@ export function ResponsePane({
       ) : null}
 
       <div className="response__body">
-        <pre className="code-block">{renderedBody}</pre>
+        <JsonView value={renderedValue} />
       </div>
     </section>
   );
