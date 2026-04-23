@@ -101,6 +101,13 @@ field. A **Clear** button wipes the draft for the active route.
 The panel displays the response status, elapsed ms, select headers
 (`x-albert-*`, `content-type`), and body via `JsonView`.
 
+Every successful send is appended to `useTryItHistory`, a bounded
+last-5 history keyed by `METHOD /path` in `localStorage`. The
+`<details>Recent (n)</details>` block at the bottom of the panel lists
+the status / timestamp / method+url / elapsed ms for each entry; a
+`Clear` button wipes the list. History survives across sessions so
+users can spot-check whether a change altered response times.
+
 ## Mock example editing
 
 Every mock payload can be edited directly without going through the AI.

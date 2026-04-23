@@ -13,7 +13,8 @@ This document captures the current GitHub Actions validation baseline.
   - `cargo fmt --all --check`
   - `cargo clippy -- -D warnings` on
     `albert-core / -parser / -storage / -gateway / -openai / -cli`
-  - `cargo test` on the same six crates (all 49 unit + integration tests)
+  - `cargo test` on the same six crates (82 unit + integration tests)
+  - `npm --workspace apps/desktop run test` (vitest, jsdom)
   - `npm --workspace apps/desktop run build`
   - The Tauri crate is excluded here because the Linux runner lacks
     GTK/WebKit system libraries required by `tauri`.

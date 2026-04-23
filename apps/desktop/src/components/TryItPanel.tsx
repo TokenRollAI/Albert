@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Icon } from "./Icon";
 import { JsonView } from "./JsonView";
 import { useTryItDraft } from "../hooks/useTryItDraft";
+import { useTryItHistory } from "../hooks/useTryItHistory";
 import type { EndpointTab } from "../types";
 
 interface TryItPanelProps {
@@ -56,6 +57,7 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
     updateHeaders,
     reset
   } = useTryItDraft(routeKey);
+  const history = useTryItHistory(routeKey);
   const params = draft.params;
   const query = draft.query;
   const bodyDraft = draft.body;
@@ -110,6 +112,12 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
         headers: headersOut,
         body,
         elapsedMs
+      });
+      history.record({
+        status: resp.status,
+        elapsedMs,
+        method,
+        url
       });
     } catch (err) {
       setError(`Request failed: ${String(err)}`);
@@ -315,6 +323,49 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
             <JsonView value={response.body} />
           )}
         </div>
+      ) : null}
+
+      {history.history.length > 0 ? (
+        <details className="tryit__history">
+          <summary>
+            Recent ({history.history.length})
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm tryit__history-clear"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                history.clear();
+              }}
+            >
+              Clear
+            </button>
+          </summary>
+          <ul className="tryit__history-list">
+            {history.history.map((entry, idx) => (
+              <li key={`${entry.at}-${idx}`} className="tryit__history-row">
+                <span
+                  className={
+                    entry.status >= 400
+                      ? "tryit__history-status tryit__history-status--err"
+                      : "tryit__history-status"
+                  }
+                >
+                  {entry.status}
+                </span>
+                <span className="tryit__history-time">
+                  {new Date(entry.at).toLocaleTimeString(undefined, {
+                    hour12: false
+                  })}
+                </span>
+                <span className="tryit__history-url" title={entry.url}>
+                  {entry.method} {entry.url}
+                </span>
+                <span className="tryit__history-ms">{entry.elapsedMs}ms</span>
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
     </section>
   );

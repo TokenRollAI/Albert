@@ -64,6 +64,9 @@ jobs:
             -p albert-cli \
             --no-fail-fast
 
+      - name: Frontend unit tests
+        run: npm --workspace apps/desktop run test
+
       - name: Build frontend
         run: npm --workspace apps/desktop run build
 
