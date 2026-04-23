@@ -1,0 +1,23 @@
+[workspace]
+members = [
+  "apps/desktop/src-tauri",
+  "crates/albert-core",
+  "crates/albert-parser",
+  "crates/albert-gateway",
+  "crates/albert-storage",
+  "crates/albert-openai"
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2.10.3" }
+tauri-build = { version = "2.5.6" }
+thiserror = "2"
+

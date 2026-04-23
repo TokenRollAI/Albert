@@ -1,0 +1,25 @@
+[package]
+name = "albert-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+build = "build.rs"
+
+[lib]
+name = "albert_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+albert-core = { path = "../../../crates/albert-core" }
+albert-gateway = { path = "../../../crates/albert-gateway" }
+albert-openai = { path = "../../../crates/albert-openai" }
+albert-parser = { path = "../../../crates/albert-parser" }
+albert-storage = { path = "../../../crates/albert-storage" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri = { workspace = true }
+

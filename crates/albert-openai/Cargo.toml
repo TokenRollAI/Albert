@@ -1,0 +1,12 @@
+[package]
+name = "albert-openai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+albert-core = { path = "../albert-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
