@@ -3,9 +3,9 @@
 //! Phase 3 runtime: serves canonical endpoints over an axum-based HTTP server,
 //! selecting from the per-endpoint `success / empty / error` mock examples.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use albert_core::{
     CanonicalApiCollection, CanonicalEndpoint, CapabilityStatus, DeliveryStage, HttpMethod,
@@ -73,10 +73,10 @@ impl MockRoute {
         &self,
         override_kind: Option<&MockExampleKind>,
     ) -> Option<&MockExample> {
-        if let Some(kind) = override_kind {
-            if let Some(found) = self.example(kind) {
-                return Some(found);
-            }
+        if let Some(kind) = override_kind
+            && let Some(found) = self.example(kind)
+        {
+            return Some(found);
         }
         self.example(&MockExampleKind::Success)
             .or_else(|| self.examples.first())
@@ -118,6 +118,21 @@ pub struct GatewayStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RequestLogEntry {
+    pub at_epoch_ms: i64,
+    pub method: String,
+    pub path: String,
+    pub query: Option<String>,
+    pub matched_route: Option<String>,
+    pub collection_name: Option<String>,
+    pub status: u16,
+    pub kind: Option<MockExampleKind>,
+    pub source: &'static str,
+}
+
+const DEFAULT_REQUEST_LOG_CAPACITY: usize = 100;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GatewayRouteSummary {
     pub method: HttpMethod,
     pub path: String,
@@ -149,8 +164,27 @@ pub enum GatewayError {
 /// Shared snapshot handed to axum handlers.
 #[derive(Clone)]
 struct AppState {
-    table: Arc<RouteTable>,
-    overrides: Arc<BTreeMap<String, MockExampleKind>>,
+    table: Arc<StdMutex<Arc<RouteTable>>>,
+    overrides: Arc<StdMutex<Arc<BTreeMap<String, MockExampleKind>>>>,
+    request_log: Arc<StdMutex<VecDeque<RequestLogEntry>>>,
+}
+
+impl AppState {
+    fn snapshot_table(&self) -> Arc<RouteTable> {
+        self.table.lock().expect("route table poisoned").clone()
+    }
+
+    fn snapshot_overrides(&self) -> Arc<BTreeMap<String, MockExampleKind>> {
+        self.overrides.lock().expect("overrides poisoned").clone()
+    }
+
+    fn record(&self, entry: RequestLogEntry) {
+        let mut log = self.request_log.lock().expect("log poisoned");
+        if log.len() >= DEFAULT_REQUEST_LOG_CAPACITY {
+            log.pop_front();
+        }
+        log.push_back(entry);
+    }
 }
 
 /// A running or idle mock gateway.
@@ -193,13 +227,18 @@ impl MockGateway {
 
         let routes = build_routes(&collections);
         let summaries = summarize(&routes, &config.example_overrides);
-        let table = Arc::new(RouteTable::from_routes(routes));
-        let overrides = Arc::new(config.example_overrides.clone());
+        let table_arc = Arc::new(RouteTable::from_routes(routes));
+        let overrides_arc = Arc::new(config.example_overrides.clone());
+        let request_log = Arc::new(StdMutex::new(VecDeque::with_capacity(
+            DEFAULT_REQUEST_LOG_CAPACITY,
+        )));
 
         let state = AppState {
-            table: table.clone(),
-            overrides: overrides.clone(),
+            table: Arc::new(StdMutex::new(table_arc.clone())),
+            overrides: Arc::new(StdMutex::new(overrides_arc.clone())),
+            request_log: request_log.clone(),
         };
+        let state_for_runtime = state.clone();
 
         let mut router = Router::new()
             .route("/__albert/status", axum::routing::get(status_handler))
@@ -227,11 +266,49 @@ impl MockGateway {
             started_at,
             config: config.clone(),
             route_summaries: summaries.clone(),
+            state: state_for_runtime,
         };
 
         let status = running.to_status();
         *guard = Some(running);
         Ok(status)
+    }
+
+    /// Swap the collections + overrides served by a running gateway without
+    /// restarting. Returns the updated status.
+    pub async fn update(
+        &self,
+        collections: Vec<CanonicalApiCollection>,
+        overrides: BTreeMap<String, MockExampleKind>,
+    ) -> Result<GatewayStatus, GatewayError> {
+        let mut guard = self.inner.lock().await;
+        let Some(running) = guard.as_mut() else {
+            return Err(GatewayError::NotRunning);
+        };
+        let routes = build_routes(&collections);
+        let summaries = summarize(&routes, &overrides);
+        let table = Arc::new(RouteTable::from_routes(routes));
+        {
+            let mut slot = running.state.table.lock().expect("route table poisoned");
+            *slot = table;
+        }
+        {
+            let mut slot = running.state.overrides.lock().expect("overrides poisoned");
+            *slot = Arc::new(overrides.clone());
+        }
+        running.config.example_overrides = overrides;
+        running.route_summaries = summaries;
+        Ok(running.to_status())
+    }
+
+    pub async fn recent_requests(&self, limit: usize) -> Vec<RequestLogEntry> {
+        let guard = self.inner.lock().await;
+        let Some(running) = guard.as_ref() else {
+            return Vec::new();
+        };
+        let log = running.state.request_log.lock().expect("log poisoned");
+        let take = limit.min(log.len());
+        log.iter().rev().take(take).cloned().collect()
     }
 
     pub async fn stop(&self) -> Result<(), GatewayError> {
@@ -281,6 +358,7 @@ struct RunningGateway {
     started_at: i64,
     config: GatewayConfig,
     route_summaries: Vec<GatewayRouteSummary>,
+    state: AppState,
 }
 
 impl RunningGateway {
@@ -340,9 +418,10 @@ pub fn route_key(method: &HttpMethod, path: &str) -> String {
 }
 
 async fn status_handler(State(state): State<AppState>) -> Response {
+    let table = state.snapshot_table();
     let payload = serde_json::json!({
         "service": "albert-mock-gateway",
-        "route_count": state.table.len(),
+        "route_count": table.len(),
     });
     (StatusCode::OK, axum::Json(payload)).into_response()
 }
@@ -350,12 +429,39 @@ async fn status_handler(State(state): State<AppState>) -> Response {
 async fn mock_handler(State(state): State<AppState>, request: Request) -> Response {
     let method = request.method().clone();
     let path = request.uri().path().to_string();
+    let query = request.uri().query().map(|q| q.to_string());
 
     let method_kind = match http_method_to_canonical(&method) {
         Some(kind) => kind,
-        None => return not_found(format!("unsupported method {method}")),
+        None => {
+            state.record(RequestLogEntry {
+                at_epoch_ms: epoch_ms_now(),
+                method: method.to_string(),
+                path: path.clone(),
+                query: query.clone(),
+                matched_route: None,
+                collection_name: None,
+                status: 404,
+                kind: None,
+                source: "unsupported",
+            });
+            return not_found(format!("unsupported method {method}"));
+        }
     };
-    let Some(matched) = state.table.match_route(&method_kind, &path) else {
+    let table = state.snapshot_table();
+    let overrides = state.snapshot_overrides();
+    let Some(matched) = table.match_route(&method_kind, &path) else {
+        state.record(RequestLogEntry {
+            at_epoch_ms: epoch_ms_now(),
+            method: method.to_string(),
+            path: path.clone(),
+            query: query.clone(),
+            matched_route: None,
+            collection_name: None,
+            status: 404,
+            kind: None,
+            source: "unmatched",
+        });
         return not_found(format!(
             "no mock registered for {} {}",
             method.as_str(),
@@ -364,13 +470,23 @@ async fn mock_handler(State(state): State<AppState>, request: Request) -> Respon
     };
     let route = matched.route;
 
-    let (override_kind, query_selected) = parse_query_override(request.uri().query());
-    let fallback_override = state
-        .overrides
+    let (override_kind, query_selected) = parse_query_override(query.as_deref());
+    let fallback_override = overrides
         .get(&route_key(&route.method, &route.path))
         .cloned();
-    let chosen_override = override_kind.or(fallback_override);
+    let chosen_override = override_kind.clone().or(fallback_override.clone());
     let Some(example) = route.preferred_example(chosen_override.as_ref()) else {
+        state.record(RequestLogEntry {
+            at_epoch_ms: epoch_ms_now(),
+            method: method.to_string(),
+            path: path.clone(),
+            query: query.clone(),
+            matched_route: Some(route_key(&route.method, &route.path)),
+            collection_name: Some(route.collection_name.clone()),
+            status: 404,
+            kind: None,
+            source: "no-example",
+        });
         return not_found(format!(
             "no example configured for {} {}",
             method.as_str(),
@@ -378,26 +494,47 @@ async fn mock_handler(State(state): State<AppState>, request: Request) -> Respon
         ));
     };
 
+    let status_line_code: u16 = match example.kind {
+        MockExampleKind::Success | MockExampleKind::Empty => 200,
+        MockExampleKind::Error => 400,
+    };
+    let source = if query_selected {
+        "query"
+    } else if override_kind.is_some() || fallback_override.is_some() {
+        "override"
+    } else {
+        "default"
+    };
+    state.record(RequestLogEntry {
+        at_epoch_ms: epoch_ms_now(),
+        method: method.to_string(),
+        path: path.clone(),
+        query: query.clone(),
+        matched_route: Some(route_key(&route.method, &route.path)),
+        collection_name: Some(route.collection_name.clone()),
+        status: status_line_code,
+        kind: Some(example.kind.clone()),
+        source,
+    });
+
     let (status, body) = render_example(example);
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
-    if let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-kind") {
-        if let Ok(value) = HeaderValue::from_str(example.kind.as_str()) {
-            headers.insert(name, value);
-        }
+    if let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-kind")
+        && let Ok(value) = HeaderValue::from_str(example.kind.as_str())
+    {
+        headers.insert(name, value);
     }
-    if let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-route") {
-        if let Ok(value) = HeaderValue::from_str(&route_key(&route.method, &route.path)) {
-            headers.insert(name, value);
-        }
+    if let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-route")
+        && let Ok(value) = HeaderValue::from_str(&route_key(&route.method, &route.path))
+    {
+        headers.insert(name, value);
     }
-    if query_selected {
-        if let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-source") {
-            headers.insert(name, HeaderValue::from_static("query"));
-        }
+    if query_selected && let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-source") {
+        headers.insert(name, HeaderValue::from_static("query"));
     }
 
     (status, headers, body).into_response()
@@ -629,6 +766,97 @@ mod tests {
 
         gateway.stop().await.expect("stop");
         assert!(!gateway.is_running().await);
+    }
+
+    #[tokio::test]
+    async fn captures_request_log() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "users",
+            vec![endpoint(HttpMethod::Get, "/users", json!({"data": [1]}))],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.unwrap());
+        let client = reqwest::Client::new();
+        client
+            .get(format!("{base}/users"))
+            .send()
+            .await
+            .expect("hit");
+        client
+            .get(format!("{base}/users?__albert_mock=error"))
+            .send()
+            .await
+            .expect("hit err");
+        client
+            .get(format!("{base}/missing"))
+            .send()
+            .await
+            .expect("hit 404");
+
+        let log = gateway.recent_requests(10).await;
+        assert_eq!(log.len(), 3);
+        // newest first
+        assert_eq!(log[0].status, 404);
+        assert_eq!(log[0].path, "/missing");
+        assert_eq!(log[1].status, 400);
+        assert_eq!(log[1].source, "query");
+        assert_eq!(log[2].status, 200);
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn updates_collections_without_restart() {
+        let gateway = MockGateway::new();
+        let initial = collection("a", vec![endpoint(HttpMethod::Get, "/a", json!({"r": 1}))]);
+        let status = gateway
+            .start(
+                vec![initial],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let bind = status.bind_address.clone().expect("bind");
+        let base = format!("http://{}", bind);
+
+        let client = reqwest::Client::new();
+        let resp = client.get(format!("{base}/a")).send().await.expect("get a");
+        assert_eq!(resp.status().as_u16(), 200);
+        let resp = client.get(format!("{base}/b")).send().await.expect("get b");
+        assert_eq!(resp.status().as_u16(), 404);
+
+        let replaced = collection("b", vec![endpoint(HttpMethod::Get, "/b", json!({"r": 2}))]);
+        gateway
+            .update(vec![replaced], BTreeMap::new())
+            .await
+            .expect("update");
+
+        let resp = client
+            .get(format!("{base}/b"))
+            .send()
+            .await
+            .expect("get b after update");
+        assert_eq!(resp.status().as_u16(), 200);
+        let resp = client
+            .get(format!("{base}/a"))
+            .send()
+            .await
+            .expect("get a after update");
+        assert_eq!(resp.status().as_u16(), 404);
+
+        gateway.stop().await.expect("stop");
     }
 
     #[tokio::test]

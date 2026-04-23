@@ -1645,3 +1645,97 @@ body[data-theme="light"] .modal__overlay {
 .statusbar__dot--idle {
   background: var(--text-faint);
 }
+
+/* ---------- Drawer tabs ---------- */
+.drawer__tabs {
+  display: flex;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  gap: 4px;
+}
+.tab {
+  background: transparent;
+  border: none;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- Inline select ---------- */
+.select {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  text-transform: lowercase;
+}
+.select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- Wide route item (with select) ---------- */
+.routelist__item--wide {
+  grid-template-columns: 56px minmax(0, 1fr) auto auto;
+}
+
+/* ---------- Request log ---------- */
+.reqlog {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 360px;
+  overflow-y: auto;
+  font-family: var(--mono);
+}
+.reqlog__item {
+  display: grid;
+  grid-template-columns: 70px 48px minmax(0, 1fr) 44px auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 5px;
+}
+.reqlog__item:hover {
+  background: var(--bg-surface);
+}
+.reqlog__time {
+  color: var(--text-faint);
+}
+.reqlog__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.reqlog__query {
+  color: var(--text-muted);
+}
+.reqlog__status {
+  font-weight: 600;
+  color: var(--success);
+  text-align: right;
+}
+.reqlog__status--err {
+  color: var(--danger);
+}

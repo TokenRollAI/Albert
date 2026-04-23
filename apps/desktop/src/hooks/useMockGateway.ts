@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GatewayStatus, MockExampleKind } from "../types";
+import type {
+  GatewayStatus,
+  MockExampleKind,
+  RequestLogEntry
+} from "../types";
 
 const EMPTY_STATUS: GatewayStatus = {
   running: false,
@@ -34,9 +38,14 @@ interface UseMockGatewayResult {
   status: GatewayStatus;
   busy: boolean;
   error: string | null;
+  requests: RequestLogEntry[];
   start: (args: StartArgs) => Promise<GatewayStatus | null>;
   stop: () => Promise<void>;
   refresh: () => Promise<void>;
+  update: (
+    overrides?: Record<string, MockExampleKind>,
+    collectionIds?: string[]
+  ) => Promise<GatewayStatus | null>;
 }
 
 export function useMockGateway({
@@ -46,6 +55,7 @@ export function useMockGateway({
   const [status, setStatus] = useState<GatewayStatus>(EMPTY_STATUS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requests, setRequests] = useState<RequestLogEntry[]>([]);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -58,12 +68,26 @@ export function useMockGateway({
   const refresh = useCallback(async () => {
     if (!enabled) {
       setStatus(EMPTY_STATUS);
+      setRequests([]);
       return;
     }
     try {
       const next = await invoke<GatewayStatus>("mock_server_status");
-      if (mounted.current) {
-        setStatus(next ?? EMPTY_STATUS);
+      if (!mounted.current) return;
+      setStatus(next ?? EMPTY_STATUS);
+      if (next?.running) {
+        try {
+          const log = await invoke<RequestLogEntry[]>("mock_server_requests", {
+            limit: 50
+          });
+          if (mounted.current) {
+            setRequests(log);
+          }
+        } catch {
+          /* ignore log fetch */
+        }
+      } else if (mounted.current) {
+        setRequests([]);
       }
     } catch (err) {
       if (mounted.current) {
@@ -151,5 +175,41 @@ export function useMockGateway({
     }
   }, [enabled]);
 
-  return { status, busy, error, start, stop, refresh };
+  const update = useCallback(
+    async (
+      overrides?: Record<string, MockExampleKind>,
+      collectionIds?: string[]
+    ) => {
+      if (!enabled) {
+        return null;
+      }
+      setBusy(true);
+      setError(null);
+      try {
+        const next = await invoke<GatewayStatus>("update_mock_server", {
+          args: {
+            example_overrides: overrides ?? null,
+            collection_ids: collectionIds ?? null,
+            database_url: null
+          }
+        });
+        if (mounted.current) {
+          setStatus(next);
+        }
+        return next;
+      } catch (err) {
+        if (mounted.current) {
+          setError(String(err));
+        }
+        return null;
+      } finally {
+        if (mounted.current) {
+          setBusy(false);
+        }
+      }
+    },
+    [enabled]
+  );
+
+  return { status, busy, error, requests, start, stop, refresh, update };
 }

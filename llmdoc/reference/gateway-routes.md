@@ -54,8 +54,21 @@ Status code mapping:
 - `CorsLayer::permissive()` is attached when `GatewayConfig.cors_enabled` is true.
 - The default config enables CORS so browser clients can hit the mock during development.
 
+## Hot reload + observability
+
+- `MockGateway::update(collections, overrides)` swaps the route table and
+  override map of a running server without releasing the port — useful when
+  importing a new collection or flipping example kinds from the UI.
+- `MockGateway::recent_requests(limit)` returns up to 100 of the most recent
+  entries (newest first). Each entry captures timestamp, method, path, query,
+  the matched route key, status, served `MockExampleKind`, and a `source`
+  label (`default | override | query | unmatched | unsupported | no-example`).
+- Exposed via Tauri commands `update_mock_server` and `mock_server_requests`.
+
 ## Tests
 
-- Unit tests in `crates/albert-gateway/src/lib.rs` and `.../routing.rs`.
+- Unit tests in `crates/albert-gateway/src/lib.rs` and `.../routing.rs`
+  cover routing, double-start rejection, request log capture, and hot
+  reload via `update(...)`.
 - Integration test in `crates/albert-gateway/tests/end_to_end.rs` exercises
   parse → persist → reload → serve with real TCP on an ephemeral port.

@@ -169,6 +169,18 @@ export interface GatewayStatus {
   routes: GatewayRouteSummary[];
 }
 
+export interface RequestLogEntry {
+  at_epoch_ms: number;
+  method: string;
+  path: string;
+  query?: string | null;
+  matched_route?: string | null;
+  collection_name?: string | null;
+  status: number;
+  kind?: MockExampleKind | null;
+  source: string;
+}
+
 export interface ProviderConfigDraft {
   provider_name: string;
   base_url: string;

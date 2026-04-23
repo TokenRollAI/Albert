@@ -219,30 +219,27 @@ impl SqliteStore {
                 |row| row.get(0),
             )
             .ok();
-        if let Some(snapshot_raw) = snapshot_raw {
-            if let Ok(mut collection) =
+        if let Some(snapshot_raw) = snapshot_raw
+            && let Ok(mut collection) =
                 serde_json::from_str::<CanonicalApiCollection>(&snapshot_raw)
-            {
-                for endpoint in collection.endpoints.iter_mut() {
-                    if endpoint.method.as_str().eq_ignore_ascii_case(method)
-                        && endpoint.path == path
+        {
+            for endpoint in collection.endpoints.iter_mut() {
+                if endpoint.method.as_str().eq_ignore_ascii_case(method) && endpoint.path == path {
+                    if let Some(slot) = endpoint
+                        .examples
+                        .iter_mut()
+                        .find(|candidate| candidate.kind == example.kind)
                     {
-                        if let Some(slot) = endpoint
-                            .examples
-                            .iter_mut()
-                            .find(|candidate| candidate.kind == example.kind)
-                        {
-                            *slot = example.clone();
-                        } else {
-                            endpoint.examples.push(example.clone());
-                        }
+                        *slot = example.clone();
+                    } else {
+                        endpoint.examples.push(example.clone());
                     }
                 }
-                transaction.execute(
-                    "UPDATE api_collections SET raw_snapshot = ?1 WHERE id = ?2",
-                    params![serde_json::to_string(&collection)?, collection_id],
-                )?;
             }
+            transaction.execute(
+                "UPDATE api_collections SET raw_snapshot = ?1 WHERE id = ?2",
+                params![serde_json::to_string(&collection)?, collection_id],
+            )?;
         }
 
         transaction.commit()?;

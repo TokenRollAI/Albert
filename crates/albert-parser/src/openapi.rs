@@ -596,9 +596,9 @@ fn resolve_response<'a>(
     }
 }
 
-fn select_media_type<'a>(
-    content: &'a indexmap::IndexMap<String, MediaType>,
-) -> (String, Option<&'a MediaType>) {
+fn select_media_type(
+    content: &indexmap::IndexMap<String, MediaType>,
+) -> (String, Option<&MediaType>) {
     if let Some(media) = content.get("application/json") {
         return ("application/json".to_string(), Some(media));
     }

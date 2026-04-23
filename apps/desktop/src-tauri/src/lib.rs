@@ -5,7 +5,7 @@ use albert_core::{
     AppBootstrapSummary, CanonicalApiCollection, CanonicalEndpoint, HttpMethod, MockExample,
     MockExampleKind, ProviderConfig,
 };
-use albert_gateway::{GatewayConfig, GatewayStatus, MockGateway};
+use albert_gateway::{GatewayConfig, GatewayStatus, MockGateway, RequestLogEntry};
 use albert_openai::{GenerationIntent, OpenAiChatAdapter, PromptBundle, preview_prompt};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -186,6 +186,55 @@ async fn mock_server_status(services: State<'_, AppServices>) -> Result<GatewayS
     Ok(services.gateway.status().await)
 }
 
+#[tauri::command]
+async fn mock_server_requests(
+    limit: Option<usize>,
+    services: State<'_, AppServices>,
+) -> Result<Vec<RequestLogEntry>, String> {
+    Ok(services.gateway.recent_requests(limit.unwrap_or(50)).await)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateMockServerArgs {
+    #[serde(default)]
+    collection_ids: Option<Vec<String>>,
+    #[serde(default)]
+    example_overrides: Option<BTreeMap<String, MockExampleKind>>,
+    #[serde(default)]
+    database_url: Option<String>,
+}
+
+#[tauri::command]
+async fn update_mock_server(
+    args: UpdateMockServerArgs,
+    services: State<'_, AppServices>,
+) -> Result<GatewayStatus, String> {
+    let database_url = args.database_url.unwrap_or_else(default_database_url);
+    let store = albert_storage::SqliteStore::new(database_url);
+    store.migrate().map_err(|error| error.to_string())?;
+    let collections = if let Some(ids) = args.collection_ids {
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(collection) = store
+                .load_collection(&id)
+                .map_err(|error| error.to_string())?
+            {
+                out.push(collection);
+            }
+        }
+        out
+    } else {
+        store
+            .load_all_collections()
+            .map_err(|error| error.to_string())?
+    };
+    services
+        .gateway
+        .update(collections, args.example_overrides.unwrap_or_default())
+        .await
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct GenerationRequest {
     endpoint: CanonicalEndpoint,
@@ -224,10 +273,10 @@ impl From<ProviderConfigInput> for ProviderConfig {
 async fn generate_mock_example(request: GenerationRequest) -> Result<MockExample, String> {
     let provider: ProviderConfig = request.provider.into();
     let mut adapter = OpenAiChatAdapter::new(provider);
-    if let Some(key) = request.api_key_override {
-        if !key.trim().is_empty() {
-            adapter = adapter.with_api_key(key);
-        }
+    if let Some(key) = request.api_key_override
+        && !key.trim().is_empty()
+    {
+        adapter = adapter.with_api_key(key);
     }
     let endpoint = request.endpoint;
     let intent = request.intent;
@@ -236,20 +285,20 @@ async fn generate_mock_example(request: GenerationRequest) -> Result<MockExample
         .await
         .map_err(|error| error.to_string())?;
 
-    if request.persist.unwrap_or(false) {
-        if let Some(collection_id) = request.collection_id {
-            let database_url = request.database_url.unwrap_or_else(default_database_url);
-            let store = albert_storage::SqliteStore::new(database_url);
-            store.migrate().map_err(|error| error.to_string())?;
-            store
-                .replace_mock_example(
-                    &collection_id,
-                    endpoint.method.as_str(),
-                    &endpoint.path,
-                    &example,
-                )
-                .map_err(|error| error.to_string())?;
-        }
+    if request.persist.unwrap_or(false)
+        && let Some(collection_id) = request.collection_id
+    {
+        let database_url = request.database_url.unwrap_or_else(default_database_url);
+        let store = albert_storage::SqliteStore::new(database_url);
+        store.migrate().map_err(|error| error.to_string())?;
+        store
+            .replace_mock_example(
+                &collection_id,
+                endpoint.method.as_str(),
+                &endpoint.path,
+                &example,
+            )
+            .map_err(|error| error.to_string())?;
     }
 
     Ok(example)
@@ -316,6 +365,8 @@ pub fn run() {
             start_mock_server,
             stop_mock_server,
             mock_server_status,
+            mock_server_requests,
+            update_mock_server,
             generate_mock_example,
             preview_generation_prompt,
             default_gateway_config,

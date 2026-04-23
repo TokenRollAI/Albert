@@ -28,6 +28,7 @@ import type {
   ExampleKind,
   ImportResult,
   MockExample,
+  MockExampleKind,
   SidebarCollection,
   StoredCollectionSummary
 } from "./types";
@@ -279,6 +280,13 @@ function App() {
     [mockGateway]
   );
 
+  const handleApplyOverrides = useCallback(
+    async (overrides: Record<string, MockExampleKind>) => {
+      await mockGateway.update(overrides);
+    },
+    [mockGateway]
+  );
+
   const handleGenerate = useCallback(
     async (
       tab: EndpointTab,
@@ -414,8 +422,10 @@ function App() {
         status={mockGateway.status}
         busy={mockGateway.busy}
         error={mockGateway.error}
+        requests={mockGateway.requests}
         onStart={handleStartGateway}
         onStop={mockGateway.stop}
+        onApplyOverrides={handleApplyOverrides}
       />
 
       <ProvidersPanel
