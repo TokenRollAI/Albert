@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CommandPalette, type CommandItem } from "./components/CommandPalette";
 import { EndpointTabs } from "./components/EndpointTabs";
 import { ImportDialog } from "./components/ImportDialog";
 import { MockServerPanel } from "./components/MockServerPanel";
@@ -114,6 +115,11 @@ function App() {
         handler: () => sidebarRef.current?.focusSearch()
       },
       {
+        combo: "Mod+p",
+        description: "Open command palette",
+        handler: () => drawers.palette.toggle()
+      },
+      {
         combo: "Mod+.",
         description: "Toggle mock server panel",
         handler: () => drawers.mockServer.toggle()
@@ -141,6 +147,9 @@ function App() {
         handler: () => drawers.shortcuts.toggle()
       }
     ],
+    // drawers, sidebarRef identities are stable across renders, so tracking
+    // them isn't necessary — only activeId / closeTab actually change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeId, closeTab]
   );
 
@@ -184,6 +193,95 @@ function App() {
       openTab(collection.id, collection.name, endpoint);
     },
     [openTab]
+  );
+
+  const paletteItems = useMemo<CommandItem[]>(() => {
+    const items: CommandItem[] = [];
+    for (const collection of sidebarCollections) {
+      for (const endpoint of collection.endpoints) {
+        items.push({
+          kind: "endpoint",
+          id: `${collection.id}::${endpoint.method.toUpperCase()}:${endpoint.path}`,
+          label: `${endpoint.method.toUpperCase()} ${endpoint.path}`,
+          subtitle:
+            endpoint.summary ??
+            (collection.name ? collection.name : undefined),
+          collectionId: collection.id,
+          endpointMethod: endpoint.method,
+          endpointPath: endpoint.path
+        });
+      }
+    }
+    items.push({
+      kind: "action",
+      id: "action:toggle-mock",
+      label: mockGateway.status.running ? "Stop mock server" : "Start mock server",
+      subtitle: "Mock Server runtime",
+      run: () => {
+        if (mockGateway.status.running) {
+          void mockGateway.stop();
+        } else {
+          drawers.mockServer.open$();
+        }
+      }
+    });
+    items.push({
+      kind: "action",
+      id: "action:open-mock-panel",
+      label: "Open Mock Server drawer",
+      subtitle: "⌘.",
+      run: () => drawers.mockServer.open$()
+    });
+    items.push({
+      kind: "action",
+      id: "action:open-import",
+      label: "Import OpenAPI / cURL",
+      subtitle: "⌘I",
+      run: () => drawers.import.open$()
+    });
+    items.push({
+      kind: "action",
+      id: "action:open-providers",
+      label: "Open Providers drawer",
+      subtitle: "⌘⇧P",
+      run: () => drawers.providers.open$()
+    });
+    items.push({
+      kind: "action",
+      id: "action:toggle-theme",
+      label: theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
+      run: toggleTheme
+    });
+    items.push({
+      kind: "action",
+      id: "action:show-shortcuts",
+      label: "Show keyboard shortcuts",
+      subtitle: "⌘/",
+      run: () => drawers.shortcuts.open$()
+    });
+    return items;
+  }, [sidebarCollections, mockGateway, drawers, theme, toggleTheme]);
+
+  const runPaletteItem = useCallback(
+    (item: CommandItem) => {
+      drawers.palette.close();
+      if (item.kind === "endpoint") {
+        const collection = sidebarCollections.find(
+          (c) => c.id === item.collectionId
+        );
+        const endpoint = collection?.endpoints.find(
+          (e) =>
+            e.method.toUpperCase() === item.endpointMethod.toUpperCase() &&
+            e.path === item.endpointPath
+        );
+        if (collection && endpoint) {
+          openTab(collection.id, collection.name, endpoint);
+        }
+        return;
+      }
+      item.run();
+    },
+    [drawers, openTab, sidebarCollections]
   );
 
   const importActions = useImportActions({
@@ -393,6 +491,13 @@ function App() {
         open={drawers.shortcuts.open}
         bindings={shortcutBindings}
         onClose={drawers.shortcuts.close}
+      />
+
+      <CommandPalette
+        open={drawers.palette.open}
+        items={paletteItems}
+        onClose={drawers.palette.close}
+        onRun={runPaletteItem}
       />
 
       <ToastHost toasts={toasts.toasts} onDismiss={toasts.dismiss} />

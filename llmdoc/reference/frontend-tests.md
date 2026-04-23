@@ -54,6 +54,14 @@
   `METHOD path` fallback when `matched_route` is null.
 - `hooks/__tests__/useAppDrawers.test.tsx` — covers the drawer-state
   hook: independent slots, open/close/toggle/set semantics.
+- `lib/__tests__/fuzzy.test.ts` — fuzzy matcher used by the command
+  palette: in-order character matching, word-boundary + contiguity
+  bonuses, stable sort on ties.
+- `lib/__tests__/downloadBlob.test.ts` — covers `timestampSlug` and the
+  anchor-based download helper (mocks `URL.createObjectURL`).
+- `components/__tests__/CommandPalette.test.tsx` — open/close render,
+  query narrowing, arrow-key navigation with wrap, Enter vs. Esc
+  dispatch, empty-result copy, action-kind run path.
 
 ## CI integration
 

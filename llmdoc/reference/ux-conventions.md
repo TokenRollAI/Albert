@@ -8,10 +8,12 @@ Registered globally via `useKeyboardShortcuts`. `Mod` = `Cmd` on macOS,
 | Combo           | Action                              |
 |-----------------|-------------------------------------|
 | `Mod + K`       | Focus the collection search input   |
+| `Mod + P`       | Open the command palette            |
 | `Mod + .`       | Toggle the Mock Server drawer       |
 | `Mod + I`       | Open the Import dialog              |
 | `Mod + Shift+P` | Toggle the Providers drawer         |
 | `Mod + W`       | Close the active endpoint tab       |
+| `Mod + /`       | Show keyboard shortcuts overlay     |
 
 Within the sidebar:
 
@@ -27,6 +29,22 @@ Within the sidebar:
 Shortcuts are suppressed while focus is inside an editable element unless
 a modifier key is held. Conventions live in
 `apps/desktop/src/hooks/useKeyboardShortcuts.ts`.
+
+## Command palette
+
+`Mod+P` opens `components/CommandPalette.tsx` — a centered modal that
+fuzzy-matches against a single combined list of:
+
+- Every imported endpoint, labeled `METHOD /path` with the collection
+  name or operation summary as the subtitle.
+- A handful of built-in actions: toggle theme, open each drawer,
+  start/stop mock server, show shortcuts.
+
+Scoring lives in `lib/fuzzy.ts`: word-boundary characters and contiguous
+runs both score higher, so `gus` promotes `GET /users` over
+`GETSTATUSAPI`. Up/down arrows navigate, Enter runs the selection, Esc
+(or backdrop click) closes. Mouse hover syncs the selection index so
+the keyboard and pointer stay coherent.
 
 ## Toasts
 

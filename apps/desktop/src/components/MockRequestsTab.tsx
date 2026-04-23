@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { downloadText, timestampSlug } from "../lib/downloadBlob";
 import type { GatewayStatus, RequestLogEntry } from "../types";
 
 type StatusFilter = "all" | "2xx" | "4xx" | "5xx";
@@ -178,6 +179,25 @@ export function MockRequestsTab({
             />
             <span>Capture request bodies</span>
           </label>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() =>
+              downloadText(
+                `albert-request-log-${timestampSlug()}.json`,
+                "application/json",
+                JSON.stringify(requests, null, 2)
+              )
+            }
+            disabled={requests.length === 0}
+            title={
+              requests.length === 0
+                ? "No requests to export"
+                : "Download the current log as JSON"
+            }
+          >
+            Export JSON
+          </button>
           <span className="panel__meta">
             {filterActive
               ? `showing ${filtered.length} of ${requests.length}`

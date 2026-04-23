@@ -19,6 +19,7 @@ export interface AppDrawers {
   mockServer: DrawerSlot;
   providers: DrawerSlot;
   shortcuts: DrawerSlot;
+  palette: DrawerSlot;
 }
 
 function useDrawerSlot(initial = false): DrawerSlot {
@@ -42,6 +43,7 @@ export function useAppDrawers(): AppDrawers {
     import: useDrawerSlot(),
     mockServer: useDrawerSlot(),
     providers: useDrawerSlot(),
-    shortcuts: useDrawerSlot()
+    shortcuts: useDrawerSlot(),
+    palette: useDrawerSlot()
   };
 }

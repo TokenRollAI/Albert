@@ -90,9 +90,49 @@ fn resolve_token(token: &str, params: &BTreeMap<String, String>) -> Option<Strin
             if let Some(name) = token.strip_prefix("path.") {
                 return Some(params.get(name).cloned().unwrap_or_default());
             }
+            if let Some(name) = token.strip_prefix("env.") {
+                return Some(read_env_var(name));
+            }
             None
         }
     }
+}
+
+/// Read an env var with a conservative allowlist. The gateway must never
+/// surface `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN` or other
+/// well-known secrets through a mock — someone sharing a reproduction
+/// payload should not accidentally leak their credentials. Names matching
+/// the deny list (case-insensitive) expand to an empty string and are
+/// logged via the standard `{{env.NAME}}` unknown-token path is NOT used
+/// (we want the substitution to happen, just with an empty value, so
+/// downstream payload shape stays valid).
+fn read_env_var(name: &str) -> String {
+    if name.trim().is_empty() {
+        return String::new();
+    }
+    if is_sensitive_env_name(name) {
+        return String::new();
+    }
+    std::env::var(name).unwrap_or_default()
+}
+
+fn is_sensitive_env_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    // Allowlist deny substrings covering the common credential shapes —
+    // API keys, tokens, secrets, passwords, cookies. We match on substring
+    // (not exact) so `MY_API_KEY` and `OPENAI_API_KEY` both get blocked.
+    const DENY_SUBSTRINGS: &[&str] = &[
+        "SECRET",
+        "PASSWORD",
+        "PRIVATE_KEY",
+        "API_KEY",
+        "APIKEY",
+        "TOKEN",
+        "COOKIE",
+        "AUTH",
+        "CREDENTIAL",
+    ];
+    DENY_SUBSTRINGS.iter().any(|needle| upper.contains(needle))
 }
 
 fn rfc3339_now() -> String {
@@ -270,5 +310,65 @@ mod tests {
         assert!(s.contains('T'));
         // Date portion should be exactly 10 chars.
         assert_eq!(s.split('T').next().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn env_token_resolves_to_env_var_value() {
+        // Use a name not on the sensitive deny list. SAFETY: tests don't run
+        // in parallel across threads that touch the env, and we clean up.
+        unsafe {
+            std::env::set_var("ALBERT_TEMPLATE_TEST_NAME", "canary");
+        }
+        let v = Value::String("hello {{env.ALBERT_TEMPLATE_TEST_NAME}}".to_string());
+        let out = apply_templates(&v, &BTreeMap::new());
+        assert_eq!(out.as_str().unwrap(), "hello canary");
+        unsafe {
+            std::env::remove_var("ALBERT_TEMPLATE_TEST_NAME");
+        }
+    }
+
+    #[test]
+    fn env_token_missing_var_expands_to_empty_string() {
+        let v = Value::String("value=[{{env.ALBERT_TEMPLATE_DEFINITELY_UNSET}}]".to_string());
+        let out = apply_templates(&v, &BTreeMap::new());
+        assert_eq!(out.as_str().unwrap(), "value=[]");
+    }
+
+    #[test]
+    fn env_token_refuses_sensitive_names_even_when_set() {
+        // Redacted categories: anything matching SECRET / PASSWORD / TOKEN /
+        // API_KEY / APIKEY / COOKIE / AUTH / CREDENTIAL / PRIVATE_KEY.
+        // The gateway never surfaces these even when set.
+        unsafe {
+            std::env::set_var("ALBERT_TEMPLATE_API_KEY", "super-secret");
+            std::env::set_var("ALBERT_TEMPLATE_AUTH_TOKEN", "bearer-xyz");
+        }
+        for name in ["ALBERT_TEMPLATE_API_KEY", "ALBERT_TEMPLATE_AUTH_TOKEN"] {
+            let v = Value::String(format!("[{{{{env.{name}}}}}]"));
+            let out = apply_templates(&v, &BTreeMap::new());
+            assert_eq!(
+                out.as_str().unwrap(),
+                "[]",
+                "sensitive env var leaked: {name}"
+            );
+        }
+        unsafe {
+            std::env::remove_var("ALBERT_TEMPLATE_API_KEY");
+            std::env::remove_var("ALBERT_TEMPLATE_AUTH_TOKEN");
+        }
+    }
+
+    #[test]
+    fn is_sensitive_env_name_flags_common_secret_shapes() {
+        assert!(is_sensitive_env_name("OPENAI_API_KEY"));
+        assert!(is_sensitive_env_name("ANTHROPIC_API_KEY"));
+        assert!(is_sensitive_env_name("GITHUB_TOKEN"));
+        assert!(is_sensitive_env_name("MY_COOKIE_SECRET"));
+        assert!(is_sensitive_env_name("DB_PASSWORD"));
+        assert!(is_sensitive_env_name("basic_auth_user"));
+        assert!(is_sensitive_env_name("TLS_PRIVATE_KEY_PATH"));
+        assert!(!is_sensitive_env_name("BUILD_NUMBER"));
+        assert!(!is_sensitive_env_name("HOSTNAME"));
+        assert!(!is_sensitive_env_name("DEPLOY_ENV"));
     }
 }

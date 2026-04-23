@@ -1,10 +1,38 @@
-import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import { Icon } from "./Icon";
 import type {
   AuthRequirementHint,
   CanonicalEndpoint,
   SidebarCollection
 } from "../types";
+
+const EXPANDED_STORAGE_KEY = "albert.sidebar.expanded.v1";
+
+function loadExpandedState(): Record<string, boolean> {
+  try {
+    const raw = window.localStorage.getItem(EXPANDED_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const out: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === "boolean") out[key] = value;
+      }
+      return out;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
 
 function authTitle(hint: AuthRequirementHint): string {
   const base = (() => {
@@ -56,10 +84,59 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
 ) {
   const [query, setQuery] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
-    collections.length === 1 ? { [collections[0].id]: true } : {}
-  );
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
+    const saved = loadExpandedState();
+    if (Object.keys(saved).length > 0) return saved;
+    // First-ever mount: expand the single collection so the user sees
+    // endpoints without having to click. Multi-collection imports stay
+    // collapsed to keep the initial view scannable.
+    return collections.length === 1 ? { [collections[0].id]: true } : {};
+  });
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Mirror the expanded map into localStorage on every change. We guard
+  // with a ref so the initial state doesn't overwrite a just-loaded map
+  // before the user has done anything.
+  const hasMountedRef = useRef(false);
+  useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        EXPANDED_STORAGE_KEY,
+        JSON.stringify(expanded)
+      );
+    } catch {
+      /* quota / serialization — ignore */
+    }
+  }, [expanded]);
+
+  const expandAll = useCallback(() => {
+    setExpanded(() => {
+      const next: Record<string, boolean> = {};
+      for (const collection of collections) {
+        next[collection.id] = true;
+      }
+      return next;
+    });
+  }, [collections]);
+
+  const collapseAll = useCallback(() => {
+    setExpanded(() => {
+      const next: Record<string, boolean> = {};
+      for (const collection of collections) {
+        next[collection.id] = false;
+      }
+      return next;
+    });
+  }, [collections]);
+
+  const anyExpanded = useMemo(
+    () => collections.some((c) => expanded[c.id]),
+    [collections, expanded]
+  );
 
   // Union of all endpoint tags across currently-visible collections.
   // Sorted alphabetically so the chip order is stable across renders.
@@ -177,6 +254,19 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
       <div className="sidebar__head">
         <span className="sidebar__title">Collections</span>
         <div className="sidebar__head-actions">
+          <button
+            type="button"
+            className="btn btn--icon btn--icon-sm"
+            onClick={anyExpanded ? collapseAll : expandAll}
+            disabled={collections.length === 0}
+            aria-label={anyExpanded ? "Collapse all" : "Expand all"}
+            title={anyExpanded ? "Collapse all" : "Expand all"}
+          >
+            <Icon
+              name={anyExpanded ? "chevron-down" : "chevron-right"}
+              size={14}
+            />
+          </button>
           <button
             type="button"
             className="btn btn--icon btn--icon-sm"

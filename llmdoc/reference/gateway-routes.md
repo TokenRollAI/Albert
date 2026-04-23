@@ -86,6 +86,13 @@ request, before serializing to JSON:
 - `{{random.int.<max>}}` — random integer in `0..<max>`.
 - `{{path.<name>}}` — value of the matched path parameter (empty string
   when absent).
+- `{{env.<NAME>}}` — value of the named environment variable, read at
+  request time. Expands to an empty string when the var is unset.
+  **Secrets are redacted**: names whose uppercase form contains any of
+  `SECRET`, `PASSWORD`, `PRIVATE_KEY`, `API_KEY`, `APIKEY`, `TOKEN`,
+  `COOKIE`, `AUTH`, or `CREDENTIAL` always expand to an empty string,
+  even when explicitly set — the gateway will not leak credentials
+  through a mock payload, no matter how the template was written.
 
 The substitution walks every string leaf of the JSON payload. Non-string
 values pass through untouched. Unknown tokens are left in place as
