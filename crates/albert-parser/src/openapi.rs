@@ -351,15 +351,9 @@ fn schema_to_node(schema: &Schema, components: Option<&Components>) -> SchemaNod
             enum_values: Vec::new(),
             example: schema.schema_data.example.clone(),
         },
-        SchemaKind::OneOf { one_of } => one_of
-            .first()
-            .map(|schema| schema_ref_to_node(schema, components))
-            .unwrap_or_else(SchemaNode::object),
+        SchemaKind::OneOf { one_of } => collapse_variants(one_of, components),
         SchemaKind::AllOf { all_of } => merge_all_of_nodes(all_of, components),
-        SchemaKind::AnyOf { any_of } => any_of
-            .first()
-            .map(|schema| schema_ref_to_node(schema, components))
-            .unwrap_or_else(SchemaNode::object),
+        SchemaKind::AnyOf { any_of } => collapse_variants(any_of, components),
         SchemaKind::Not { .. } => SchemaNode {
             node_type: SchemaNodeType::Unknown,
             description: schema.schema_data.description.clone(),
@@ -429,6 +423,16 @@ fn any_schema_to_node(
     }
 
     match any_schema.typ.as_deref() {
+        Some("null") => SchemaNode {
+            node_type: SchemaNodeType::Null,
+            description: schema.schema_data.description.clone(),
+            required: false,
+            nullable: true,
+            properties: Default::default(),
+            items: None,
+            enum_values: Vec::new(),
+            example: schema.schema_data.example.clone(),
+        },
         Some("string") => SchemaNode::string(),
         Some("integer") => SchemaNode {
             node_type: SchemaNodeType::Integer,
@@ -471,6 +475,64 @@ fn any_schema_to_node(
             example: schema.schema_data.example.clone(),
         },
     }
+}
+
+/// Fold a `oneOf` / `anyOf` branch list into a single canonical node.
+///
+/// Strategy (keeps the downstream synthesis + UI simple):
+/// 1. Any `null`-typed branch marks the result as `nullable`. The remaining
+///    branches are still considered for shape selection.
+/// 2. If every remaining branch is an object, merge their property maps
+///    (union). Conflicting properties on overlapping keys prefer the first
+///    occurrence so schema order is meaningful.
+/// 3. Otherwise fall back to the first non-null branch.
+fn collapse_variants(
+    variants: &[ReferenceOr<Schema>],
+    components: Option<&Components>,
+) -> SchemaNode {
+    let nodes: Vec<SchemaNode> = variants
+        .iter()
+        .map(|schema| schema_ref_to_node(schema, components))
+        .collect();
+
+    let (null_branches, concrete_branches): (Vec<_>, Vec<_>) = nodes
+        .into_iter()
+        .partition(|node| matches!(node.node_type, SchemaNodeType::Null));
+
+    let mut base = if concrete_branches.is_empty() {
+        SchemaNode {
+            node_type: SchemaNodeType::Unknown,
+            description: None,
+            required: false,
+            nullable: false,
+            properties: Default::default(),
+            items: None,
+            enum_values: Vec::new(),
+            example: None,
+        }
+    } else if concrete_branches
+        .iter()
+        .all(|node| matches!(node.node_type, SchemaNodeType::Object))
+    {
+        let mut merged = SchemaNode::object();
+        for branch in &concrete_branches {
+            merged.description = merged.description.or(branch.description.clone());
+            for (key, value) in &branch.properties {
+                merged
+                    .properties
+                    .entry(key.clone())
+                    .or_insert_with(|| value.clone());
+            }
+        }
+        merged
+    } else {
+        concrete_branches.into_iter().next().unwrap()
+    };
+
+    if !null_branches.is_empty() {
+        base.nullable = true;
+    }
+    base
 }
 
 fn merge_all_of_nodes(

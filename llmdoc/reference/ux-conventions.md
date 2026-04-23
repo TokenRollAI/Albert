@@ -40,10 +40,12 @@ counts.
 - **Routes tab** — one row per registered route, with a dropdown to pick
   the served example kind. Changes collect as a draft; `Apply (N)` sends
   them to `update_mock_server`.
-- **Requests tab** — scrolling log. Each row shows timestamp, method,
-  path, status, latency, served-kind or source label. A "Capture request
-  bodies" toggle arms the backend to store up to 4KB per request; when
-  captured, rows expose a `<details>` body preview.
+- **Requests tab** — a metrics summary (total, 2xx/4xx/5xx counts, avg
+  and max latency, busiest route) followed by the scrolling log. Each
+  row shows timestamp, method, path, status, latency, served-kind or
+  source label. A "Capture request bodies" toggle arms the backend to
+  store up to 4KB per request; when captured, rows expose a `<details>`
+  body preview.
 
 ## Try-it panel
 

@@ -6,6 +6,61 @@ import type {
   RequestLogEntry
 } from "../types";
 
+interface LogMetrics {
+  total: number;
+  status2xx: number;
+  status4xx: number;
+  status5xx: number;
+  kindCounts: Record<string, number>;
+  busiestRoute: { route: string; count: number } | null;
+  averageLatencyMs: number;
+  maxLatencyMs: number;
+}
+
+function computeMetrics(log: RequestLogEntry[]): LogMetrics {
+  const routeCounts = new Map<string, number>();
+  const kindCounts: Record<string, number> = {};
+  let total = 0;
+  let status2xx = 0;
+  let status4xx = 0;
+  let status5xx = 0;
+  let latencySum = 0;
+  let latencyMax = 0;
+  for (const entry of log) {
+    total += 1;
+    if (entry.status >= 200 && entry.status < 300) status2xx += 1;
+    else if (entry.status >= 400 && entry.status < 500) status4xx += 1;
+    else if (entry.status >= 500) status5xx += 1;
+
+    const kindKey = entry.kind ?? entry.source ?? "unknown";
+    kindCounts[kindKey] = (kindCounts[kindKey] ?? 0) + 1;
+
+    const routeKey = entry.matched_route ?? `${entry.method} ${entry.path}`;
+    routeCounts.set(routeKey, (routeCounts.get(routeKey) ?? 0) + 1);
+
+    latencySum += entry.latency_ms ?? 0;
+    if ((entry.latency_ms ?? 0) > latencyMax) {
+      latencyMax = entry.latency_ms ?? 0;
+    }
+  }
+  let busiestRoute: { route: string; count: number } | null = null;
+  for (const [route, count] of routeCounts) {
+    if (!busiestRoute || count > busiestRoute.count) {
+      busiestRoute = { route, count };
+    }
+  }
+  return {
+    total,
+    status2xx,
+    status4xx,
+    status5xx,
+    kindCounts,
+    busiestRoute,
+    averageLatencyMs: total === 0 ? 0 : Math.round(latencySum / total),
+    maxLatencyMs: latencyMax
+  };
+}
+
 interface MockServerPanelProps {
   open: boolean;
   onClose: () => void;
@@ -63,6 +118,8 @@ export function MockServerPanel({
     () => (status.running && status.bind_address ? `http://${status.bind_address}` : null),
     [status.running, status.bind_address]
   );
+
+  const metrics = useMemo(() => computeMetrics(requests), [requests]);
 
   const mergedOverrides = useMemo(() => {
     const merged: Record<string, MockExampleKind> = {
@@ -406,6 +463,51 @@ export function MockServerPanel({
                   </button>
                 ) : null}
               </div>
+            </section>
+          ) : null}
+
+          {tab === "requests" ? (
+            <section className="panel">
+              <div className="panel__title panel__title--row">
+                <h3>Metrics</h3>
+                <span className="panel__meta">from the last {metrics.total} request(s)</span>
+              </div>
+              <div className="metrics-grid">
+                <div className="metric">
+                  <span className="metric__label">Total</span>
+                  <span className="metric__value">{metrics.total}</span>
+                </div>
+                <div className="metric metric--ok">
+                  <span className="metric__label">2xx</span>
+                  <span className="metric__value">{metrics.status2xx}</span>
+                </div>
+                <div className="metric metric--warn">
+                  <span className="metric__label">4xx</span>
+                  <span className="metric__value">{metrics.status4xx}</span>
+                </div>
+                <div className="metric metric--err">
+                  <span className="metric__label">5xx</span>
+                  <span className="metric__value">{metrics.status5xx}</span>
+                </div>
+                <div className="metric">
+                  <span className="metric__label">avg ms</span>
+                  <span className="metric__value">{metrics.averageLatencyMs}</span>
+                </div>
+                <div className="metric">
+                  <span className="metric__label">max ms</span>
+                  <span className="metric__value">{metrics.maxLatencyMs}</span>
+                </div>
+              </div>
+              {metrics.busiestRoute ? (
+                <div className="metrics-row">
+                  <span className="metrics-row__label">Busiest:</span>
+                  <code>{metrics.busiestRoute.route}</code>
+                  <span className="metrics-row__tail">
+                    · {metrics.busiestRoute.count} hit
+                    {metrics.busiestRoute.count === 1 ? "" : "s"}
+                  </span>
+                </div>
+              ) : null}
             </section>
           ) : null}
 

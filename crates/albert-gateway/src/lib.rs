@@ -82,12 +82,14 @@ impl MockGateway {
         let latency =
             LatencyConfig::new(config.default_latency_ms, config.latency_overrides.clone());
 
+        let response_headers = Arc::new(config.response_headers.clone());
         let state = AppState::new(
             table_arc.clone(),
             overrides_arc.clone(),
             latency,
             config.error_rate,
             config.capture_bodies,
+            response_headers,
         );
         let state_for_runtime = state.clone();
 
@@ -143,12 +145,14 @@ impl MockGateway {
             config.latency_overrides,
             config.error_rate,
             config.capture_bodies,
+            config.response_headers,
         )
         .await
     }
 
     /// Full reconfigure entry point; can change overrides, latency, error
-    /// rate, and body-capture flag in one atomic swap.
+    /// rate, body-capture flag, and per-route response headers in one
+    /// atomic swap.
     #[allow(clippy::too_many_arguments)]
     pub async fn reconfigure(
         &self,
@@ -158,6 +162,7 @@ impl MockGateway {
         latency_overrides: BTreeMap<String, u64>,
         error_rate: f32,
         capture_bodies: bool,
+        response_headers: BTreeMap<String, BTreeMap<String, String>>,
     ) -> Result<GatewayStatus, GatewayError> {
         let mut guard = self.inner.lock().await;
         let Some(running) = guard.as_mut() else {
@@ -175,11 +180,15 @@ impl MockGateway {
         ));
         running.state.replace_error_rate(clamped_rate);
         running.state.replace_capture_bodies(capture_bodies);
+        running
+            .state
+            .replace_response_headers(Arc::new(response_headers.clone()));
         running.config.example_overrides = overrides;
         running.config.default_latency_ms = default_latency_ms;
         running.config.latency_overrides = latency_overrides;
         running.config.error_rate = clamped_rate;
         running.config.capture_bodies = capture_bodies;
+        running.config.response_headers = response_headers;
         running.route_summaries = summaries;
         Ok(running.to_status())
     }
@@ -527,6 +536,54 @@ mod tests {
         let log = gateway.recent_requests(10).await;
         assert_eq!(log[0].latency_ms, 120);
 
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn injects_per_route_response_headers() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "users",
+            vec![endpoint(
+                HttpMethod::Get,
+                "/users",
+                json!({"data": [{"id": 1}]}),
+            )],
+        );
+        let mut route_headers: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        let mut headers_for_route = BTreeMap::new();
+        headers_for_route.insert("x-request-id".to_string(), "abc-123".to_string());
+        headers_for_route.insert("x-rate-limit".to_string(), "100".to_string());
+        route_headers.insert("GET /users".to_string(), headers_for_route);
+
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    response_headers: route_headers,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let bind = status.bind_address.clone().unwrap();
+        let base = format!("http://{}", bind);
+        let client = reqwest::Client::new();
+        let resp = client.get(format!("{base}/users")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(
+            resp.headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok()),
+            Some("abc-123")
+        );
+        assert_eq!(
+            resp.headers()
+                .get("x-rate-limit")
+                .and_then(|v| v.to_str().ok()),
+            Some("100")
+        );
         gateway.stop().await.expect("stop");
     }
 

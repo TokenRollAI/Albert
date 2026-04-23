@@ -28,6 +28,8 @@ pub struct StartMockServerArgs {
     #[serde(default)]
     pub capture_bodies: Option<bool>,
     #[serde(default)]
+    pub response_headers: Option<BTreeMap<String, BTreeMap<String, String>>>,
+    #[serde(default)]
     pub database_url: Option<String>,
 }
 
@@ -66,6 +68,7 @@ pub async fn start_mock_server(
         latency_overrides: args.latency_overrides.unwrap_or_default(),
         error_rate: args.error_rate.unwrap_or(0.0),
         capture_bodies: args.capture_bodies.unwrap_or(false),
+        response_headers: args.response_headers.unwrap_or_default(),
     };
 
     services
@@ -113,6 +116,8 @@ pub struct UpdateMockServerArgs {
     #[serde(default)]
     pub capture_bodies: Option<bool>,
     #[serde(default)]
+    pub response_headers: Option<BTreeMap<String, BTreeMap<String, String>>>,
+    #[serde(default)]
     pub database_url: Option<String>,
 }
 
@@ -151,6 +156,7 @@ pub async fn update_mock_server(
     let latency_overrides = args.latency_overrides.unwrap_or(current.latency_overrides);
     let error_rate = args.error_rate.unwrap_or(current.error_rate);
     let capture_bodies = args.capture_bodies.unwrap_or(current.capture_bodies);
+    let response_headers = args.response_headers.unwrap_or(current.response_headers);
 
     services
         .gateway
@@ -161,6 +167,7 @@ pub async fn update_mock_server(
             latency_overrides,
             error_rate,
             capture_bodies,
+            response_headers,
         )
         .await
         .map_err(|error| error.to_string())

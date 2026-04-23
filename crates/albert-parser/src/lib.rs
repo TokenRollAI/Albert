@@ -495,6 +495,101 @@ components:
     }
 
     #[test]
+    fn nullable_true_marks_field_nullable() {
+        let source = r#"
+openapi: 3.0.3
+info: { title: api, version: 1.0.0 }
+paths:
+  /users/{id}:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nickname:
+                    type: string
+                    nullable: true
+"#;
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: source.to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        let response_schema = endpoint.responses[0].schema.as_ref().unwrap();
+        let nickname = response_schema.properties.get("nickname").unwrap();
+        assert!(nickname.nullable);
+        assert_eq!(nickname.node_type, SchemaNodeType::String);
+    }
+
+    #[test]
+    fn one_of_picks_a_concrete_branch() {
+        let source = r#"
+openapi: 3.0.3
+info: { title: api, version: 1.0.0 }
+paths:
+  /status:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: string
+                  - type: integer
+"#;
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: source.to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        let schema = endpoint.responses[0].schema.as_ref().unwrap();
+        // picks the first concrete (string) branch rather than dropping everything
+        assert_eq!(schema.node_type, SchemaNodeType::String);
+    }
+
+    #[test]
+    fn any_of_object_branches_merge_properties() {
+        let source = r#"
+openapi: 3.0.3
+info: { title: api, version: 1.0.0 }
+paths:
+  /items:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - type: object
+                    properties:
+                      id: { type: string }
+                  - type: object
+                    properties:
+                      count: { type: integer }
+"#;
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: source.to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        let schema = endpoint.responses[0].schema.as_ref().unwrap();
+        assert_eq!(schema.node_type, SchemaNodeType::Object);
+        assert!(schema.properties.contains_key("id"));
+        assert!(schema.properties.contains_key("count"));
+    }
+
+    #[test]
     fn curl_parses_basic_auth_and_cookie() {
         let collection = parse_source(ParseSource {
             name: None,

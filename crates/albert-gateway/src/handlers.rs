@@ -168,6 +168,17 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         headers.insert(name, value);
     }
 
+    let response_headers = state.snapshot_response_headers();
+    if let Some(extras) = response_headers.get(&matched_key) {
+        for (name, value) in extras {
+            if let Ok(header_name) = HeaderName::from_bytes(name.as_bytes())
+                && let Ok(header_value) = HeaderValue::from_str(value)
+            {
+                headers.insert(header_name, header_value);
+            }
+        }
+    }
+
     (status, headers, body).into_response()
 }
 

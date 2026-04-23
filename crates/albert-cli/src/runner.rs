@@ -164,6 +164,7 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
         latency_overrides: BTreeMap::new(),
         error_rate: args.error_rate,
         capture_bodies: args.capture_bodies,
+        response_headers: BTreeMap::new(),
     };
     let gateway = MockGateway::new();
     let status = gateway

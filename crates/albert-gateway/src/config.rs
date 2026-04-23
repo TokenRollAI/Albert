@@ -33,6 +33,13 @@ pub struct GatewayConfig {
     /// the UI or CLI.
     #[serde(default)]
     pub capture_bodies: bool,
+    /// Per-route extra response headers keyed by `METHOD path`. Each
+    /// inner map's keys are header names, values are the verbatim header
+    /// value string. Merged on top of the content-type + observability
+    /// headers the gateway writes natively. Unknown route keys are
+    /// silently ignored.
+    #[serde(default)]
+    pub response_headers: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Default for GatewayConfig {
@@ -46,6 +53,7 @@ impl Default for GatewayConfig {
             latency_overrides: BTreeMap::new(),
             error_rate: 0.0,
             capture_bodies: false,
+            response_headers: BTreeMap::new(),
         }
     }
 }

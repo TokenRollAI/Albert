@@ -51,11 +51,19 @@ Status code mapping:
 
 ## Response headers
 
+Always emitted:
+
 - `content-type: application/json`
 - `x-albert-mock-kind: success | empty | error`
 - `x-albert-mock-route: METHOD /path`
 - `x-albert-mock-source: query` when a query override was honored
 - `x-albert-mock-latency-ms: <n>` when latency injection delayed the response
+
+Per-route extras are configurable via
+`GatewayConfig.response_headers: BTreeMap<String, BTreeMap<String, String>>`
+keyed by `METHOD /path`. Invalid header names or values are silently
+skipped rather than causing the whole response to fail — the gateway
+favors serving something over serving nothing.
 
 ## Latency injection
 

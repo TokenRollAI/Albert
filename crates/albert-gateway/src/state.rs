@@ -27,6 +27,8 @@ pub struct RequestLogEntry {
 
 pub(crate) const DEFAULT_REQUEST_LOG_CAPACITY: usize = 100;
 
+pub(crate) type ResponseHeaderMap = BTreeMap<String, BTreeMap<String, String>>;
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) table: Arc<StdMutex<Arc<RouteTable>>>,
@@ -34,6 +36,7 @@ pub(crate) struct AppState {
     pub(crate) latency: Arc<StdMutex<LatencyConfig>>,
     pub(crate) error_rate: Arc<StdMutex<f32>>,
     pub(crate) capture_bodies: Arc<StdMutex<bool>>,
+    pub(crate) response_headers: Arc<StdMutex<Arc<ResponseHeaderMap>>>,
     pub(crate) request_log: Arc<StdMutex<VecDeque<RequestLogEntry>>>,
 }
 
@@ -59,12 +62,14 @@ impl LatencyConfig {
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         table: Arc<RouteTable>,
         overrides: Arc<BTreeMap<String, MockExampleKind>>,
         latency: LatencyConfig,
         error_rate: f32,
         capture_bodies: bool,
+        response_headers: Arc<ResponseHeaderMap>,
     ) -> Self {
         Self {
             table: Arc::new(StdMutex::new(table)),
@@ -72,6 +77,7 @@ impl AppState {
             latency: Arc::new(StdMutex::new(latency)),
             error_rate: Arc::new(StdMutex::new(error_rate.clamp(0.0, 1.0))),
             capture_bodies: Arc::new(StdMutex::new(capture_bodies)),
+            response_headers: Arc::new(StdMutex::new(response_headers)),
             request_log: Arc::new(StdMutex::new(VecDeque::with_capacity(
                 DEFAULT_REQUEST_LOG_CAPACITY,
             ))),
@@ -120,6 +126,21 @@ impl AppState {
 
     pub(crate) fn replace_capture_bodies(&self, next: bool) {
         let mut slot = self.capture_bodies.lock().expect("capture flag poisoned");
+        *slot = next;
+    }
+
+    pub(crate) fn snapshot_response_headers(&self) -> Arc<ResponseHeaderMap> {
+        self.response_headers
+            .lock()
+            .expect("response headers poisoned")
+            .clone()
+    }
+
+    pub(crate) fn replace_response_headers(&self, next: Arc<ResponseHeaderMap>) {
+        let mut slot = self
+            .response_headers
+            .lock()
+            .expect("response headers poisoned");
         *slot = next;
     }
 
