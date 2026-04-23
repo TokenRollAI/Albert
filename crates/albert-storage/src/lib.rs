@@ -179,6 +179,46 @@ impl SqliteStore {
         }
     }
 
+    pub fn rename_collection(
+        &self,
+        collection_id: &str,
+        new_name: &str,
+    ) -> Result<bool, StorageError> {
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+
+        // Update both the top-level metadata row and the embedded snapshot
+        // so `load_collection` stays consistent.
+        let snapshot: Option<String> = transaction
+            .query_row(
+                "SELECT raw_snapshot FROM api_collections WHERE id = ?1",
+                params![collection_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        if snapshot.is_none() {
+            return Ok(false);
+        }
+
+        let updated_snapshot = snapshot.and_then(|raw| {
+            serde_json::from_str::<CanonicalApiCollection>(&raw)
+                .ok()
+                .map(|mut collection| {
+                    collection.name = new_name.to_string();
+                    serde_json::to_string(&collection).ok()
+                })
+                .and_then(|x| x)
+        });
+
+        let rows = transaction.execute(
+            "UPDATE api_collections SET name = ?1, raw_snapshot = COALESCE(?2, raw_snapshot) WHERE id = ?3",
+            params![new_name, updated_snapshot, collection_id],
+        )?;
+        transaction.commit()?;
+        Ok(rows > 0)
+    }
+
     pub fn delete_collection(&self, collection_id: &str) -> Result<bool, StorageError> {
         let mut connection = self.connect()?;
         let transaction = connection.transaction()?;
@@ -548,6 +588,34 @@ mod tests {
                 .iter()
                 .any(|endpoint| endpoint.path == "/orders/{id}")
         );
+    }
+
+    #[test]
+    fn rename_collection_updates_metadata_and_snapshot() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let store = SqliteStore::new(temp_file.path().to_string_lossy().to_string());
+        store.migrate().unwrap();
+
+        let collection = CanonicalApiCollection {
+            id: "orders".to_string(),
+            name: "Orders (old)".to_string(),
+            source: InputSourceKind::OpenApi,
+            description: None,
+            endpoints: vec![],
+        };
+        store.save_collection(&collection).unwrap();
+
+        let renamed = store.rename_collection("orders", "Orders v2").unwrap();
+        assert!(renamed);
+
+        let summary = &store.list_collections().unwrap()[0];
+        assert_eq!(summary.name, "Orders v2");
+
+        let snapshot = store.load_collection("orders").unwrap().unwrap();
+        assert_eq!(snapshot.name, "Orders v2");
+
+        // renaming a missing collection returns false
+        assert!(!store.rename_collection("missing", "whatever").unwrap());
     }
 
     #[test]

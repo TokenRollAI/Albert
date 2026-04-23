@@ -55,6 +55,27 @@
 - Decoded JSON becomes `MockExample.payload`; the result is tagged with the
   intent's kind/title and a provenance note.
 
+## Schema validation + one-shot repair
+
+When the endpoint declares a matching response schema (2xx for
+success/empty, 4xx/5xx for error), the adapter calls
+`albert_core::validate_value(schema, payload)`:
+
+- ✅ validates → example is returned with the standard note.
+- ❌ fails → the adapter sends a single repair request with the same
+  system prompt, the original user prompt, and an appended block listing
+  the validation errors and instructing "return a new JSON object that
+  fixes the listed issues".
+  - If the repaired payload validates, the resulting example's note is
+    annotated with `Repaired after one validation retry.`
+  - If it still fails, the repaired payload is returned anyway with the
+    remaining errors appended to the note so the caller can decide.
+  - If the repair HTTP call itself errors, the adapter falls back to the
+    original payload and annotates the note with the transport error.
+
+Endpoints without a response schema skip validation entirely (no retry
+loop, no note annotation).
+
 ## Errors
 
 - `MissingApiKey(env_var_name)` — no key found in env or override.

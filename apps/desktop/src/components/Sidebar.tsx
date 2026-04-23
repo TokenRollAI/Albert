@@ -10,6 +10,7 @@ interface SidebarProps {
   onRefresh: () => void;
   onExportCollection?: (collection: SidebarCollection) => void;
   onDeleteCollection?: (collection: SidebarCollection) => void;
+  onRenameCollection?: (collection: SidebarCollection) => void;
   busy: boolean;
 }
 
@@ -26,6 +27,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
     onRefresh,
     onExportCollection,
     onDeleteCollection,
+    onRenameCollection,
     busy
   }: SidebarProps,
   ref
@@ -163,6 +165,28 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
                         ? "preview"
                         : "demo"}
                   </span>
+                  {onRenameCollection && collection.origin === "imported" ? (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      className="btn btn--icon btn--icon-sm coll__action"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRenameCollection(collection);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.stopPropagation();
+                          event.preventDefault();
+                          onRenameCollection(collection);
+                        }
+                      }}
+                      title="Rename collection"
+                      aria-label={`Rename ${collection.name}`}
+                    >
+                      <Icon name="settings" size={12} />
+                    </span>
+                  ) : null}
                   {onExportCollection && collection.origin === "imported" ? (
                     <span
                       role="button"

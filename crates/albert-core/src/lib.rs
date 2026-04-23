@@ -408,6 +408,147 @@ pub fn synthesize_examples(endpoint: &CanonicalEndpoint) -> Vec<MockExample> {
     ]
 }
 
+/// Validate a JSON value against a canonical `SchemaNode`. Returns a list of
+/// human-readable problems — empty slice means the value matched.
+///
+/// The checker is intentionally conservative: it enforces the declared
+/// `node_type`, required-property presence, and nullable-null agreement. It
+/// does NOT attempt enum/min/max/pattern validation — those are expected to
+/// be layered on top by callers that care. Arrays validate every item
+/// against the declared `items` schema; objects walk `properties`.
+pub fn validate_value(schema: &SchemaNode, value: &Value) -> Vec<String> {
+    let mut errors = Vec::new();
+    validate_at(schema, value, "$", &mut errors);
+    errors
+}
+
+fn validate_at(schema: &SchemaNode, value: &Value, path: &str, errors: &mut Vec<String>) {
+    if value.is_null() {
+        if schema.nullable {
+            return;
+        }
+        match schema.node_type {
+            SchemaNodeType::Null => return,
+            SchemaNodeType::Unknown => return,
+            _ => {
+                errors.push(format!(
+                    "{path}: expected {} but got null",
+                    type_label(&schema.node_type)
+                ));
+                return;
+            }
+        }
+    }
+    match schema.node_type {
+        SchemaNodeType::Object => match value.as_object() {
+            Some(obj) => {
+                for (name, child_schema) in &schema.properties {
+                    match obj.get(name) {
+                        Some(child_value) => {
+                            validate_at(
+                                child_schema,
+                                child_value,
+                                &format!("{path}.{name}"),
+                                errors,
+                            );
+                        }
+                        None if child_schema.required => {
+                            errors.push(format!("{path}.{name}: required property missing"));
+                        }
+                        None => {}
+                    }
+                }
+            }
+            None => errors.push(format!(
+                "{path}: expected object but got {}",
+                json_type_label(value)
+            )),
+        },
+        SchemaNodeType::Array => match value.as_array() {
+            Some(items) => {
+                if let Some(item_schema) = schema.items.as_deref() {
+                    for (idx, item) in items.iter().enumerate() {
+                        validate_at(item_schema, item, &format!("{path}[{idx}]"), errors);
+                    }
+                }
+            }
+            None => errors.push(format!(
+                "{path}: expected array but got {}",
+                json_type_label(value)
+            )),
+        },
+        SchemaNodeType::String => {
+            if !value.is_string() {
+                errors.push(format!(
+                    "{path}: expected string but got {}",
+                    json_type_label(value)
+                ));
+            }
+        }
+        SchemaNodeType::Integer => {
+            let is_integer = match value {
+                Value::Number(n) => n.is_i64() || n.is_u64(),
+                _ => false,
+            };
+            if !is_integer {
+                errors.push(format!(
+                    "{path}: expected integer but got {}",
+                    json_type_label(value)
+                ));
+            }
+        }
+        SchemaNodeType::Number => {
+            if !value.is_number() {
+                errors.push(format!(
+                    "{path}: expected number but got {}",
+                    json_type_label(value)
+                ));
+            }
+        }
+        SchemaNodeType::Boolean => {
+            if !value.is_boolean() {
+                errors.push(format!(
+                    "{path}: expected boolean but got {}",
+                    json_type_label(value)
+                ));
+            }
+        }
+        SchemaNodeType::Null => {
+            errors.push(format!(
+                "{path}: expected null but got {}",
+                json_type_label(value)
+            ));
+        }
+        SchemaNodeType::Unknown => {
+            // Unknown schemas pass through; we can't reliably assert anything.
+        }
+    }
+}
+
+fn type_label(kind: &SchemaNodeType) -> &'static str {
+    match kind {
+        SchemaNodeType::Object => "object",
+        SchemaNodeType::Array => "array",
+        SchemaNodeType::String => "string",
+        SchemaNodeType::Integer => "integer",
+        SchemaNodeType::Number => "number",
+        SchemaNodeType::Boolean => "boolean",
+        SchemaNodeType::Null => "null",
+        SchemaNodeType::Unknown => "any",
+    }
+}
+
+fn json_type_label(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 pub fn default_mock_examples() -> Vec<MockExample> {
     vec![
         MockExample {
@@ -528,6 +669,64 @@ mod synth_tests {
         assert!(empty.as_array().unwrap().is_empty());
         let rich = synthesize_value(&schema);
         assert_eq!(rich.as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn validates_required_properties() {
+        let mut properties = BTreeMap::new();
+        let mut id = SchemaNode::string();
+        id.required = true;
+        properties.insert("id".to_string(), id);
+        let mut active = SchemaNode::string();
+        active.node_type = SchemaNodeType::Boolean;
+        active.required = true;
+        properties.insert("active".to_string(), active);
+        let schema = SchemaNode {
+            node_type: SchemaNodeType::Object,
+            description: None,
+            required: true,
+            nullable: false,
+            properties,
+            items: None,
+            enum_values: Vec::new(),
+            example: None,
+        };
+
+        // missing required property
+        let errs = validate_value(&schema, &json!({"id": "abc"}));
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("active"));
+        assert!(errs[0].contains("required"));
+
+        // wrong type
+        let errs = validate_value(&schema, &json!({"id": 42, "active": true}));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("id") && e.contains("string"))
+        );
+
+        // happy path
+        let errs = validate_value(&schema, &json!({"id": "abc", "active": true}));
+        assert!(errs.is_empty());
+    }
+
+    #[test]
+    fn validates_null_only_when_nullable() {
+        let mut schema = SchemaNode::string();
+        schema.nullable = false;
+        assert!(!validate_value(&schema, &json!(null)).is_empty());
+        schema.nullable = true;
+        assert!(validate_value(&schema, &json!(null)).is_empty());
+    }
+
+    #[test]
+    fn validates_array_items_recursively() {
+        let mut item = SchemaNode::string();
+        item.node_type = SchemaNodeType::Integer;
+        let schema = SchemaNode::array(item);
+        let errs = validate_value(&schema, &json!([1, 2, "bad", 4]));
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("[2]"));
     }
 
     #[test]

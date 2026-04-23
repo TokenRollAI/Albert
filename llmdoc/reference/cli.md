@@ -20,6 +20,8 @@ running the mock server without the Tauri shell.
 | `list`    | Print the collections stored in the database                 |
 | `export`  | Print a collection snapshot as JSON (optionally to a file)   |
 | `delete`  | Remove a collection (and its endpoints/examples) from SQLite |
+| `rename`  | Rename a stored collection (`--id` + `--name`)               |
+| `export-all` | Print every collection as a JSON array (optionally to a file) |
 | `help`    | Show the usage text                                          |
 | `version` | Print the crate version                                      |
 
@@ -49,6 +51,15 @@ running the mock server without the Tauri shell.
 ## `delete` options
 
 - `--id <collection_id>` — collection to remove (required)
+
+## `rename` options
+
+- `--id <collection_id>` — collection to rename (required)
+- `--name <new_name>` — new display name (required, trimmed, non-empty)
+
+## `export-all` options
+
+- `--output <path>` — write to file; default: stdout
 
 ## Example workflow
 

@@ -10,7 +10,9 @@ pub enum Command {
     Import,
     List,
     Export,
+    ExportAll,
     Delete,
+    Rename,
     Help,
     Version,
 }
@@ -35,6 +37,8 @@ pub struct CliArgs {
     pub auto_stop_secs: Option<u64>,
     /// Capture request bodies (≤4KB) into the request log.
     pub capture_bodies: bool,
+    /// New name for rename command.
+    pub new_name: Option<String>,
 }
 
 impl Default for CliArgs {
@@ -53,6 +57,7 @@ impl Default for CliArgs {
             export_collection_id: None,
             auto_stop_secs: None,
             capture_bodies: false,
+            new_name: None,
         }
     }
 }
@@ -94,7 +99,9 @@ where
         "import" => Command::Import,
         "list" => Command::List,
         "export" => Command::Export,
+        "export-all" => Command::ExportAll,
         "delete" => Command::Delete,
+        "rename" => Command::Rename,
         "help" | "--help" | "-h" => Command::Help,
         "version" | "--version" | "-V" => Command::Version,
         other => return Err(CliError::UnknownCommand(other.to_string())),
@@ -187,6 +194,9 @@ where
             "capture-bodies" => {
                 out.capture_bodies = true;
             }
+            "name" => {
+                out.new_name = Some(take_value(&mut i)?);
+            }
             "help" | "h" => {
                 out.command = Command::Help;
             }
@@ -211,7 +221,9 @@ pub fn help_text() -> String {
     s.push_str("    import     Import an OpenAPI/cURL file into the SQLite store\n");
     s.push_str("    list       List collections stored in the database\n");
     s.push_str("    export     Print a collection snapshot as JSON\n");
+    s.push_str("    export-all Print all collections as a JSON array\n");
     s.push_str("    delete     Remove a collection from the database\n");
+    s.push_str("    rename     Rename an existing collection\n");
     s.push_str("    help       Print this help\n");
     s.push_str("    version    Print the crate version\n\n");
     s.push_str("SHARED OPTIONS:\n");
@@ -227,6 +239,9 @@ pub fn help_text() -> String {
     s.push_str("    --auto-stop-secs <n>     Stop after N seconds (useful in tests)\n\n");
     s.push_str("DELETE OPTIONS:\n");
     s.push_str("    --id <collection_id>     Collection to remove\n\n");
+    s.push_str("RENAME OPTIONS:\n");
+    s.push_str("    --id <collection_id>     Collection to rename\n");
+    s.push_str("    --name <new_name>        New display name\n\n");
     s.push_str("EXPORT OPTIONS:\n");
     s.push_str("    --id <collection_id>     Collection to export\n");
     s.push_str("    --output <path>          File to write (default: stdout)\n");

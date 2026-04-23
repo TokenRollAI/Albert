@@ -47,6 +47,16 @@ The parser invokes this right after building each `CanonicalEndpoint`, so
 imported collections ship with meaningful mocks out-of-the-box even before
 an OpenAI key is configured.
 
+## Validation
+
+`albert_core::validate_value(schema, value) -> Vec<String>` enforces the
+declared `node_type`, nullable-null agreement, and required-property
+presence. Arrays validate every item against `items`; objects walk
+`properties`. Enum/format/length constraints are intentionally not
+checked — callers that need them layer their own rules on top.
+
+Used by the OpenAI adapter for the schema-aware repair loop.
+
 ## cURL parser coverage
 
 The `albert-parser::curl` module recognizes the following flag set:

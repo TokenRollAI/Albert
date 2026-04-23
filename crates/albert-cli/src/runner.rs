@@ -27,8 +27,57 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::Import => run_import(args),
         Command::List => run_list(args),
         Command::Export => run_export(args),
+        Command::ExportAll => run_export_all(args),
         Command::Delete => run_delete(args),
+        Command::Rename => run_rename(args),
         Command::Serve => run_serve(args).await,
+    }
+}
+
+fn run_rename(args: CliArgs) -> Result<RunOutcome, String> {
+    let id = args
+        .export_collection_id
+        .as_ref()
+        .ok_or("--id <collection_id> is required for rename")?;
+    let name = args
+        .new_name
+        .as_ref()
+        .ok_or("--name <new_name> is required for rename")?;
+    if name.trim().is_empty() {
+        return Err("--name cannot be empty".into());
+    }
+    let store = prepare_store(&args.database_url)?;
+    let renamed = store
+        .rename_collection(id, name.trim())
+        .map_err(|e| e.to_string())?;
+    if renamed {
+        Ok(RunOutcome::Message(format!(
+            "renamed collection {id} to \"{}\"",
+            name.trim()
+        )))
+    } else {
+        Ok(RunOutcome::Message(format!(
+            "collection {id} was not present"
+        )))
+    }
+}
+
+fn run_export_all(args: CliArgs) -> Result<RunOutcome, String> {
+    let store = prepare_store(&args.database_url)?;
+    let collections = store.load_all_collections().map_err(|e| e.to_string())?;
+    let rendered =
+        serde_json::to_string_pretty(&collections).map_err(|e| format!("serialize: {e}"))?;
+    match args.export_output {
+        Some(path) => {
+            write_file(&path, &rendered)?;
+            Ok(RunOutcome::Message(format!(
+                "wrote {} bytes to {} ({} collection(s))",
+                rendered.len(),
+                path.display(),
+                collections.len()
+            )))
+        }
+        None => Ok(RunOutcome::Message(rendered)),
     }
 }
 

@@ -8,6 +8,8 @@ interface TopBarProps {
   onImportClick: () => void;
   onMockServerClick: () => void;
   onProvidersClick: () => void;
+  onExportAll: () => void;
+  canExportAll: boolean;
   gatewayRunning: boolean;
   gatewayBind: string | null;
 }
@@ -19,6 +21,8 @@ export function TopBar({
   onImportClick,
   onMockServerClick,
   onProvidersClick,
+  onExportAll,
+  canExportAll,
   gatewayRunning,
   gatewayBind
 }: TopBarProps) {
@@ -75,6 +79,17 @@ export function TopBar({
         >
           <Icon name="sparkles" size={14} />
           <span>Providers</span>
+        </button>
+
+        <button
+          type="button"
+          className="btn btn--icon"
+          onClick={onExportAll}
+          disabled={!canExportAll}
+          aria-label="Export all collections"
+          title="Export all collections"
+        >
+          <Icon name="save" size={16} />
         </button>
 
         <button
