@@ -430,6 +430,7 @@ mod tests {
                 schema: Some(schema),
             }],
             examples: Vec::new(),
+            auth: None,
         }
     }
 

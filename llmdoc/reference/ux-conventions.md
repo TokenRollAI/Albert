@@ -53,6 +53,13 @@ counts.
   list, set `limit` + `window (ms)`, "Add / replace rule", and "Apply"
   ships the full map via `update_mock_server`. Limit 0 models a
   maintenance window (backend returns 429 for every request).
+  Further down, the **Auth gates** section offers a single
+  "Seed from OpenAPI security" button — it walks every imported
+  endpoint, converts the captured `auth` hint into a `required_headers`
+  rule (`lib/authHints.ts`), and applies them in one shot. Only seedable
+  schemes (HTTP bearer / basic, OAuth2, header-placed API keys) emit
+  rules; unsupported schemes surface as descriptive notes on the
+  endpoint card.
 - **Routes tab** — one row per registered route, with a dropdown to pick
   the served example kind. Changes collect as a draft; `Apply (N)` sends
   them to `update_mock_server`.
@@ -82,6 +89,18 @@ above the sub-tabs via a tiny in-house Markdown renderer
 `*italic*`, `[link](https://…)`. Paragraphs split on blank lines, single
 newlines become `<br>`. No headings or lists — endpoint descriptions
 rarely need more and the renderer stays dependency-free.
+
+## Endpoint auth hint
+
+When the OpenAPI spec declared a `security` requirement for the
+endpoint (or inherited one from the document root), the canonical
+endpoint carries an `auth` field with enough info to describe the
+expected header. RequestPanel shows a compact warning-tinted chip
+between the description and the sub-tabs, reading e.g.
+`Authorization: Bearer …` or `X-Api-Key: <api key>`. The chip also
+echoes the securityScheme description when present. This is purely
+informational; gateway enforcement still requires the user to seed
+`required_headers` via the Mock Server → Auth gates button.
 
 ## Try-it panel
 

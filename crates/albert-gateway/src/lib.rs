@@ -374,6 +374,7 @@ mod tests {
                     note: None,
                 },
             ],
+            auth: None,
         }
     }
 

@@ -1,11 +1,27 @@
 import { Markdown } from "./Markdown";
 import { SchemaTree, type SchemaNodeShape } from "./SchemaTree";
 import type {
+  AuthRequirementHint,
   CanonicalEndpoint,
   CanonicalParameter,
   EndpointTab,
   InspectorKey
 } from "../types";
+
+function describeAuth(hint: AuthRequirementHint): string {
+  switch (hint.scheme) {
+    case "http_bearer":
+      return `${hint.header_name}: Bearer …`;
+    case "http_basic":
+      return `${hint.header_name}: Basic …`;
+    case "oauth2":
+      return `${hint.header_name}: Bearer … (OAuth2)`;
+    case "api_key_header":
+      return `${hint.header_name}: <api key>`;
+    default:
+      return `${hint.header_name} (custom scheme)`;
+  }
+}
 
 interface RequestPanelProps {
   tab: EndpointTab;
@@ -29,6 +45,23 @@ export function RequestPanel({ tab, onSelectInspector }: RequestPanelProps) {
       {endpoint.description ? (
         <div className="endpoint-desc">
           <Markdown source={endpoint.description} />
+        </div>
+      ) : null}
+      {endpoint.auth ? (
+        <div
+          className="endpoint-auth"
+          role="note"
+          aria-label="Endpoint auth requirement"
+        >
+          <span className="endpoint-auth__label">Auth</span>
+          <code className="endpoint-auth__scheme">
+            {describeAuth(endpoint.auth)}
+          </code>
+          {endpoint.auth.description ? (
+            <span className="endpoint-auth__desc">
+              {endpoint.auth.description}
+            </span>
+          ) : null}
         </div>
       ) : null}
       <nav className="request-panel__tabs" role="tablist">

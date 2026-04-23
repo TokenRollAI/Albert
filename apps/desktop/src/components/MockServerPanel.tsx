@@ -84,6 +84,7 @@ interface MockServerPanelProps {
   onApplyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
   onToggleCaptureBodies: (enabled: boolean) => Promise<void>;
   onApplyRateLimits: (rules: Record<string, RateLimitRule>) => Promise<void>;
+  onSeedRequiredHeadersFromHints: () => Promise<void>;
   onReplayRequest?: (entry: RequestLogEntry) => void;
 }
 
@@ -104,6 +105,7 @@ export function MockServerPanel({
   onApplyChaos,
   onToggleCaptureBodies,
   onApplyRateLimits,
+  onSeedRequiredHeadersFromHints,
   onReplayRequest
 }: MockServerPanelProps) {
   const initialHost =
@@ -392,6 +394,40 @@ export function MockServerPanel({
               value={status.config.rate_limits ?? {}}
               onApply={onApplyRateLimits}
             />
+          ) : null}
+
+          {tab === "runtime" ? (
+            <section className="panel">
+              <div className="panel__title panel__title--row">
+                <h3>Auth gates</h3>
+                <span className="panel__meta">
+                  {Object.keys(status.config.required_headers ?? {}).length}{" "}
+                  active rule
+                  {Object.keys(status.config.required_headers ?? {}).length === 1
+                    ? ""
+                    : "s"}
+                </span>
+              </div>
+              <p className="hint">
+                Seed <code>required_headers</code> rules from the OpenAPI
+                <code> securitySchemes</code> declarations captured at import
+                time. Unauthorized requests then return 401 before touching
+                mock data. Only HTTP bearer / basic, OAuth2, and
+                header-placed API keys are seedable; other schemes surface
+                as notes.
+              </p>
+              <div className="row-actions">
+                <button
+                  type="button"
+                  className="btn btn--primary btn--sm"
+                  onClick={() => void onSeedRequiredHeadersFromHints()}
+                  disabled={!status.running}
+                >
+                  <Icon name="shield" size={12} />
+                  <span>Seed from OpenAPI security</span>
+                </button>
+              </div>
+            </section>
           ) : null}
 
           {tab === "routes" ? (

@@ -1,10 +1,12 @@
 import { useCallback } from "react";
+import { seedRequiredHeadersFromEndpoints } from "../lib/authHints";
 import { seedTryItDraft } from "./useTryItDraft";
 import type {
   CanonicalEndpoint,
   MockExampleKind,
   RateLimitRule,
   RequestLogEntry,
+  RequiredHeader,
   SidebarCollection
 } from "../types";
 import type { UseToasts } from "./useToasts";
@@ -22,6 +24,7 @@ interface UseGatewayActionsArgs {
       errorRate?: number;
       captureBodies?: boolean;
       rateLimits?: Record<string, RateLimitRule>;
+      requiredHeaders?: Record<string, RequiredHeader[]>;
     }) => Promise<unknown>;
   };
   sidebarCollections: SidebarCollection[];
@@ -44,6 +47,7 @@ export interface GatewayActions {
   applyRateLimits: (
     rules: Record<string, RateLimitRule>
   ) => Promise<void>;
+  seedRequiredHeadersFromHints: () => Promise<void>;
   replayRequest: (entry: RequestLogEntry) => void;
 }
 
@@ -130,6 +134,26 @@ export function useGatewayActions({
     [mockGateway, toasts]
   );
 
+  const seedRequiredHeadersFromHints = useCallback<
+    GatewayActions["seedRequiredHeadersFromHints"]
+  >(async () => {
+    const allEndpoints = sidebarCollections.flatMap((c) => c.endpoints);
+    const seeded = seedRequiredHeadersFromEndpoints(allEndpoints);
+    const count = Object.keys(seeded).length;
+    if (count === 0) {
+      toasts.warn(
+        "No seedable auth hints found in imported endpoints."
+      );
+      return;
+    }
+    const result = await mockGateway.update({ requiredHeaders: seeded });
+    if (result) {
+      toasts.success(
+        `Seeded auth gates for ${count} route${count === 1 ? "" : "s"} from OpenAPI security.`
+      );
+    }
+  }, [mockGateway, sidebarCollections, toasts]);
+
   const replayRequest = useCallback<GatewayActions["replayRequest"]>(
     (entry) => {
       if (!entry.matched_route) return;
@@ -170,6 +194,7 @@ export function useGatewayActions({
     applyChaos,
     toggleCaptureBodies,
     applyRateLimits,
+    seedRequiredHeadersFromHints,
     replayRequest
   };
 }

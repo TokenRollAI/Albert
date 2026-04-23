@@ -76,6 +76,20 @@ export interface CanonicalResponse {
   } | null;
 }
 
+export type AuthScheme =
+  | "http_bearer"
+  | "http_basic"
+  | "api_key_header"
+  | "oauth2"
+  | "other";
+
+export interface AuthRequirementHint {
+  scheme: AuthScheme;
+  header_name: string;
+  value_prefix?: string | null;
+  description?: string | null;
+}
+
 export interface CanonicalEndpoint {
   operation_id?: string | null;
   method: string;
@@ -92,6 +106,7 @@ export interface CanonicalEndpoint {
     payload?: unknown;
     note?: string | null;
   }>;
+  auth?: AuthRequirementHint | null;
 }
 
 export interface CanonicalApiCollection {

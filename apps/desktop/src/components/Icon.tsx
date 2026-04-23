@@ -24,7 +24,8 @@ export type IconName =
   | "copy"
   | "zap"
   | "link"
-  | "info";
+  | "info"
+  | "shield";
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName;
@@ -204,6 +205,13 @@ function renderPath(name: IconName) {
           <circle cx="12" cy="12" r="9" />
           <line x1="12" y1="11" x2="12" y2="17" />
           <circle cx="12" cy="8" r="0.6" fill="currentColor" />
+        </>
+      );
+    case "shield":
+      return (
+        <>
+          <path d="M12 3 4 6v5c0 5 3.4 8.4 8 10 4.6-1.6 8-5 8-10V6l-8-3z" />
+          <polyline points="9 12 11 14 15 10" />
         </>
       );
     default:

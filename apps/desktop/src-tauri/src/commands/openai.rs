@@ -141,6 +141,7 @@ pub async fn test_provider_connection(args: TestConnectionArgs) -> TestConnectio
         request_body: None,
         responses: Vec::new(),
         examples: Vec::new(),
+        auth: None,
     };
     let bundle = albert_openai::build_prompt_bundle(&endpoint, GenerationIntent::Success);
 

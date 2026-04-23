@@ -580,6 +580,7 @@ mod tests {
                     schema: Some(SchemaNode::object()),
                 }],
                 examples: default_mock_examples(),
+                auth: None,
             },
             CanonicalEndpoint {
                 path: "/orders".to_string(),
@@ -601,6 +602,7 @@ mod tests {
                     schema: Some(SchemaNode::object()),
                 }],
                 examples: default_mock_examples(),
+                auth: None,
             },
         ];
 
@@ -671,6 +673,7 @@ mod tests {
                     schema: Some(SchemaNode::object()),
                 }],
                 examples: default_mock_examples(),
+                auth: None,
             }],
         };
         store.save_collection(&collection).unwrap();
@@ -762,6 +765,7 @@ mod tests {
                     schema: Some(SchemaNode::object()),
                 }],
                 examples: default_mock_examples(),
+                auth: None,
             }],
         }
     }

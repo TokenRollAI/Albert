@@ -761,4 +761,108 @@ paths:
             .unwrap();
         assert_eq!(success.payload["state"], "active");
     }
+
+    #[test]
+    fn extracts_bearer_security_hint_from_top_level_requirement() {
+        let spec = r#"{
+  "openapi": "3.0.3",
+  "info": { "title": "Secure", "version": "1" },
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/secret": {
+      "get": {
+        "operationId": "getSecret",
+        "responses": {
+          "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Use a signed JWT"
+      }
+    }
+  }
+}"#;
+        let collection = parse_source(ParseSource {
+            name: Some("secure".to_string()),
+            body: spec.to_string(),
+        })
+        .unwrap();
+        let auth = collection.endpoints[0]
+            .auth
+            .as_ref()
+            .expect("security hint present");
+        assert_eq!(auth.header_name, "Authorization");
+        assert_eq!(auth.value_prefix.as_deref(), Some("Bearer "));
+        assert_eq!(auth.scheme, albert_core::AuthScheme::HttpBearer);
+        assert!(auth.seedable());
+        assert_eq!(auth.description.as_deref(), Some("Use a signed JWT"));
+    }
+
+    #[test]
+    fn operation_level_security_overrides_top_level() {
+        let spec = r#"{
+  "openapi": "3.0.3",
+  "info": { "title": "OverrideAuth", "version": "1" },
+  "security": [{ "basicAuth": [] }],
+  "paths": {
+    "/keys": {
+      "get": {
+        "security": [{ "apiKeyAuth": [] }],
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "basicAuth": { "type": "http", "scheme": "basic" },
+      "apiKeyAuth": {
+        "type": "apiKey", "in": "header", "name": "X-Api-Key"
+      }
+    }
+  }
+}"#;
+        let collection = parse_source(ParseSource {
+            name: Some("override".to_string()),
+            body: spec.to_string(),
+        })
+        .unwrap();
+        let auth = collection.endpoints[0].auth.as_ref().unwrap();
+        assert_eq!(auth.header_name, "X-Api-Key");
+        assert_eq!(auth.scheme, albert_core::AuthScheme::ApiKeyHeader);
+        assert!(auth.value_prefix.is_none());
+    }
+
+    #[test]
+    fn empty_operation_security_clears_inherited_requirement() {
+        let spec = r#"{
+  "openapi": "3.0.3",
+  "info": { "title": "Public", "version": "1" },
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/health": {
+      "get": {
+        "security": [],
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" }
+    }
+  }
+}"#;
+        let collection = parse_source(ParseSource {
+            name: Some("public".to_string()),
+            body: spec.to_string(),
+        })
+        .unwrap();
+        assert!(collection.endpoints[0].auth.is_none());
+    }
 }

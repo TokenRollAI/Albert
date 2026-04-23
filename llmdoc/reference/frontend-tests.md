@@ -37,6 +37,9 @@
 - `components/__tests__/RateLimitsEditor.test.tsx` — adds, removes, and
   applies rate-limit rules, verifying the draft-vs-value dirty gate and
   the exact payload shipped to `onApply`.
+- `lib/__tests__/authHints.test.ts` — covers the hint→RequiredHeader
+  conversion for bearer / basic / OAuth2 / apiKey-header schemes and
+  the `seedRequiredHeadersFromEndpoints` batch helper.
 
 ## CI integration
 

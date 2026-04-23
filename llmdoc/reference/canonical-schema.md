@@ -21,6 +21,13 @@ This document defines the internal representation that all ingestion formats sho
 - `SchemaNode`
 - `MockExample`
 - `ProviderConfig`
+- `AuthRequirement` / `AuthScheme` — optional hint captured from the
+  source spec describing the header an endpoint expects. Populated by
+  the OpenAPI parser from operation-level `security` (falling back to
+  the document-level default). An empty operation-level `security: []`
+  explicitly clears any inherited requirement. The field is
+  `#[serde(default)]` so older snapshots deserialize without migration.
+  cURL imports leave it `None`.
 
 ## Sources of Truth
 

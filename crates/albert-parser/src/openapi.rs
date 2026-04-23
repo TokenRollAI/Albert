@@ -1,13 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use albert_core::{
-    CanonicalApiCollection, CanonicalEndpoint, CanonicalParameter, CanonicalRequestBody,
-    CanonicalResponse, HttpMethod, InputSourceKind, ParameterLocation, SchemaNode, SchemaNodeType,
-    synthesize_examples,
+    AuthRequirement, AuthScheme, CanonicalApiCollection, CanonicalEndpoint, CanonicalParameter,
+    CanonicalRequestBody, CanonicalResponse, HttpMethod, InputSourceKind, ParameterLocation,
+    SchemaNode, SchemaNodeType, synthesize_examples,
 };
 use openapiv3::{
-    Components, MediaType, ObjectType, OpenAPI, Operation, Parameter, ParameterSchemaOrContent,
-    PathItem, ReferenceOr, RequestBody, Response, Schema, SchemaKind, StatusCode, Type,
+    APIKeyLocation, Components, MediaType, ObjectType, OpenAPI, Operation, Parameter,
+    ParameterSchemaOrContent, PathItem, ReferenceOr, RequestBody, Response, Schema, SchemaKind,
+    SecurityRequirement, SecurityScheme, StatusCode, Type,
 };
 use serde_json::Value;
 
@@ -33,12 +34,18 @@ impl ApiParser for OpenApiParser {
         let collection_name = source.name.unwrap_or_else(|| spec.info.title.clone());
 
         let mut endpoints = Vec::new();
+        let default_security = spec.security.as_ref();
         for (path, item_ref) in spec.paths.iter() {
             let Some(path_item) = item_ref.as_item() else {
                 continue;
             };
 
-            endpoints.extend(path_item_to_endpoints(path, path_item, components)?);
+            endpoints.extend(path_item_to_endpoints(
+                path,
+                path_item,
+                components,
+                default_security,
+            )?);
         }
 
         Ok(CanonicalApiCollection {
@@ -61,12 +68,18 @@ fn path_item_to_endpoints(
     path: &str,
     path_item: &PathItem,
     components: Option<&Components>,
+    default_security: Option<&Vec<SecurityRequirement>>,
 ) -> Result<Vec<CanonicalEndpoint>, ParseError> {
     let mut endpoints = Vec::new();
 
     for (method, operation) in path_item.iter() {
         endpoints.push(operation_to_endpoint(
-            path, method, path_item, operation, components,
+            path,
+            method,
+            path_item,
+            operation,
+            components,
+            default_security,
         )?);
     }
 
@@ -79,6 +92,7 @@ fn operation_to_endpoint(
     path_item: &PathItem,
     operation: &Operation,
     components: Option<&Components>,
+    default_security: Option<&Vec<SecurityRequirement>>,
 ) -> Result<CanonicalEndpoint, ParseError> {
     let mut parameters = BTreeMap::new();
 
@@ -100,6 +114,11 @@ fn operation_to_endpoint(
 
     let responses = responses_to_canonical(&operation.responses.responses, components)?;
 
+    // Operation-level security overrides the top-level default (even when
+    // empty — an empty list means "explicitly no auth required").
+    let effective_security = operation.security.as_ref().or(default_security);
+    let auth = effective_security.and_then(|reqs| resolve_auth_hint(reqs, components));
+
     let mut endpoint = CanonicalEndpoint {
         operation_id: operation.operation_id.clone(),
         method: http_method_from_str(method)?,
@@ -117,9 +136,99 @@ fn operation_to_endpoint(
         request_body,
         responses,
         examples: Vec::new(),
+        auth,
     };
     endpoint.examples = synthesize_examples(&endpoint);
     Ok(endpoint)
+}
+
+/// Walk the security requirement list and return the first entry we can
+/// faithfully express as an `AuthRequirement`. Handles the common cases
+/// (HTTP bearer, HTTP basic, apiKey-in-header, OAuth2) and silently skips
+/// requirements that place the credential elsewhere (query, cookie) or
+/// schemes we can't encode (OpenID Connect discovery flows, mTLS).
+fn resolve_auth_hint(
+    requirements: &[SecurityRequirement],
+    components: Option<&Components>,
+) -> Option<AuthRequirement> {
+    let components = components?;
+    for requirement in requirements {
+        for scheme_name in requirement.keys() {
+            let scheme_ref = components.security_schemes.get(scheme_name)?;
+            let scheme = scheme_ref.as_item()?;
+            if let Some(hint) = security_scheme_to_hint(scheme) {
+                return Some(hint);
+            }
+        }
+    }
+    None
+}
+
+fn security_scheme_to_hint(scheme: &SecurityScheme) -> Option<AuthRequirement> {
+    match scheme {
+        SecurityScheme::HTTP {
+            scheme: http_scheme,
+            description,
+            ..
+        } => {
+            let lower = http_scheme.to_ascii_lowercase();
+            if lower == "bearer" {
+                Some(AuthRequirement {
+                    scheme: AuthScheme::HttpBearer,
+                    header_name: "Authorization".to_string(),
+                    value_prefix: Some("Bearer ".to_string()),
+                    description: description.clone(),
+                })
+            } else if lower == "basic" {
+                Some(AuthRequirement {
+                    scheme: AuthScheme::HttpBasic,
+                    header_name: "Authorization".to_string(),
+                    value_prefix: Some("Basic ".to_string()),
+                    description: description.clone(),
+                })
+            } else {
+                Some(AuthRequirement {
+                    scheme: AuthScheme::Other,
+                    header_name: "Authorization".to_string(),
+                    value_prefix: None,
+                    description: Some(format!("HTTP {http_scheme} auth")),
+                })
+            }
+        }
+        SecurityScheme::APIKey {
+            location: APIKeyLocation::Header,
+            name,
+            description,
+            ..
+        } => Some(AuthRequirement {
+            scheme: AuthScheme::ApiKeyHeader,
+            header_name: name.clone(),
+            value_prefix: None,
+            description: description.clone(),
+        }),
+        // API keys in query / cookie can't be expressed as a header gate.
+        // Surface them as `Other` so the UI still explains the ask.
+        SecurityScheme::APIKey { location, name, .. } => Some(AuthRequirement {
+            scheme: AuthScheme::Other,
+            header_name: name.clone(),
+            value_prefix: None,
+            description: Some(format!("API key in {location:?}")),
+        }),
+        SecurityScheme::OAuth2 { description, .. } => Some(AuthRequirement {
+            scheme: AuthScheme::OAuth2,
+            header_name: "Authorization".to_string(),
+            value_prefix: Some("Bearer ".to_string()),
+            description: description.clone(),
+        }),
+        SecurityScheme::OpenIDConnect { description, .. } => Some(AuthRequirement {
+            scheme: AuthScheme::Other,
+            header_name: "Authorization".to_string(),
+            value_prefix: Some("Bearer ".to_string()),
+            description: description
+                .clone()
+                .or_else(|| Some("OpenID Connect".to_string())),
+        }),
+    }
 }
 
 fn responses_to_canonical(

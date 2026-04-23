@@ -52,6 +52,7 @@ impl ApiParser for CurlParser {
                 schema: None,
             }],
             examples: Vec::new(),
+            auth: None,
         };
         endpoint.examples = synthesize_examples(&endpoint);
         Ok(CanonicalApiCollection {

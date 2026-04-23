@@ -70,6 +70,52 @@ pub struct CanonicalEndpoint {
     pub request_body: Option<CanonicalRequestBody>,
     pub responses: Vec<CanonicalResponse>,
     pub examples: Vec<MockExample>,
+    /// Hint extracted from the source spec (OpenAPI security) describing
+    /// the simplest auth header expected by this endpoint. The mock
+    /// gateway does not enforce it on its own — the UI surfaces it so the
+    /// user can opt into seeding a real `required_headers` rule. Stays
+    /// `None` for cURL imports and for endpoints with no security
+    /// requirement.
+    #[serde(default)]
+    pub auth: Option<AuthRequirement>,
+}
+
+/// Minimal description of an endpoint's auth expectation — enough to
+/// derive a `gateway::RequiredHeader` rule when the user asks to seed one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuthRequirement {
+    pub scheme: AuthScheme,
+    /// Header the client is expected to send (e.g. `Authorization`, or
+    /// a custom name for header-placed API keys).
+    pub header_name: String,
+    /// Prefix the header value must start with — typically `Bearer ` for
+    /// HTTP bearer tokens or `Basic ` for HTTP basic. `None` for API keys
+    /// (the raw key is the whole value).
+    #[serde(default)]
+    pub value_prefix: Option<String>,
+    /// Free-form description lifted from the OpenAPI securityScheme, so
+    /// the UI can hint at expected formats without re-reading the spec.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthScheme {
+    /// RFC 6750 bearer tokens via the `Authorization` header.
+    HttpBearer,
+    /// RFC 7617 basic auth via the `Authorization` header.
+    HttpBasic,
+    /// OpenAPI `apiKey in: header` — raw key in a custom header.
+    ApiKeyHeader,
+    /// OAuth2 flows always send `Authorization: Bearer <token>` on
+    /// request, so we normalize them to the bearer shape when seeding.
+    #[serde(rename = "oauth2")]
+    OAuth2,
+    /// Anything we can't map faithfully (mTLS, OIDC with unusual
+    /// placement). Kept as a hint so the UI can show a note without
+    /// attempting to generate a gate.
+    Other,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -358,6 +404,21 @@ fn is_error_status(code: &str) -> bool {
     code.starts_with('4') || code.starts_with('5')
 }
 
+impl AuthRequirement {
+    /// Whether this requirement maps cleanly onto a header rule the gateway
+    /// can enforce. `Other` schemes (OIDC, mTLS, unusual placements) are
+    /// surfaced as hints but do not seed rules.
+    pub fn seedable(&self) -> bool {
+        matches!(
+            self.scheme,
+            AuthScheme::HttpBearer
+                | AuthScheme::HttpBasic
+                | AuthScheme::ApiKeyHeader
+                | AuthScheme::OAuth2
+        )
+    }
+}
+
 /// Produce `success / empty / error` mock examples for an endpoint by walking
 /// its response schemas. Falls back to the generic default payload when a
 /// response is missing.
@@ -623,6 +684,7 @@ mod synth_tests {
             request_body: None,
             responses,
             examples: Vec::new(),
+            auth: None,
         }
     }
 
