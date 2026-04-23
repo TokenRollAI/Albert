@@ -15,7 +15,10 @@ const EMPTY_STATUS: GatewayStatus = {
     host: "127.0.0.1",
     port: 4317,
     cors_enabled: true,
-    example_overrides: {}
+    example_overrides: {},
+    default_latency_ms: null,
+    latency_overrides: {},
+    error_rate: 0
   },
   routes: []
 };
@@ -34,6 +37,14 @@ interface StartArgs {
   databaseUrl?: string;
 }
 
+interface UpdateArgs {
+  overrides?: Record<string, MockExampleKind>;
+  collectionIds?: string[];
+  defaultLatencyMs?: number | null;
+  latencyOverrides?: Record<string, number>;
+  errorRate?: number;
+}
+
 interface UseMockGatewayResult {
   status: GatewayStatus;
   busy: boolean;
@@ -42,10 +53,7 @@ interface UseMockGatewayResult {
   start: (args: StartArgs) => Promise<GatewayStatus | null>;
   stop: () => Promise<void>;
   refresh: () => Promise<void>;
-  update: (
-    overrides?: Record<string, MockExampleKind>,
-    collectionIds?: string[]
-  ) => Promise<GatewayStatus | null>;
+  update: (args: UpdateArgs) => Promise<GatewayStatus | null>;
 }
 
 export function useMockGateway({
@@ -176,10 +184,7 @@ export function useMockGateway({
   }, [enabled]);
 
   const update = useCallback(
-    async (
-      overrides?: Record<string, MockExampleKind>,
-      collectionIds?: string[]
-    ) => {
+    async (args: UpdateArgs) => {
       if (!enabled) {
         return null;
       }
@@ -188,8 +193,14 @@ export function useMockGateway({
       try {
         const next = await invoke<GatewayStatus>("update_mock_server", {
           args: {
-            example_overrides: overrides ?? null,
-            collection_ids: collectionIds ?? null,
+            example_overrides: args.overrides ?? null,
+            collection_ids: args.collectionIds ?? null,
+            default_latency_ms:
+              args.defaultLatencyMs === null || args.defaultLatencyMs === 0
+                ? 0
+                : args.defaultLatencyMs ?? null,
+            latency_overrides: args.latencyOverrides ?? null,
+            error_rate: args.errorRate ?? null,
             database_url: null
           }
         });

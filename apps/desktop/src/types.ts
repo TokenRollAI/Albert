@@ -151,6 +151,7 @@ export interface GatewayRouteSummary {
   summary?: string | null;
   selected_example?: MockExampleKind | null;
   available_examples: MockExampleKind[];
+  latency_ms?: number | null;
 }
 
 export interface GatewayConfig {
@@ -158,6 +159,9 @@ export interface GatewayConfig {
   port: number;
   cors_enabled: boolean;
   example_overrides: Record<string, MockExampleKind>;
+  default_latency_ms?: number | null;
+  latency_overrides?: Record<string, number>;
+  error_rate?: number;
 }
 
 export interface GatewayStatus {
@@ -179,6 +183,7 @@ export interface RequestLogEntry {
   status: number;
   kind?: MockExampleKind | null;
   source: string;
+  latency_ms: number;
 }
 
 export interface ProviderConfigDraft {

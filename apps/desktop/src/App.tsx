@@ -323,10 +323,27 @@ function App() {
 
   const handleApplyOverrides = useCallback(
     async (overrides: Record<string, MockExampleKind>) => {
-      const result = await mockGateway.update(overrides);
+      const result = await mockGateway.update({ overrides });
       if (result) {
         toasts.info(
           `Applied overrides for ${Object.keys(overrides).length} route(s).`
+        );
+      }
+    },
+    [mockGateway, toasts]
+  );
+
+  const handleApplyChaos = useCallback(
+    async (defaultLatencyMs: number, errorRate: number) => {
+      const result = await mockGateway.update({
+        defaultLatencyMs,
+        errorRate
+      });
+      if (result) {
+        toasts.info(
+          errorRate > 0
+            ? `Chaos: ${defaultLatencyMs}ms latency, ${Math.round(errorRate * 100)}% errors.`
+            : `Latency floor set to ${defaultLatencyMs}ms.`
         );
       }
     },
@@ -482,6 +499,7 @@ function App() {
         onStart={handleStartGateway}
         onStop={mockGateway.stop}
         onApplyOverrides={handleApplyOverrides}
+        onApplyChaos={handleApplyChaos}
       />
 
       <ProvidersPanel

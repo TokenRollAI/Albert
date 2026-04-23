@@ -31,3 +31,14 @@ counts.
 - Body uses `.panel` sections for logical grouping; tabs when a drawer has
   three or more distinct views (e.g. Mock Server: Runtime / Routes /
   Requests).
+
+## Mock Server panel
+
+- **Runtime tab** — host / port / CORS + start/stop + Chaos controls
+  (default latency in ms, error rate in %). Reset button restores both to
+  zero.
+- **Routes tab** — one row per registered route, with a dropdown to pick
+  the served example kind. Changes collect as a draft; `Apply (N)` sends
+  them to `update_mock_server`.
+- **Requests tab** — scrolling log. Each row shows timestamp, method,
+  path, status, latency, served-kind or source label.

@@ -19,6 +19,7 @@ interface MockServerPanelProps {
   onApplyOverrides: (
     overrides: Record<string, MockExampleKind>
   ) => Promise<void>;
+  onApplyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
 }
 
 type TabKey = "runtime" | "routes" | "requests";
@@ -33,7 +34,8 @@ export function MockServerPanel({
   requests,
   onStart,
   onStop,
-  onApplyOverrides
+  onApplyOverrides,
+  onApplyChaos
 }: MockServerPanelProps) {
   const [host, setHost] = useState<string>(status.config.host ?? "127.0.0.1");
   const [port, setPort] = useState<string>(
@@ -46,6 +48,13 @@ export function MockServerPanel({
     Record<string, MockExampleKind>
   >({});
   const [applyBusy, setApplyBusy] = useState(false);
+  const [latencyMs, setLatencyMs] = useState<string>(
+    String(status.config.default_latency_ms ?? 0)
+  );
+  const [errorRatePct, setErrorRatePct] = useState<string>(
+    String(Math.round((status.config.error_rate ?? 0) * 100))
+  );
+  const [chaosBusy, setChaosBusy] = useState(false);
 
   const bind = status.bind_address ?? (status.running ? `${host}:${port}` : "—");
   const baseUrl = useMemo(
@@ -90,6 +99,17 @@ export function MockServerPanel({
       setDraftOverrides({});
     } finally {
       setApplyBusy(false);
+    }
+  }
+
+  async function applyChaos() {
+    const latency = Math.max(0, Number.parseInt(latencyMs, 10) || 0);
+    const errorPct = Math.max(0, Math.min(100, Number.parseInt(errorRatePct, 10) || 0));
+    setChaosBusy(true);
+    try {
+      await onApplyChaos(latency, errorPct / 100);
+    } finally {
+      setChaosBusy(false);
     }
   }
 
@@ -224,6 +244,69 @@ export function MockServerPanel({
                   {error}
                 </div>
               ) : null}
+            </section>
+          ) : null}
+
+          {tab === "runtime" ? (
+            <section className="panel">
+              <div className="panel__title panel__title--row">
+                <h3>Chaos controls</h3>
+                <span className="panel__meta">
+                  latency floor · random error rate
+                </span>
+              </div>
+              <div className="formgrid">
+                <label className="field">
+                  <span className="field__label">Default latency (ms)</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={latencyMs}
+                    onChange={(event) => setLatencyMs(event.target.value)}
+                    spellCheck={false}
+                    disabled={!status.running}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field__label">Error rate (0–100%)</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={errorRatePct}
+                    onChange={(event) => setErrorRatePct(event.target.value)}
+                    spellCheck={false}
+                    disabled={!status.running}
+                  />
+                </label>
+              </div>
+              <div className="row-actions">
+                <button
+                  type="button"
+                  className="btn btn--primary btn--sm"
+                  onClick={applyChaos}
+                  disabled={!status.running || chaosBusy}
+                >
+                  <Icon name="zap" size={12} />
+                  <span>{chaosBusy ? "Applying…" : "Apply chaos"}</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => {
+                    setLatencyMs("0");
+                    setErrorRatePct("0");
+                    void onApplyChaos(0, 0);
+                  }}
+                  disabled={!status.running || chaosBusy}
+                >
+                  Reset
+                </button>
+              </div>
+              <p className="hint">
+                Delay and error rate apply to all routes while the server runs.
+                Per-route latency overrides can be added via the Tauri API
+                directly.
+              </p>
             </section>
           ) : null}
 
@@ -367,6 +450,15 @@ export function MockServerPanel({
                       >
                         {entry.status}
                       </span>
+                      {entry.latency_ms > 0 ? (
+                        <span className="reqlog__latency">
+                          {entry.latency_ms}ms
+                        </span>
+                      ) : (
+                        <span className="reqlog__latency reqlog__latency--zero">
+                          —
+                        </span>
+                      )}
                       {entry.kind ? (
                         <span className={`kind-chip kind-chip--${entry.kind}`}>
                           {entry.kind}

@@ -102,7 +102,7 @@ pub struct UpdateMockServerArgs {
     #[serde(default)]
     pub example_overrides: Option<BTreeMap<String, MockExampleKind>>,
     #[serde(default)]
-    pub default_latency_ms: Option<Option<u64>>,
+    pub default_latency_ms: Option<u64>,
     #[serde(default)]
     pub latency_overrides: Option<BTreeMap<String, u64>>,
     #[serde(default)]
@@ -137,9 +137,12 @@ pub async fn update_mock_server(
     };
 
     let current = services.gateway.status().await.config;
-    let default_latency_ms = args
-        .default_latency_ms
-        .unwrap_or(current.default_latency_ms);
+    // Treat 0 as "clear", any positive number as "set to n".
+    let default_latency_ms = match args.default_latency_ms {
+        None => current.default_latency_ms,
+        Some(0) => None,
+        Some(n) => Some(n),
+    };
     let latency_overrides = args.latency_overrides.unwrap_or(current.latency_overrides);
     let error_rate = args.error_rate.unwrap_or(current.error_rate);
 

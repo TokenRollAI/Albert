@@ -1851,3 +1851,16 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   justify-content: space-between;
   gap: 12px;
 }
+
+/* ---------- Request log: latency column ---------- */
+.reqlog__item {
+  grid-template-columns: 70px 48px minmax(0, 1fr) 44px 48px auto;
+}
+.reqlog__latency {
+  color: var(--text-muted);
+  text-align: right;
+  font-size: 11px;
+}
+.reqlog__latency--zero {
+  color: var(--text-faint);
+}
