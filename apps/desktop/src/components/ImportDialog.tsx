@@ -1,5 +1,13 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
+
+interface FetchedSource {
+  url: string;
+  content_type?: string | null;
+  body: string;
+  suggested_name?: string | null;
+}
 
 function basenameWithoutExtension(filename: string): string {
   const base = filename.split(/[\\/]/).pop() ?? filename;
@@ -17,6 +25,7 @@ interface ImportDialogProps {
   message: string | null;
   initialName?: string;
   initialBody?: string;
+  canFetch: boolean;
 }
 
 export function ImportDialog({
@@ -28,13 +37,36 @@ export function ImportDialog({
   busy,
   message,
   initialName = "",
-  initialBody = ""
+  initialBody = "",
+  canFetch
 }: ImportDialogProps) {
   const [name, setName] = useState(initialName);
   const [body, setBody] = useState(initialBody);
   const [dragging, setDragging] = useState(false);
+  const [fetchUrl, setFetchUrl] = useState("");
+  const [fetchBusy, setFetchBusy] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleFetchUrl() {
+    if (!fetchUrl.trim()) return;
+    setFetchBusy(true);
+    setFetchError(null);
+    try {
+      const result = await invoke<FetchedSource>("fetch_remote_source", {
+        args: { url: fetchUrl.trim() }
+      });
+      setBody(result.body);
+      if (!name.trim() && result.suggested_name) {
+        setName(result.suggested_name);
+      }
+    } catch (err) {
+      setFetchError(String(err));
+    } finally {
+      setFetchBusy(false);
+    }
+  }
 
   async function ingestFile(file: File) {
     const text = await file.text();
@@ -144,6 +176,38 @@ export function ImportDialog({
               disabled={busy !== null}
             />
           </label>
+
+          {canFetch ? (
+            <div className="field">
+              <span className="field__label-row">
+                <span>Fetch from URL</span>
+                {fetchError ? (
+                  <span className="modal__error" title={fetchError}>
+                    {fetchError}
+                  </span>
+                ) : null}
+              </span>
+              <div className="import__fetch">
+                <input
+                  type="text"
+                  value={fetchUrl}
+                  onChange={(event) => setFetchUrl(event.target.value)}
+                  placeholder="https://example.com/openapi.json"
+                  disabled={busy !== null || fetchBusy}
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="btn btn--secondary btn--sm"
+                  onClick={handleFetchUrl}
+                  disabled={busy !== null || fetchBusy || !fetchUrl.trim()}
+                >
+                  <Icon name="link" size={12} />
+                  <span>{fetchBusy ? "Fetching…" : "Fetch"}</span>
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <label className="field field--grow">
             <span className="field__label-row">

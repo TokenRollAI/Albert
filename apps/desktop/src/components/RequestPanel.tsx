@@ -1,3 +1,4 @@
+import { SchemaTree, type SchemaNodeShape } from "./SchemaTree";
 import type {
   CanonicalEndpoint,
   CanonicalParameter,
@@ -180,13 +181,13 @@ function SchemaView({ endpoint }: { endpoint: CanonicalEndpoint }) {
       {requestSchema ? (
         <div className="schema-card">
           <header>Request</header>
-          <pre>{JSON.stringify(requestSchema, null, 2)}</pre>
+          <SchemaTree schema={requestSchema as SchemaNodeShape} />
         </div>
       ) : null}
       {responseSchemas.map((entry) => (
         <div key={entry.status} className="schema-card">
           <header>Response · {entry.status}</header>
-          <pre>{JSON.stringify(entry.schema, null, 2)}</pre>
+          <SchemaTree schema={entry.schema as SchemaNodeShape} />
         </div>
       ))}
     </div>

@@ -18,6 +18,7 @@ pub fn run() {
             commands::parser::load_collection_snapshot,
             commands::parser::export_collection_json,
             commands::parser::delete_collection,
+            commands::fetch::fetch_remote_source,
             commands::gateway::start_mock_server,
             commands::gateway::stop_mock_server,
             commands::gateway::mock_server_status,

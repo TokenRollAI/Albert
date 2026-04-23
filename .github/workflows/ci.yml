@@ -11,7 +11,64 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
+  test:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+
+      # Exclude the Tauri app from Linux: it needs platform system libs
+      # (webkit2gtk, gtk3 etc.) that aren't installed by default. The
+      # Tauri crate is built in the `desktop` job below.
+      - name: Rust clippy (non-Tauri crates)
+        run: |
+          cargo clippy \
+            -p albert-core \
+            -p albert-parser \
+            -p albert-storage \
+            -p albert-gateway \
+            -p albert-openai \
+            -p albert-cli \
+            --all-targets -- -D warnings
+
+      - name: Rust tests (non-Tauri crates)
+        run: |
+          cargo test \
+            -p albert-core \
+            -p albert-parser \
+            -p albert-storage \
+            -p albert-gateway \
+            -p albert-openai \
+            -p albert-cli \
+            --no-fail-fast
+
+      - name: Build frontend
+        run: npm --workspace apps/desktop run build
+
+  desktop:
+    name: Desktop (macOS)
     runs-on: macos-latest
 
     steps:
@@ -27,7 +84,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -35,14 +92,11 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Check Rust formatting
-        run: cargo fmt --all --check
-
-      - name: Run Rust unit tests
-        run: cargo test -p albert-core -p albert-parser -p albert-storage
-
       - name: Check Rust workspace
         run: cargo check --workspace
+
+      - name: Rust clippy (desktop)
+        run: cargo clippy -p albert-desktop --all-targets -- -D warnings
 
       - name: Build frontend workspace
         run: npm run build

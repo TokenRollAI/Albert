@@ -48,6 +48,7 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
   const [params, setParams] = useState<Record<string, string>>({});
   const [query, setQuery] = useState<string>("");
   const [bodyDraft, setBodyDraft] = useState<string>("");
+  const [headers, setHeaders] = useState<Array<{ key: string; value: string }>>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<ResponseState | null>(null);
@@ -56,6 +57,7 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
     setParams({});
     setQuery("");
     setBodyDraft("");
+    setHeaders([]);
     setResponse(null);
     setError(null);
   }, [tab.id]);
@@ -69,10 +71,17 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
     try {
       const url = buildUrl(baseUrl, tab.endpoint.path, params, query);
       const method = tab.method.toUpperCase();
-      const headers: Record<string, string> = {};
-      const init: RequestInit = { method, headers };
+      const sendHeaders: Record<string, string> = {};
+      for (const { key, value } of headers) {
+        const trimmedKey = key.trim();
+        if (!trimmedKey) continue;
+        sendHeaders[trimmedKey] = value;
+      }
+      const init: RequestInit = { method, headers: sendHeaders };
       if (bodyDraft.trim() && method !== "GET" && method !== "HEAD") {
-        headers["content-type"] = "application/json";
+        if (!Object.keys(sendHeaders).some((k) => k.toLowerCase() === "content-type")) {
+          sendHeaders["content-type"] = "application/json";
+        }
         init.body = bodyDraft;
       }
       const start = performance.now();
@@ -149,6 +158,62 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
             spellCheck={false}
           />
         </label>
+      </div>
+
+      <div className="tryit__section">
+        <div className="tryit__label tryit__label--row">
+          <span>Headers</span>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() =>
+              setHeaders((prev) => [...prev, { key: "", value: "" }])
+            }
+          >
+            <Icon name="plus" size={12} />
+            <span>Add</span>
+          </button>
+        </div>
+        {headers.length === 0 ? (
+          <div className="tryit__hint">No custom headers.</div>
+        ) : (
+          <div className="tryit__headers">
+            {headers.map((header, idx) => (
+              <div key={idx} className="tryit__header-row">
+                <input
+                  type="text"
+                  placeholder="Authorization"
+                  value={header.key}
+                  onChange={(event) => {
+                    const next = [...headers];
+                    next[idx] = { ...next[idx], key: event.target.value };
+                    setHeaders(next);
+                  }}
+                  spellCheck={false}
+                />
+                <input
+                  type="text"
+                  placeholder="Bearer …"
+                  value={header.value}
+                  onChange={(event) => {
+                    const next = [...headers];
+                    next[idx] = { ...next[idx], value: event.target.value };
+                    setHeaders(next);
+                  }}
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="btn btn--icon btn--icon-sm"
+                  onClick={() => setHeaders(headers.filter((_, i) => i !== idx))}
+                  aria-label="Remove header"
+                >
+                  <Icon name="close" size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {tab.method.toUpperCase() !== "GET" &&

@@ -2023,3 +2023,138 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   color: var(--text);
   margin-right: 2px;
 }
+
+/* ---------- Import dialog fetch row ---------- */
+.import__fetch {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.import__fetch input {
+  flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.import__fetch input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.modal__error {
+  font-size: 11px;
+  color: var(--danger);
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Try-it header rows ---------- */
+.tryit__label--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.tryit__hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.tryit__headers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tryit__header-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+.tryit__header-row input {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.tryit__header-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ---------- Schema tree ---------- */
+.schema-tree,
+.schema-tree__children {
+  list-style: none;
+  margin: 0;
+  padding-left: 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.schema-tree {
+  padding-left: 0;
+}
+.schema-tree__row {
+  padding: 2px 0;
+}
+.schema-tree__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+.schema-tree__toggle {
+  width: 14px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+.schema-tree__toggle--leaf {
+  color: var(--text-faint);
+  cursor: default;
+}
+.schema-tree__name {
+  color: var(--accent);
+}
+.schema-tree__kind {
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.schema-tree__kind--object { color: var(--info); }
+.schema-tree__kind--array { color: var(--warning); }
+.schema-tree__kind--string { color: var(--success); }
+.schema-tree__kind--integer,
+.schema-tree__kind--number { color: var(--warning); }
+.schema-tree__kind--boolean { color: var(--info); }
+.schema-tree__required {
+  color: var(--danger);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.schema-tree__enum {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.schema-tree__desc {
+  margin-left: 20px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.schema-tree__empty {
+  color: var(--text-faint);
+  font-size: 12px;
+}

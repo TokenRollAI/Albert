@@ -19,6 +19,7 @@ albert-gateway = { path = "../../../crates/albert-gateway" }
 albert-openai = { path = "../../../crates/albert-openai" }
 albert-parser = { path = "../../../crates/albert-parser" }
 albert-storage = { path = "../../../crates/albert-storage" }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tauri = { workspace = true }

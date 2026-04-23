@@ -592,6 +592,7 @@ function App() {
         onParse={handleParsePreview}
         onImport={handleImport}
         canImport={isTauriRuntime}
+        canFetch={isTauriRuntime}
         busy={importBusy}
         message={importMessage}
         initialName="Albert Example API"
