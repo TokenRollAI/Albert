@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use albert_core::{
     CanonicalApiCollection, CanonicalEndpoint, CanonicalParameter, CanonicalRequestBody,
     CanonicalResponse, HttpMethod, InputSourceKind, ParameterLocation, SchemaNode, SchemaNodeType,
-    default_mock_examples,
+    synthesize_examples,
 };
 use openapiv3::{
     Components, MediaType, ObjectType, OpenAPI, Operation, Parameter, ParameterSchemaOrContent,
@@ -100,7 +100,7 @@ fn operation_to_endpoint(
 
     let responses = responses_to_canonical(&operation.responses.responses, components)?;
 
-    Ok(CanonicalEndpoint {
+    let mut endpoint = CanonicalEndpoint {
         operation_id: operation.operation_id.clone(),
         method: http_method_from_str(method)?,
         path: path.to_string(),
@@ -116,8 +116,10 @@ fn operation_to_endpoint(
         parameters: parameters.into_values().collect(),
         request_body,
         responses,
-        examples: default_mock_examples(),
-    })
+        examples: Vec::new(),
+    };
+    endpoint.examples = synthesize_examples(&endpoint);
+    Ok(endpoint)
 }
 
 fn responses_to_canonical(

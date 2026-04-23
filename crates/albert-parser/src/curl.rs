@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use albert_core::{
     CanonicalApiCollection, CanonicalEndpoint, CanonicalParameter, CanonicalRequestBody,
     CanonicalResponse, HttpMethod, InputSourceKind, ParameterLocation, SchemaNode,
-    default_mock_examples,
+    synthesize_examples,
 };
 use serde_json::Value;
 use url::Url;
@@ -36,6 +36,24 @@ impl ApiParser for CurlParser {
 
         let parsed = parse_curl_tokens(&tokens[1..])?;
 
+        let mut endpoint = CanonicalEndpoint {
+            operation_id: None,
+            method: parsed.method,
+            path: parsed.path.clone(),
+            summary: Some("Imported cURL request".to_string()),
+            description: Some("Canonical endpoint generated from cURL input.".to_string()),
+            tags: vec!["curl-import".to_string()],
+            parameters: parsed.parameters,
+            request_body: parsed.request_body,
+            responses: vec![CanonicalResponse {
+                status_code: "200".to_string(),
+                description: Some("Default response placeholder for cURL imports.".to_string()),
+                content_type: "application/json".to_string(),
+                schema: None,
+            }],
+            examples: Vec::new(),
+        };
+        endpoint.examples = synthesize_examples(&endpoint);
         Ok(CanonicalApiCollection {
             id: canonical_id(source.name.as_deref().unwrap_or("imported-curl-request")),
             name: source
@@ -43,23 +61,7 @@ impl ApiParser for CurlParser {
                 .unwrap_or_else(|| parsed.path.trim_matches('/').replace('/', "-")),
             source: InputSourceKind::Curl,
             description: Some("Imported from cURL".to_string()),
-            endpoints: vec![CanonicalEndpoint {
-                operation_id: None,
-                method: parsed.method,
-                path: parsed.path,
-                summary: Some("Imported cURL request".to_string()),
-                description: Some("Canonical endpoint generated from cURL input.".to_string()),
-                tags: vec!["curl-import".to_string()],
-                parameters: parsed.parameters,
-                request_body: parsed.request_body,
-                responses: vec![CanonicalResponse {
-                    status_code: "200".to_string(),
-                    description: Some("Default response placeholder for cURL imports.".to_string()),
-                    content_type: "application/json".to_string(),
-                    schema: None,
-                }],
-                examples: default_mock_examples(),
-            }],
+            endpoints: vec![endpoint],
         })
     }
 }

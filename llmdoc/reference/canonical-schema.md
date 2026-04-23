@@ -28,3 +28,22 @@ This document defines the internal representation that all ingestion formats sho
 - `docs/architecture.md`: higher-level layering and ownership
 - `docs/prd.md`: product intent and phase boundaries
 
+## Mock example synthesis
+
+`albert_core::synthesize_examples(endpoint)` walks the endpoint's
+`responses` to build `success / empty / error` mock payloads without any
+external model call. It:
+
+- picks the first 2xx response as the template for success + empty
+- picks the first 4xx/5xx response for the error payload
+- uses any `schema.example` verbatim when present
+- otherwise assigns type-aware defaults (object/array/string/int/number/bool/null)
+- applies simple field-name heuristics (`*id` → uuid, `*at|time|date` →
+  ISO-8601, `*email` → user@example.com, etc.)
+- collapses arrays to `[]` and primitives to zero/empty values for the
+  Empty variant
+
+The parser invokes this right after building each `CanonicalEndpoint`, so
+imported collections ship with meaningful mocks out-of-the-box even before
+an OpenAI key is configured.
+
