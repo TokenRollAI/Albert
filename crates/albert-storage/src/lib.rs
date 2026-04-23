@@ -162,6 +162,93 @@ impl SqliteStore {
             .map_err(StorageError::from)
     }
 
+    pub fn load_collection(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<CanonicalApiCollection>, StorageError> {
+        let connection = self.connect()?;
+        let mut statement =
+            connection.prepare("SELECT raw_snapshot FROM api_collections WHERE id = ?1")?;
+        let mut rows = statement.query(params![collection_id])?;
+        if let Some(row) = rows.next()? {
+            let snapshot: String = row.get(0)?;
+            let collection: CanonicalApiCollection = serde_json::from_str(&snapshot)?;
+            Ok(Some(collection))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn load_all_collections(&self) -> Result<Vec<CanonicalApiCollection>, StorageError> {
+        let connection = self.connect()?;
+        let mut statement =
+            connection.prepare("SELECT raw_snapshot FROM api_collections ORDER BY name ASC")?;
+        let rows = statement.query_map([], |row| {
+            let snapshot: String = row.get(0)?;
+            Ok(snapshot)
+        })?;
+        let mut collections = Vec::new();
+        for row in rows {
+            let snapshot = row?;
+            let collection: CanonicalApiCollection = serde_json::from_str(&snapshot)?;
+            collections.push(collection);
+        }
+        Ok(collections)
+    }
+
+    pub fn replace_mock_example(
+        &self,
+        collection_id: &str,
+        method: &str,
+        path: &str,
+        example: &MockExample,
+    ) -> Result<(), StorageError> {
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        let endpoint_id = endpoint_id(collection_id, method, path);
+        transaction.execute(
+            "DELETE FROM mock_examples WHERE endpoint_id = ?1 AND kind = ?2",
+            params![endpoint_id, example.kind.as_str()],
+        )?;
+        save_mock_example(&transaction, &endpoint_id, example)?;
+
+        let snapshot_raw: Option<String> = transaction
+            .query_row(
+                "SELECT raw_snapshot FROM api_collections WHERE id = ?1",
+                params![collection_id],
+                |row| row.get(0),
+            )
+            .ok();
+        if let Some(snapshot_raw) = snapshot_raw {
+            if let Ok(mut collection) =
+                serde_json::from_str::<CanonicalApiCollection>(&snapshot_raw)
+            {
+                for endpoint in collection.endpoints.iter_mut() {
+                    if endpoint.method.as_str().eq_ignore_ascii_case(method)
+                        && endpoint.path == path
+                    {
+                        if let Some(slot) = endpoint
+                            .examples
+                            .iter_mut()
+                            .find(|candidate| candidate.kind == example.kind)
+                        {
+                            *slot = example.clone();
+                        } else {
+                            endpoint.examples.push(example.clone());
+                        }
+                    }
+                }
+                transaction.execute(
+                    "UPDATE api_collections SET raw_snapshot = ?1 WHERE id = ?2",
+                    params![serde_json::to_string(&collection)?, collection_id],
+                )?;
+            }
+        }
+
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn list_endpoints(
         &self,
         collection_id: &str,

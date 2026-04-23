@@ -19,11 +19,14 @@
 - `llmdoc/startup.md`: startup reading order
 - `llmdoc/overview/project-overview.md`: project identity and boundaries
 - `llmdoc/architecture/system-boundaries.md`: module ownership and dependency direction
-- `llmdoc/architecture/request-flow.md`: planned import and mock flows
+- `llmdoc/architecture/request-flow.md`: current import / mock / AI flows
+- `llmdoc/architecture/runtime-state.md`: shared runtime services and tokio lifecycle
 - `llmdoc/reference/brand-assets.md`: brand asset source-of-truth and export rules
 - `llmdoc/reference/canonical-schema.md`: internal schema model
 - `llmdoc/reference/ci.md`: CI validation baseline
 - `llmdoc/reference/repo-layout.md`: repository map
+- `llmdoc/reference/gateway-routes.md`: mock gateway routing rules and special paths
+- `llmdoc/reference/openai-adapter.md`: OpenAI adapter contract and prompt schema
 
 ## Routing Rules
 
@@ -32,4 +35,6 @@
 - Read `reference/canonical-schema.md` before editing parser, gateway, or storage code.
 - Read `reference/ci.md` before changing repository validation workflows.
 - Read `reference/repo-layout.md` before adding new modules or moving files.
+- Read `reference/gateway-routes.md` before modifying route matching, example selection, or mock response headers.
+- Read `reference/openai-adapter.md` before changing provider requests, prompt construction, or response parsing.
 - Read `memory/decisions/` before changing foundational scope.

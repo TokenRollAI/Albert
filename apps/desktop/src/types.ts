@@ -89,6 +89,8 @@ export interface CanonicalEndpoint {
   examples: Array<{
     kind: string;
     title: string;
+    payload?: unknown;
+    note?: string | null;
   }>;
 }
 
@@ -120,4 +122,87 @@ export interface StoredEndpointSummary {
   method: string;
   path: string;
   summary?: string | null;
+}
+
+export type InspectorKey =
+  | "params"
+  | "headers"
+  | "body"
+  | "responses"
+  | "schema"
+  | "ai";
+
+export type ExampleKind = "success" | "empty" | "error";
+
+export type MockExampleKind = ExampleKind;
+
+export interface MockExample {
+  kind: MockExampleKind;
+  title: string;
+  payload: unknown;
+  note?: string | null;
+}
+
+export interface GatewayRouteSummary {
+  method: string;
+  path: string;
+  collection_name: string;
+  operation_id?: string | null;
+  summary?: string | null;
+  selected_example?: MockExampleKind | null;
+  available_examples: MockExampleKind[];
+}
+
+export interface GatewayConfig {
+  host: string;
+  port: number;
+  cors_enabled: boolean;
+  example_overrides: Record<string, MockExampleKind>;
+}
+
+export interface GatewayStatus {
+  running: boolean;
+  bind_address?: string | null;
+  route_count: number;
+  started_at_epoch_ms?: number | null;
+  config: GatewayConfig;
+  routes: GatewayRouteSummary[];
+}
+
+export interface ProviderConfigDraft {
+  provider_name: string;
+  base_url: string;
+  model: string;
+  api_key_env: string;
+}
+
+export interface GenerationRequest {
+  endpoint: CanonicalEndpoint;
+  intent: MockExampleKind;
+  provider: ProviderConfigDraft;
+  collection_id?: string;
+  persist?: boolean;
+  database_url?: string;
+  api_key_override?: string;
+}
+
+export type ThemeMode = "dark" | "light";
+
+export interface EndpointTab {
+  id: string;
+  collectionId: string;
+  collectionName: string;
+  method: string;
+  path: string;
+  endpoint: CanonicalEndpoint;
+  inspector: InspectorKey;
+  example: ExampleKind;
+}
+
+export interface SidebarCollection {
+  id: string;
+  name: string;
+  origin: "imported" | "preview" | "fallback";
+  source: "openapi" | "curl";
+  endpoints: CanonicalEndpoint[];
 }

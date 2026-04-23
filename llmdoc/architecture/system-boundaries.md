@@ -6,31 +6,57 @@ This document defines ownership boundaries so the foundation does not collapse i
 
 ## Core Components
 
-- `apps/desktop`: Tauri frontend shell and Rust command host
-- `crates/albert-core`: canonical types and shared contracts
-- `crates/albert-parser`: input normalization
-- `crates/albert-storage`: SQLite contract and migration ownership
-- `crates/albert-gateway`: local mock runtime contract
-- `crates/albert-openai`: OpenAI adapter contract
+- `apps/desktop` (`albert-desktop`): Tauri frontend shell + Rust command host.
+  Owns `AppServices` (currently wraps `MockGateway`) and all `#[tauri::command]`
+  entry points.
+- `crates/albert-core`: canonical types (`CanonicalApiCollection`,
+  `CanonicalEndpoint`, `SchemaNode`, `MockExample`, `ProviderConfig` …) and
+  shared contracts. Dependency-light.
+- `crates/albert-parser`: OpenAPI (v3) + cURL input normalization into the
+  canonical schema.
+- `crates/albert-storage`: SQLite schema, migrations, CRUD (`save_collection`,
+  `load_collection`, `load_all_collections`, `list_collections`,
+  `list_endpoints`, `replace_mock_example`, `save_provider_config`).
+- `crates/albert-gateway`: live mock HTTP gateway on axum + tokio. Owns
+  `MockGateway`, `MockRoute`, `RouteTable`, `GatewayConfig`, `GatewayStatus`.
+- `crates/albert-openai`: OpenAI-compatible Chat Completions adapter. Owns
+  `OpenAiChatAdapter`, `PromptBundle`, `GenerationIntent`, schema hinting
+  helpers.
 
 ## Flow
 
-- UI sends intent to Tauri commands.
-- Tauri commands coordinate internal crates.
+- UI → Tauri commands → internal crates.
 - Parser transforms inputs into canonical structures.
-- Storage persists canonical structures and mock examples.
-- Gateway consumes persisted artifacts later.
-- OpenAI adapter consumes canonical structures later.
+- Storage persists canonical structures and per-endpoint mock examples.
+- Gateway is given in-memory snapshots at start and serves HTTP until stopped.
+- OpenAI adapter consumes a canonical endpoint + intent, speaks HTTP to the
+  provider, returns a canonical `MockExample`.
 
 ## Invariants
 
-- `albert-core` remains dependency-light.
-- Parsers never expose raw upstream formats as the only persistent model.
+- `albert-core` remains dependency-light. No HTTP/runtime in core.
+- Parsers never expose raw upstream formats as the only persistent model;
+  everything flows through the canonical schema.
 - UI concerns stay out of domain crates.
+- Gateway never mutates storage. Storage never calls the gateway. The Tauri
+  host is the only place they touch each other.
+- OpenAI adapter never touches storage directly; persistence is the host's job.
+
+## Dependency direction
+
+```
+apps/desktop
+  ├─> albert-parser  ─> albert-core
+  ├─> albert-storage ─> albert-core
+  ├─> albert-gateway ─> albert-core
+  └─> albert-openai  ─> albert-core
+```
 
 ## Related Docs
 
 - `llmdoc/architecture/request-flow.md`
+- `llmdoc/architecture/runtime-state.md`
 - `llmdoc/reference/canonical-schema.md`
+- `llmdoc/reference/gateway-routes.md`
+- `llmdoc/reference/openai-adapter.md`
 - `docs/architecture.md`
-

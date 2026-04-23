@@ -1,26 +1,163 @@
+//! OpenAI-compatible Chat Completions adapter.
+//!
+//! Phase 4 runtime: builds structured mock examples by calling any
+//! OpenAI-compatible endpoint (e.g. OpenAI, Azure OpenAI, Qwen-compatible
+//! gateways, Together, DeepInfra...). JSON mode is requested and the raw
+//! response is parsed back into a `MockExample`.
+
+use std::time::Duration;
+
 use albert_core::{
-    CanonicalEndpoint, CapabilityStatus, DeliveryStage, MockExample, ProviderConfig,
+    CanonicalEndpoint, CanonicalParameter, CanonicalResponse, CapabilityStatus, DeliveryStage,
+    MockExample, ProviderConfig, SchemaNode, SchemaNodeType,
 };
+use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use thiserror::Error;
+
+pub mod prompt;
+
+pub use prompt::{GenerationIntent, PromptBundle, build_prompt_bundle};
+
+const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Debug, Clone)]
 pub struct OpenAiChatAdapter {
     pub config: ProviderConfig,
+    pub api_key: Option<String>,
+    pub timeout: Duration,
 }
 
 impl OpenAiChatAdapter {
     pub fn new(config: ProviderConfig) -> Self {
-        Self { config }
+        let api_key = std::env::var(&config.api_key_env).ok();
+        Self {
+            config,
+            api_key,
+            timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+        }
     }
 
-    pub fn generate_mock_example(
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.api_key = Some(api_key.into());
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub async fn generate_mock_example(
         &self,
-        _endpoint: &CanonicalEndpoint,
+        endpoint: &CanonicalEndpoint,
+        intent: GenerationIntent,
     ) -> Result<MockExample, OpenAiError> {
-        Err(OpenAiError::NotImplemented(
-            "OpenAI request execution lands after foundation setup",
-        ))
+        let bundle = build_prompt_bundle(endpoint, intent);
+        let raw = self.call_chat(&bundle).await?;
+        parse_response_payload(&raw, intent)
+    }
+
+    pub async fn call_chat(&self, bundle: &PromptBundle) -> Result<Value, OpenAiError> {
+        let Some(api_key) = self.api_key.clone() else {
+            return Err(OpenAiError::MissingApiKey(self.config.api_key_env.clone()));
+        };
+        let base = self.config.base_url.trim_end_matches('/');
+        let base = base.trim_end_matches("/v1");
+        let url = format!("{base}/v1/chat/completions");
+
+        let body = build_request_body(&self.config.model, bundle);
+
+        let client = Client::builder()
+            .timeout(self.timeout)
+            .build()
+            .map_err(|err| OpenAiError::Transport(err.to_string()))?;
+
+        let resp = client
+            .post(&url)
+            .header(header::AUTHORIZATION, format!("Bearer {api_key}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| OpenAiError::Transport(err.to_string()))?;
+
+        let status = resp.status();
+        let raw_body = resp
+            .text()
+            .await
+            .map_err(|err| OpenAiError::Transport(err.to_string()))?;
+        if !status.is_success() {
+            return Err(OpenAiError::Provider {
+                status: status.as_u16(),
+                body: truncate(&raw_body, 2048),
+            });
+        }
+
+        let raw: Value =
+            serde_json::from_str(&raw_body).map_err(|err| OpenAiError::Decode(err.to_string()))?;
+        let content = raw
+            .get("choices")
+            .and_then(|choices| choices.get(0))
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(|value| value.as_str())
+            .ok_or(OpenAiError::MissingContent)?;
+        parse_json_content(content)
+    }
+}
+
+fn build_request_body(model: &str, bundle: &PromptBundle) -> Value {
+    json!({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": bundle.system},
+            {"role": "user", "content": bundle.user},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.7,
+    })
+}
+
+fn parse_json_content(content: &str) -> Result<Value, OpenAiError> {
+    let trimmed = content.trim();
+    let stripped = strip_code_fence(trimmed);
+    serde_json::from_str::<Value>(stripped)
+        .map_err(|err| OpenAiError::Decode(format!("model content not valid JSON: {err}")))
+}
+
+fn strip_code_fence(input: &str) -> &str {
+    let trimmed = input.trim();
+    let Some(rest) = trimmed.strip_prefix("```") else {
+        return trimmed;
+    };
+    let (_lang, body) = rest.split_once('\n').unwrap_or(("", rest));
+    body.trim_end_matches("```").trim()
+}
+
+fn parse_response_payload(
+    value: &Value,
+    intent: GenerationIntent,
+) -> Result<MockExample, OpenAiError> {
+    let kind = intent.kind();
+    Ok(MockExample {
+        kind: kind.clone(),
+        title: intent.title(),
+        payload: value.clone(),
+        note: Some(format!("Generated by OpenAI adapter ({})", kind.as_str())),
+    })
+}
+
+fn truncate(input: &str, max: usize) -> String {
+    if input.len() <= max {
+        input.to_string()
+    } else {
+        let mut end = max;
+        while !input.is_char_boundary(end) && end > 0 {
+            end -= 1;
+        }
+        format!("{}…", &input[..end])
     }
 }
 
@@ -38,6 +175,16 @@ pub struct ChatCompletionResponse {
 
 #[derive(Debug, Error)]
 pub enum OpenAiError {
+    #[error("OpenAI API key environment variable `{0}` is not set")]
+    MissingApiKey(String),
+    #[error("transport error talking to provider: {0}")]
+    Transport(String),
+    #[error("provider returned HTTP {status}: {body}")]
+    Provider { status: u16, body: String },
+    #[error("failed to decode provider response: {0}")]
+    Decode(String),
+    #[error("provider response did not include an assistant message")]
+    MissingContent,
     #[error("provider not implemented: {0}")]
     NotImplemented(&'static str),
 }
@@ -46,8 +193,9 @@ pub fn planned_capabilities() -> Vec<CapabilityStatus> {
     vec![
         CapabilityStatus {
             name: "OpenAI Chat Completions adapter".to_string(),
-            stage: DeliveryStage::Scaffolded,
-            note: "Provider boundary is defined with request and response envelopes.".to_string(),
+            stage: DeliveryStage::Partial,
+            note: "Chat Completions call with JSON mode wired; ready for real generation."
+                .to_string(),
         },
         CapabilityStatus {
             name: "Responses API adapter".to_string(),
@@ -56,9 +204,221 @@ pub fn planned_capabilities() -> Vec<CapabilityStatus> {
         },
         CapabilityStatus {
             name: "Structured output enforcement".to_string(),
-            stage: DeliveryStage::Planned,
-            note: "Validation and repair loop should land with real provider execution."
+            stage: DeliveryStage::Partial,
+            note: "Basic JSON-object response_format enabled; full schema validation pending."
                 .to_string(),
         },
     ]
+}
+
+/// Returns a lightweight preview of the prompt bundle for UI debugging without
+/// making a network call. Useful for the frontend to surface what would be sent.
+pub fn preview_prompt(endpoint: &CanonicalEndpoint, intent: GenerationIntent) -> PromptBundle {
+    build_prompt_bundle(endpoint, intent)
+}
+
+/// Describe the canonical schema as a compact JSON-Schema-like object so the
+/// LLM has enough hints without the noise of the internal struct field names.
+pub fn schema_hint(schema: &SchemaNode) -> Value {
+    match &schema.node_type {
+        SchemaNodeType::Object => {
+            let mut properties = serde_json::Map::new();
+            let mut required: Vec<String> = Vec::new();
+            for (name, child) in schema.properties.iter() {
+                properties.insert(name.clone(), schema_hint(child));
+                if child.required {
+                    required.push(name.clone());
+                }
+            }
+            let mut payload = serde_json::Map::new();
+            payload.insert("type".to_string(), Value::String("object".to_string()));
+            payload.insert("properties".to_string(), Value::Object(properties));
+            if !required.is_empty() {
+                payload.insert(
+                    "required".to_string(),
+                    Value::Array(required.into_iter().map(Value::String).collect()),
+                );
+            }
+            if let Some(ex) = &schema.example {
+                payload.insert("example".to_string(), ex.clone());
+            }
+            Value::Object(payload)
+        }
+        SchemaNodeType::Array => {
+            let items = schema
+                .items
+                .as_ref()
+                .map(|inner| schema_hint(inner))
+                .unwrap_or(Value::Object(serde_json::Map::new()));
+            json!({"type": "array", "items": items})
+        }
+        other => {
+            let name = match other {
+                SchemaNodeType::String => "string",
+                SchemaNodeType::Integer => "integer",
+                SchemaNodeType::Number => "number",
+                SchemaNodeType::Boolean => "boolean",
+                SchemaNodeType::Null => "null",
+                SchemaNodeType::Unknown => "any",
+                _ => "any",
+            };
+            let mut payload = serde_json::Map::new();
+            payload.insert("type".to_string(), Value::String(name.to_string()));
+            if schema.nullable {
+                payload.insert("nullable".to_string(), Value::Bool(true));
+            }
+            if !schema.enum_values.is_empty() {
+                payload.insert("enum".to_string(), Value::Array(schema.enum_values.clone()));
+            }
+            if let Some(ex) = &schema.example {
+                payload.insert("example".to_string(), ex.clone());
+            }
+            Value::Object(payload)
+        }
+    }
+}
+
+pub fn parameter_hints(params: &[CanonicalParameter]) -> Vec<Value> {
+    params
+        .iter()
+        .map(|p| {
+            json!({
+                "name": p.name,
+                "in": format!("{:?}", p.location).to_lowercase(),
+                "required": p.required,
+                "schema": schema_hint(&p.schema),
+                "description": p.description,
+            })
+        })
+        .collect()
+}
+
+pub fn response_hints(responses: &[CanonicalResponse]) -> Vec<Value> {
+    responses
+        .iter()
+        .map(|r| {
+            json!({
+                "status_code": r.status_code,
+                "content_type": r.content_type,
+                "description": r.description,
+                "schema": r.schema.as_ref().map(schema_hint),
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use albert_core::{HttpMethod, MockExampleKind, SchemaNode};
+    use std::collections::BTreeMap;
+
+    fn endpoint() -> CanonicalEndpoint {
+        let mut properties = BTreeMap::new();
+        let mut name = SchemaNode::string();
+        name.required = true;
+        name.example = Some(Value::String("Ada".to_string()));
+        properties.insert("name".to_string(), name);
+        let schema = SchemaNode {
+            node_type: SchemaNodeType::Object,
+            description: None,
+            required: true,
+            nullable: false,
+            properties,
+            items: None,
+            enum_values: Vec::new(),
+            example: None,
+        };
+        CanonicalEndpoint {
+            operation_id: Some("createUser".into()),
+            method: HttpMethod::Post,
+            path: "/users".into(),
+            summary: Some("Create a user".into()),
+            description: None,
+            tags: vec!["users".into()],
+            parameters: Vec::new(),
+            request_body: None,
+            responses: vec![CanonicalResponse {
+                status_code: "201".into(),
+                description: Some("Created".into()),
+                content_type: "application/json".into(),
+                schema: Some(schema),
+            }],
+            examples: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn builds_prompt_bundle_for_success() {
+        let bundle = preview_prompt(&endpoint(), GenerationIntent::Success);
+        assert!(bundle.system.to_lowercase().contains("mock"));
+        assert!(bundle.user.contains("/users"));
+        assert!(bundle.user.contains("success"));
+    }
+
+    #[test]
+    fn builds_prompt_bundle_for_error() {
+        let bundle = preview_prompt(&endpoint(), GenerationIntent::Error);
+        assert!(bundle.user.contains("error"));
+    }
+
+    #[test]
+    fn strip_code_fence_handles_markdown_blocks() {
+        let input = "```json\n{\"a\": 1}\n```";
+        assert_eq!(strip_code_fence(input), "{\"a\": 1}");
+    }
+
+    #[test]
+    fn parse_response_payload_wraps_kind() {
+        let v = json!({"data": {"id": 1}});
+        let example = parse_response_payload(&v, GenerationIntent::Success).unwrap();
+        assert_eq!(example.kind, MockExampleKind::Success);
+        assert_eq!(example.payload, v);
+    }
+
+    #[test]
+    fn schema_hint_emits_required_list() {
+        let mut properties = BTreeMap::new();
+        let mut a = SchemaNode::string();
+        a.required = true;
+        properties.insert("a".to_string(), a);
+        let schema = SchemaNode {
+            node_type: SchemaNodeType::Object,
+            description: None,
+            required: false,
+            nullable: false,
+            properties,
+            items: None,
+            enum_values: Vec::new(),
+            example: None,
+        };
+        let hint = schema_hint(&schema);
+        assert_eq!(hint["type"], "object");
+        assert_eq!(hint["required"][0], "a");
+    }
+
+    #[test]
+    fn missing_api_key_surfaces_descriptive_error() {
+        unsafe {
+            std::env::remove_var("ALBERT_TEST_MISSING_KEY");
+        }
+        let config = ProviderConfig {
+            provider_name: "test".into(),
+            base_url: "https://example.invalid".into(),
+            model: "m".into(),
+            api_key_env: "ALBERT_TEST_MISSING_KEY".into(),
+        };
+        let adapter = OpenAiChatAdapter::new(config);
+        let err = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            adapter
+                .generate_mock_example(&endpoint(), GenerationIntent::Success)
+                .await
+                .err()
+                .unwrap()
+        });
+        match err {
+            OpenAiError::MissingApiKey(name) => assert_eq!(name, "ALBERT_TEST_MISSING_KEY"),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
 }

@@ -22,4 +22,4 @@ albert-storage = { path = "../../../crates/albert-storage" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tauri = { workspace = true }
-
+tokio = { workspace = true }

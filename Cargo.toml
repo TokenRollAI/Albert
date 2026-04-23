@@ -15,6 +15,8 @@ license = "MIT"
 version = "0.1.0"
 
 [workspace.dependencies]
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "matched-path", "tokio", "tracing"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,4 +24,7 @@ serde_yaml = "0.9"
 tauri = { version = "2.10.3" }
 tauri-build = { version = "2.5.6" }
 thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "net", "signal", "time"] }
+tower = { version = "0.5", default-features = false }
+tower-http = { version = "0.6", default-features = false, features = ["cors", "trace"] }
 url = "2"
