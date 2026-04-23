@@ -78,6 +78,18 @@ pub fn load_collection_snapshot(
 }
 
 #[tauri::command]
+pub fn delete_collection(
+    collection_id: String,
+    database_url: Option<String>,
+) -> Result<bool, String> {
+    let store = albert_storage::SqliteStore::new(database_url.unwrap_or_else(default_database_url));
+    store.migrate().map_err(|error| error.to_string())?;
+    store
+        .delete_collection(&collection_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn export_collection_json(
     collection_id: String,
     database_url: Option<String>,

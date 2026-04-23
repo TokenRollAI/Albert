@@ -343,6 +343,30 @@ function App() {
     [mockGateway, toasts]
   );
 
+  const handleDeleteCollection = useCallback(
+    async (collection: SidebarCollection) => {
+      if (!isTauriRuntime || collection.origin !== "imported") {
+        toasts.warn("Delete requires an imported collection + Tauri runtime.");
+        return;
+      }
+      const confirmed = window.confirm(
+        `Delete "${collection.name}" and all its endpoints? This cannot be undone.`
+      );
+      if (!confirmed) return;
+      try {
+        await invoke<boolean>("delete_collection", {
+          collectionId: collection.id
+        });
+        await refreshStoredCollections();
+        resetTabs();
+        toasts.success(`Deleted ${collection.name}.`);
+      } catch (error) {
+        toasts.error(`Delete failed: ${String(error)}`);
+      }
+    },
+    [isTauriRuntime, refreshStoredCollections, resetTabs, toasts]
+  );
+
   const handleExportCollection = useCallback(
     async (collection: SidebarCollection) => {
       if (!isTauriRuntime || collection.origin !== "imported") {
@@ -409,6 +433,14 @@ function App() {
             : `Latency floor set to ${defaultLatencyMs}ms.`
         );
       }
+    },
+    [mockGateway, toasts]
+  );
+
+  const handleToggleCaptureBodies = useCallback(
+    async (enabled: boolean) => {
+      await mockGateway.update({ captureBodies: enabled });
+      toasts.info(enabled ? "Request body capture on." : "Request body capture off.");
     },
     [mockGateway, toasts]
   );
@@ -491,6 +523,7 @@ function App() {
             refreshStoredCollections();
           }}
           onExportCollection={handleExportCollection}
+          onDeleteCollection={handleDeleteCollection}
           busy={refreshBusy}
         />
 
@@ -565,6 +598,7 @@ function App() {
         onStop={mockGateway.stop}
         onApplyOverrides={handleApplyOverrides}
         onApplyChaos={handleApplyChaos}
+        onToggleCaptureBodies={handleToggleCaptureBodies}
       />
 
       <ProvidersPanel

@@ -1886,3 +1886,29 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
 .coll__head:focus-within .coll__action {
   opacity: 1;
 }
+
+.coll__action--danger:hover {
+  color: var(--danger);
+}
+
+/* ---------- Request log: body expander ---------- */
+.reqlog__body {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.reqlog__body summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  width: max-content;
+}
+.reqlog__body summary:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.reqlog__body .code-block {
+  margin-top: 4px;
+  max-height: 180px;
+}

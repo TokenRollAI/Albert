@@ -28,6 +28,11 @@ pub struct GatewayConfig {
     /// selected one, for chaos-style testing of consumer error paths.
     #[serde(default)]
     pub error_rate: f32,
+    /// Capture the first ≤4KB of each request body into the request log.
+    /// Disabled by default to avoid leaking sensitive payloads; opt in from
+    /// the UI or CLI.
+    #[serde(default)]
+    pub capture_bodies: bool,
 }
 
 impl Default for GatewayConfig {
@@ -40,6 +45,7 @@ impl Default for GatewayConfig {
             default_latency_ms: None,
             latency_overrides: BTreeMap::new(),
             error_rate: 0.0,
+            capture_bodies: false,
         }
     }
 }

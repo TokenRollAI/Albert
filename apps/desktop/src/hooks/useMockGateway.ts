@@ -43,6 +43,7 @@ interface UpdateArgs {
   defaultLatencyMs?: number | null;
   latencyOverrides?: Record<string, number>;
   errorRate?: number;
+  captureBodies?: boolean;
 }
 
 interface UseMockGatewayResult {
@@ -201,6 +202,7 @@ export function useMockGateway({
                 : args.defaultLatencyMs ?? null,
             latency_overrides: args.latencyOverrides ?? null,
             error_rate: args.errorRate ?? null,
+            capture_bodies: args.captureBodies ?? null,
             database_url: null
           }
         });

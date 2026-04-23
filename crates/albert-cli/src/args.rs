@@ -10,6 +10,7 @@ pub enum Command {
     Import,
     List,
     Export,
+    Delete,
     Help,
     Version,
 }
@@ -32,6 +33,8 @@ pub struct CliArgs {
     pub export_collection_id: Option<String>,
     /// Stop the server automatically after N seconds (test harness).
     pub auto_stop_secs: Option<u64>,
+    /// Capture request bodies (≤4KB) into the request log.
+    pub capture_bodies: bool,
 }
 
 impl Default for CliArgs {
@@ -49,6 +52,7 @@ impl Default for CliArgs {
             export_output: None,
             export_collection_id: None,
             auto_stop_secs: None,
+            capture_bodies: false,
         }
     }
 }
@@ -90,6 +94,7 @@ where
         "import" => Command::Import,
         "list" => Command::List,
         "export" => Command::Export,
+        "delete" => Command::Delete,
         "help" | "--help" | "-h" => Command::Help,
         "version" | "--version" | "-V" => Command::Version,
         other => return Err(CliError::UnknownCommand(other.to_string())),
@@ -179,6 +184,9 @@ where
                 })?;
                 out.auto_stop_secs = Some(parsed);
             }
+            "capture-bodies" => {
+                out.capture_bodies = true;
+            }
             "help" | "h" => {
                 out.command = Command::Help;
             }
@@ -203,6 +211,7 @@ pub fn help_text() -> String {
     s.push_str("    import     Import an OpenAPI/cURL file into the SQLite store\n");
     s.push_str("    list       List collections stored in the database\n");
     s.push_str("    export     Print a collection snapshot as JSON\n");
+    s.push_str("    delete     Remove a collection from the database\n");
     s.push_str("    help       Print this help\n");
     s.push_str("    version    Print the crate version\n\n");
     s.push_str("SHARED OPTIONS:\n");
@@ -214,7 +223,10 @@ pub fn help_text() -> String {
     s.push_str("    --default-latency-ms <n> Add a latency floor to every route\n");
     s.push_str("    --error-rate <0..1>      Chance of serving the error example\n");
     s.push_str("    --collection <id>        Only serve the named collection(s)\n");
+    s.push_str("    --capture-bodies         Record request bodies in the log (≤4KB)\n");
     s.push_str("    --auto-stop-secs <n>     Stop after N seconds (useful in tests)\n\n");
+    s.push_str("DELETE OPTIONS:\n");
+    s.push_str("    --id <collection_id>     Collection to remove\n\n");
     s.push_str("EXPORT OPTIONS:\n");
     s.push_str("    --id <collection_id>     Collection to export\n");
     s.push_str("    --output <path>          File to write (default: stdout)\n");

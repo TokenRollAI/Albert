@@ -19,6 +19,7 @@ running the mock server without the Tauri shell.
 | `import`  | Parse an OpenAPI/cURL file and persist it into SQLite        |
 | `list`    | Print the collections stored in the database                 |
 | `export`  | Print a collection snapshot as JSON (optionally to a file)   |
+| `delete`  | Remove a collection (and its endpoints/examples) from SQLite |
 | `help`    | Show the usage text                                          |
 | `version` | Print the crate version                                      |
 
@@ -36,11 +37,18 @@ running the mock server without the Tauri shell.
 - `--collection <id>` (repeatable) — only serve named collections
 - `--auto-stop-secs <n>` — stop after N seconds (or on Ctrl-C, whichever
   comes first). Useful in tests and one-shot CI runs.
+- `--capture-bodies` — record up to 4KB of each POST/PUT/PATCH/DELETE
+  body into the in-memory request log (off by default; see gateway-routes
+  for caveats).
 
 ## `export` options
 
 - `--id <collection_id>` — collection to serialize (required)
 - `--output <path>` — write to file (default: stdout)
+
+## `delete` options
+
+- `--id <collection_id>` — collection to remove (required)
 
 ## Example workflow
 

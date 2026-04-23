@@ -87,6 +87,7 @@ impl MockGateway {
             overrides_arc.clone(),
             latency,
             config.error_rate,
+            config.capture_bodies,
         );
         let state_for_runtime = state.clone();
 
@@ -141,12 +142,14 @@ impl MockGateway {
             config.default_latency_ms,
             config.latency_overrides,
             config.error_rate,
+            config.capture_bodies,
         )
         .await
     }
 
-    /// Full reconfigure entry point; can change overrides, latency, and
-    /// error rate in one atomic swap.
+    /// Full reconfigure entry point; can change overrides, latency, error
+    /// rate, and body-capture flag in one atomic swap.
+    #[allow(clippy::too_many_arguments)]
     pub async fn reconfigure(
         &self,
         collections: Vec<CanonicalApiCollection>,
@@ -154,6 +157,7 @@ impl MockGateway {
         default_latency_ms: Option<u64>,
         latency_overrides: BTreeMap<String, u64>,
         error_rate: f32,
+        capture_bodies: bool,
     ) -> Result<GatewayStatus, GatewayError> {
         let mut guard = self.inner.lock().await;
         let Some(running) = guard.as_mut() else {
@@ -170,10 +174,12 @@ impl MockGateway {
             latency_overrides.clone(),
         ));
         running.state.replace_error_rate(clamped_rate);
+        running.state.replace_capture_bodies(capture_bodies);
         running.config.example_overrides = overrides;
         running.config.default_latency_ms = default_latency_ms;
         running.config.latency_overrides = latency_overrides;
         running.config.error_rate = clamped_rate;
+        running.config.capture_bodies = capture_bodies;
         running.route_summaries = summaries;
         Ok(running.to_status())
     }
@@ -521,6 +527,43 @@ mod tests {
         let log = gateway.recent_requests(10).await;
         assert_eq!(log[0].latency_ms, 120);
 
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn captures_request_body_when_enabled() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "echo",
+            vec![endpoint(HttpMethod::Post, "/echo", json!({"ok": true}))],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    capture_bodies: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let bind = status.bind_address.clone().unwrap();
+        let base = format!("http://{}", bind);
+        let client = reqwest::Client::new();
+        let payload = serde_json::json!({"hello": "world"});
+        client
+            .post(format!("{base}/echo"))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+
+        let log = gateway.recent_requests(1).await;
+        let entry = &log[0];
+        let body = entry.request_body.clone().unwrap();
+        assert!(body.contains("hello"));
+        assert!(body.contains("world"));
         gateway.stop().await.expect("stop");
     }
 

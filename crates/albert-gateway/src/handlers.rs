@@ -4,12 +4,14 @@ use std::time::Duration;
 
 use albert_core::{HttpMethod, MockExample, MockExampleKind};
 use axum::{
-    body::Body,
+    body::{Body, to_bytes},
     extract::{Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use tokio::time::sleep;
+
+const MAX_CAPTURED_BODY_BYTES: usize = 4 * 1024;
 
 use crate::route::route_key;
 use crate::state::{AppState, RequestLogEntry};
@@ -27,6 +29,13 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     let method = request.method().clone();
     let path = request.uri().path().to_string();
     let query = request.uri().query().map(|q| q.to_string());
+    let capture_bodies = state.snapshot_capture_bodies();
+    let captured_body = if capture_bodies && method != Method::GET && method != Method::HEAD {
+        capture_request_body(request).await
+    } else {
+        CapturedBody::None
+    };
+    let captured_string = captured_body.as_string();
 
     let Some(method_kind) = http_method_to_canonical(&method) else {
         state.record(RequestLogEntry {
@@ -40,6 +49,7 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
             kind: None,
             source: "unsupported",
             latency_ms: 0,
+            request_body: captured_string.clone(),
         });
         return not_found(format!("unsupported method {method}"));
     };
@@ -58,6 +68,7 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
             kind: None,
             source: "unmatched",
             latency_ms: 0,
+            request_body: captured_string.clone(),
         });
         return not_found(format!(
             "no mock registered for {} {}",
@@ -90,6 +101,7 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
             kind: None,
             source: "no-example",
             latency_ms: 0,
+            request_body: captured_string.clone(),
         });
         return not_found(format!(
             "no example configured for {} {}",
@@ -127,6 +139,7 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         kind: Some(example.kind.clone()),
         source,
         latency_ms,
+        request_body: captured_string,
     });
 
     let (status, body) = render_example(example);
@@ -246,6 +259,44 @@ fn roll_probability(threshold: f32) -> bool {
         let scaled = ((x >> 33) as f32) / ((1u64 << 31) as f32);
         scaled < clamped
     })
+}
+
+/// Captured request body variants: we want to distinguish "nothing to capture"
+/// from "attempted but failed" to keep the log faithful.
+pub(crate) enum CapturedBody {
+    None,
+    Truncated(String),
+    Full(String),
+    Failed(String),
+}
+
+impl CapturedBody {
+    pub(crate) fn as_string(&self) -> Option<String> {
+        match self {
+            CapturedBody::None => None,
+            CapturedBody::Truncated(body) | CapturedBody::Full(body) => Some(body.clone()),
+            CapturedBody::Failed(msg) => Some(format!("<capture failed: {msg}>")),
+        }
+    }
+}
+
+async fn capture_request_body(request: Request) -> CapturedBody {
+    let (_parts, body) = request.into_parts();
+    match to_bytes(body, MAX_CAPTURED_BODY_BYTES * 2).await {
+        Ok(bytes) if bytes.is_empty() => CapturedBody::None,
+        Ok(bytes) => {
+            let cap = MAX_CAPTURED_BODY_BYTES.min(bytes.len());
+            let truncated = bytes.len() > MAX_CAPTURED_BODY_BYTES;
+            let slice = &bytes[..cap];
+            let body = String::from_utf8_lossy(slice).into_owned();
+            if truncated {
+                CapturedBody::Truncated(body + "…[truncated]")
+            } else {
+                CapturedBody::Full(body)
+            }
+        }
+        Err(err) => CapturedBody::Failed(err.to_string()),
+    }
 }
 
 fn seed() -> u64 {

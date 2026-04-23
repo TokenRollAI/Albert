@@ -17,6 +17,7 @@ pub fn run() {
             commands::parser::list_imported_endpoints,
             commands::parser::load_collection_snapshot,
             commands::parser::export_collection_json,
+            commands::parser::delete_collection,
             commands::gateway::start_mock_server,
             commands::gateway::stop_mock_server,
             commands::gateway::mock_server_status,

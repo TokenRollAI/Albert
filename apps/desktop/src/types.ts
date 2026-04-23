@@ -162,6 +162,7 @@ export interface GatewayConfig {
   default_latency_ms?: number | null;
   latency_overrides?: Record<string, number>;
   error_rate?: number;
+  capture_bodies?: boolean;
 }
 
 export interface GatewayStatus {
@@ -184,6 +185,7 @@ export interface RequestLogEntry {
   kind?: MockExampleKind | null;
   source: string;
   latency_ms: number;
+  request_body?: string | null;
 }
 
 export interface ProviderConfigDraft {

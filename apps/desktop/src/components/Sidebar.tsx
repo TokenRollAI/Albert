@@ -9,6 +9,7 @@ interface SidebarProps {
   onImportClick: () => void;
   onRefresh: () => void;
   onExportCollection?: (collection: SidebarCollection) => void;
+  onDeleteCollection?: (collection: SidebarCollection) => void;
   busy: boolean;
 }
 
@@ -24,6 +25,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
     onImportClick,
     onRefresh,
     onExportCollection,
+    onDeleteCollection,
     busy
   }: SidebarProps,
   ref
@@ -181,6 +183,28 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
                       aria-label={`Export ${collection.name} as JSON`}
                     >
                       <Icon name="save" size={12} />
+                    </span>
+                  ) : null}
+                  {onDeleteCollection && collection.origin === "imported" ? (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      className="btn btn--icon btn--icon-sm coll__action coll__action--danger"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDeleteCollection(collection);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.stopPropagation();
+                          event.preventDefault();
+                          onDeleteCollection(collection);
+                        }
+                      }}
+                      title="Delete collection"
+                      aria-label={`Delete ${collection.name}`}
+                    >
+                      <Icon name="close" size={12} />
                     </span>
                   ) : null}
                 </button>

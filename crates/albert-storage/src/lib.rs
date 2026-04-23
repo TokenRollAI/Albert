@@ -179,6 +179,29 @@ impl SqliteStore {
         }
     }
 
+    pub fn delete_collection(&self, collection_id: &str) -> Result<bool, StorageError> {
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM mock_examples WHERE endpoint_id IN (SELECT id FROM api_endpoints WHERE collection_id = ?1)",
+            params![collection_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM api_schemas WHERE endpoint_id IN (SELECT id FROM api_endpoints WHERE collection_id = ?1)",
+            params![collection_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM api_endpoints WHERE collection_id = ?1",
+            params![collection_id],
+        )?;
+        let removed = transaction.execute(
+            "DELETE FROM api_collections WHERE id = ?1",
+            params![collection_id],
+        )?;
+        transaction.commit()?;
+        Ok(removed > 0)
+    }
+
     pub fn load_all_collections(&self) -> Result<Vec<CanonicalApiCollection>, StorageError> {
         let connection = self.connect()?;
         let mut statement =
@@ -525,6 +548,48 @@ mod tests {
                 .iter()
                 .any(|endpoint| endpoint.path == "/orders/{id}")
         );
+    }
+
+    #[test]
+    fn delete_collection_removes_all_related_rows() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let store = SqliteStore::new(temp_file.path().to_string_lossy().to_string());
+        store.migrate().unwrap();
+
+        let collection = CanonicalApiCollection {
+            id: "orders".to_string(),
+            name: "orders".to_string(),
+            source: InputSourceKind::OpenApi,
+            description: None,
+            endpoints: vec![CanonicalEndpoint {
+                operation_id: Some("list".to_string()),
+                method: HttpMethod::Get,
+                path: "/orders".to_string(),
+                summary: None,
+                description: None,
+                tags: vec![],
+                parameters: vec![],
+                request_body: None,
+                responses: vec![CanonicalResponse {
+                    status_code: "200".to_string(),
+                    description: None,
+                    content_type: "application/json".to_string(),
+                    schema: Some(SchemaNode::object()),
+                }],
+                examples: default_mock_examples(),
+            }],
+        };
+        store.save_collection(&collection).unwrap();
+        assert_eq!(store.list_collections().unwrap().len(), 1);
+
+        let removed = store.delete_collection("orders").unwrap();
+        assert!(removed);
+        assert!(store.list_collections().unwrap().is_empty());
+        assert!(store.list_endpoints("orders").unwrap().is_empty());
+
+        // Deleting again is a no-op
+        let removed = store.delete_collection("orders").unwrap();
+        assert!(!removed);
     }
 
     #[test]

@@ -66,6 +66,19 @@ example selection but before returning the response body. The total
 effective delay is echoed in the `x-albert-mock-latency-ms` header and
 the request log's `latency_ms` field.
 
+## Request body capture
+
+`GatewayConfig.capture_bodies` (default `false`). When `true`, the handler
+reads the body before dispatch (`axum::body::to_bytes` with an 8KB hard
+cap), truncates to the first 4KB, and records a UTF-8 best-effort string
+into `RequestLogEntry.request_body`. Failures surface as
+`"<capture failed: …>"` so the log remains faithful even for binary
+payloads or over-large requests.
+
+GET and HEAD requests always skip capture. The flag can be toggled live
+via `MockGateway::reconfigure` (or the Mock Server drawer / CLI
+`--capture-bodies`).
+
 ## Error-rate injection
 
 `GatewayConfig.error_rate` (0.0 – 1.0, clamped) is the probability that a

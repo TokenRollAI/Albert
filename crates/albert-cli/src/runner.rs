@@ -27,7 +27,24 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::Import => run_import(args),
         Command::List => run_list(args),
         Command::Export => run_export(args),
+        Command::Delete => run_delete(args),
         Command::Serve => run_serve(args).await,
+    }
+}
+
+fn run_delete(args: CliArgs) -> Result<RunOutcome, String> {
+    let id = args
+        .export_collection_id
+        .as_ref()
+        .ok_or("--id <collection_id> is required for delete")?;
+    let store = prepare_store(&args.database_url)?;
+    let removed = store.delete_collection(id).map_err(|e| e.to_string())?;
+    if removed {
+        Ok(RunOutcome::Message(format!("deleted collection {id}")))
+    } else {
+        Ok(RunOutcome::Message(format!(
+            "collection {id} was not present"
+        )))
     }
 }
 
@@ -146,6 +163,7 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
         default_latency_ms: args.default_latency_ms,
         latency_overrides: BTreeMap::new(),
         error_rate: args.error_rate,
+        capture_bodies: args.capture_bodies,
     };
     let gateway = MockGateway::new();
     let status = gateway

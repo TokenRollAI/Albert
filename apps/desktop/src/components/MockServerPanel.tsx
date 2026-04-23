@@ -20,6 +20,7 @@ interface MockServerPanelProps {
     overrides: Record<string, MockExampleKind>
   ) => Promise<void>;
   onApplyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
+  onToggleCaptureBodies: (enabled: boolean) => Promise<void>;
 }
 
 type TabKey = "runtime" | "routes" | "requests";
@@ -35,7 +36,8 @@ export function MockServerPanel({
   onStart,
   onStop,
   onApplyOverrides,
-  onApplyChaos
+  onApplyChaos,
+  onToggleCaptureBodies
 }: MockServerPanelProps) {
   const [host, setHost] = useState<string>(status.config.host ?? "127.0.0.1");
   const [port, setPort] = useState<string>(
@@ -411,6 +413,17 @@ export function MockServerPanel({
             <section className="panel">
               <div className="panel__title panel__title--row">
                 <h3>Recent requests</h3>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={status.config.capture_bodies ?? false}
+                    onChange={(event) =>
+                      void onToggleCaptureBodies(event.target.checked)
+                    }
+                    disabled={!status.running}
+                  />
+                  <span>Capture request bodies</span>
+                </label>
                 <span className="panel__meta">
                   last {requests.length} · refreshes every 3s
                 </span>
@@ -466,6 +479,14 @@ export function MockServerPanel({
                       ) : (
                         <span className="kind-chip">{entry.source}</span>
                       )}
+                      {entry.request_body ? (
+                        <details className="reqlog__body">
+                          <summary>body</summary>
+                          <pre className="code-block code-block--wrap">
+                            {entry.request_body}
+                          </pre>
+                        </details>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
