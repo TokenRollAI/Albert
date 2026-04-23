@@ -13,6 +13,7 @@ pub fn run() {
             commands::bootstrap::supported_http_methods,
             commands::parser::parse_api_description,
             commands::parser::import_api_description,
+            commands::parser::import_bundle,
             commands::parser::list_imported_collections,
             commands::parser::list_imported_endpoints,
             commands::parser::load_collection_snapshot,

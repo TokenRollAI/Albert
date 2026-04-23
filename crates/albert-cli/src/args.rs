@@ -8,6 +8,7 @@ use thiserror::Error;
 pub enum Command {
     Serve,
     Import,
+    Watch,
     List,
     Export,
     ExportAll,
@@ -39,6 +40,8 @@ pub struct CliArgs {
     pub capture_bodies: bool,
     /// New name for rename command.
     pub new_name: Option<String>,
+    /// Watch poll interval in seconds (defaults to 1.0).
+    pub watch_interval_ms: Option<u64>,
 }
 
 impl Default for CliArgs {
@@ -58,6 +61,7 @@ impl Default for CliArgs {
             auto_stop_secs: None,
             capture_bodies: false,
             new_name: None,
+            watch_interval_ms: None,
         }
     }
 }
@@ -97,6 +101,7 @@ where
     out.command = match first.as_str() {
         "serve" => Command::Serve,
         "import" => Command::Import,
+        "watch" => Command::Watch,
         "list" => Command::List,
         "export" => Command::Export,
         "export-all" => Command::ExportAll,
@@ -117,7 +122,7 @@ where
             }
         } else {
             match out.command {
-                Command::Import => {
+                Command::Import | Command::Watch => {
                     out.import_paths.push(PathBuf::from(arg));
                     i += 1;
                     continue;
@@ -197,6 +202,15 @@ where
             "name" => {
                 out.new_name = Some(take_value(&mut i)?);
             }
+            "interval-ms" => {
+                let v = take_value(&mut i)?;
+                let parsed = v.parse::<u64>().map_err(|err| CliError::BadValue {
+                    flag: flag.clone(),
+                    value: v.clone(),
+                    reason: err.to_string(),
+                })?;
+                out.watch_interval_ms = Some(parsed.max(100));
+            }
             "help" | "h" => {
                 out.command = Command::Help;
             }
@@ -219,6 +233,7 @@ pub fn help_text() -> String {
     s.push_str("COMMANDS:\n");
     s.push_str("    serve      Start the mock HTTP gateway\n");
     s.push_str("    import     Import an OpenAPI/cURL file into the SQLite store\n");
+    s.push_str("    watch      Re-import a file on every change (Ctrl-C to stop)\n");
     s.push_str("    list       List collections stored in the database\n");
     s.push_str("    export     Print a collection snapshot as JSON\n");
     s.push_str("    export-all Print all collections as a JSON array\n");
@@ -239,6 +254,10 @@ pub fn help_text() -> String {
     s.push_str("    --auto-stop-secs <n>     Stop after N seconds (useful in tests)\n\n");
     s.push_str("DELETE OPTIONS:\n");
     s.push_str("    --id <collection_id>     Collection to remove\n\n");
+    s.push_str("WATCH OPTIONS:\n");
+    s.push_str("    <file>                   Path to watch (positional, required)\n");
+    s.push_str("    --interval-ms <n>        Poll interval in ms (default 1000, min 100)\n");
+    s.push_str("    --auto-stop-secs <n>     Exit after N seconds (useful in tests)\n\n");
     s.push_str("RENAME OPTIONS:\n");
     s.push_str("    --id <collection_id>     Collection to rename\n");
     s.push_str("    --name <new_name>        New display name\n\n");

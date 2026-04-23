@@ -662,6 +662,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn trailing_slash_matches_declared_route() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "slash",
+            vec![endpoint(HttpMethod::Get, "/items", json!({"ok": true}))],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        // trailing slash
+        let resp = client.get(format!("{base}/items/")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        // no trailing slash
+        let resp = client.get(format!("{base}/items")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn head_falls_back_to_get_with_empty_body() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "head",
+            vec![endpoint(HttpMethod::Get, "/ping", json!({"pong": true}))],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        let resp = client.head(format!("{base}/ping")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok()),
+            Some("application/json")
+        );
+        let body = resp.bytes().await.unwrap();
+        assert!(body.is_empty(), "HEAD must not include a body");
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn options_preflight_returns_cors_headers_when_enabled() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "cors",
+            vec![endpoint(HttpMethod::Get, "/users", json!({"ok": true}))],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    cors_enabled: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        let resp = client
+            .request(reqwest::Method::OPTIONS, format!("{base}/users"))
+            .header("origin", "http://example.com")
+            .header("access-control-request-method", "GET")
+            .send()
+            .await
+            .unwrap();
+        assert!(resp.status().is_success() || resp.status().as_u16() == 204);
+        assert!(resp.headers().get("access-control-allow-origin").is_some());
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
     async fn rejects_double_start() {
         let gateway = MockGateway::new();
         let col = collection("x", vec![endpoint(HttpMethod::Get, "/x", json!({}))]);

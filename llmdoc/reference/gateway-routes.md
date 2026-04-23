@@ -100,6 +100,14 @@ always serves the error example.
 
 - `GET /__albert/status` returns `{service, route_count}`.
 - `404` responses are JSON: `{error: "mock_not_found", message}`.
+- `HEAD` requests fall back to matching the `GET` route with the same
+  path; the body is then suppressed so the response stays well-formed.
+  This lets health-check probes succeed without having to declare HEAD
+  explicitly.
+- Trailing slashes are ignored during matching — `/users` and `/users/`
+  resolve to the same route.
+- `OPTIONS` preflight requests are handled by the `CorsLayer` when
+  `cors_enabled` is `true` and echo permissive CORS headers.
 
 ## CORS
 

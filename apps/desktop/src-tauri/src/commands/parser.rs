@@ -3,6 +3,20 @@ use serde::Serialize;
 
 use crate::services::default_database_url;
 
+/// Persist a single or bundled set of collections into the store.
+fn persist_collections(
+    store: &albert_storage::SqliteStore,
+    collections: &[CanonicalApiCollection],
+) -> Result<(), String> {
+    store.migrate().map_err(|error| error.to_string())?;
+    for collection in collections {
+        store
+            .save_collection(collection)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 pub struct ImportResult {
     pub collection_id: String,
@@ -20,27 +34,73 @@ pub fn parse_api_description(
         .map_err(|error| error.to_string())
 }
 
+#[derive(Debug, Serialize)]
+pub struct BundleImportResult {
+    pub database_url: String,
+    pub imported: Vec<ImportResult>,
+}
+
 #[tauri::command]
 pub fn import_api_description(
     body: String,
     name: Option<String>,
     database_url: Option<String>,
 ) -> Result<ImportResult, String> {
+    // Fast path: bundle import. If the body is a JSON array of canonical
+    // snapshots we persist every entry and return the first one's summary.
+    // For more visibility the caller can invoke `import_bundle` explicitly.
+    if let Some(collections) =
+        albert_parser::try_parse_bundle(&body).map_err(|error| error.to_string())?
+        && let Some(first) = collections.first().cloned()
+    {
+        let database_url = database_url.unwrap_or_else(default_database_url);
+        let store = albert_storage::SqliteStore::new(database_url.clone());
+        persist_collections(&store, &collections)?;
+        return Ok(ImportResult {
+            collection_id: first.id,
+            collection_name: first.name,
+            endpoint_count: collections.iter().map(|c| c.endpoints.len()).sum(),
+            database_url,
+        });
+    }
+
     let collection = albert_parser::parse_source(albert_parser::ParseSource { name, body })
         .map_err(|error| error.to_string())?;
     let database_url = database_url.unwrap_or_else(default_database_url);
     let store = albert_storage::SqliteStore::new(database_url.clone());
-
-    store.migrate().map_err(|error| error.to_string())?;
-    store
-        .save_collection(&collection)
-        .map_err(|error| error.to_string())?;
+    persist_collections(&store, std::slice::from_ref(&collection))?;
 
     Ok(ImportResult {
         collection_id: collection.id,
         collection_name: collection.name,
         endpoint_count: collection.endpoints.len(),
         database_url,
+    })
+}
+
+#[tauri::command]
+pub fn import_bundle(
+    body: String,
+    database_url: Option<String>,
+) -> Result<BundleImportResult, String> {
+    let collections = albert_parser::try_parse_bundle(&body)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "body is not a recognized collection bundle".to_string())?;
+    let database_url = database_url.unwrap_or_else(default_database_url);
+    let store = albert_storage::SqliteStore::new(database_url.clone());
+    persist_collections(&store, &collections)?;
+    let imported = collections
+        .iter()
+        .map(|c| ImportResult {
+            collection_id: c.id.clone(),
+            collection_name: c.name.clone(),
+            endpoint_count: c.endpoints.len(),
+            database_url: database_url.clone(),
+        })
+        .collect();
+    Ok(BundleImportResult {
+        database_url,
+        imported,
     })
 }
 

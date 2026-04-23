@@ -76,6 +76,45 @@ pub fn parse_source(source: ParseSource) -> Result<CanonicalApiCollection, Parse
     }
 }
 
+/// If `body` is a JSON array whose elements look like
+/// `CanonicalApiCollection` snapshots (as produced by `export-all`), decode
+/// them directly. Returns `Ok(None)` for anything that doesn't look like a
+/// bundle so callers can fall through to the regular parser. `Err` is only
+/// returned when the body IS an array but some element fails to decode —
+/// that signals a malformed bundle rather than "not a bundle".
+pub fn try_parse_bundle(body: &str) -> Result<Option<Vec<CanonicalApiCollection>>, ParseError> {
+    let trimmed = body.trim_start();
+    if !trimmed.starts_with('[') {
+        return Ok(None);
+    }
+    let value: Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let Value::Array(items) = value else {
+        return Ok(None);
+    };
+    // If every element lacks the expected shape, treat as "not a bundle"
+    // rather than raising — caller will try another parser.
+    let looks_like_bundle = items.iter().all(|item| {
+        item.is_object()
+            && item.get("id").is_some()
+            && item.get("name").is_some()
+            && item.get("endpoints").is_some_and(|v| v.is_array())
+    });
+    if !looks_like_bundle {
+        return Ok(None);
+    }
+
+    let mut collections = Vec::with_capacity(items.len());
+    for (idx, item) in items.into_iter().enumerate() {
+        let collection: CanonicalApiCollection = serde_json::from_value(item)
+            .map_err(|err| ParseError::ParseFailed(format!("bundle entry {idx} invalid: {err}")))?;
+        collections.push(collection);
+    }
+    Ok(Some(collections))
+}
+
 pub(crate) fn schema_from_json_value(value: &Value) -> SchemaNode {
     match value {
         Value::Object(map) => {
@@ -150,7 +189,7 @@ pub(crate) fn schema_from_json_value(value: &Value) -> SchemaNode {
 mod tests {
     use albert_core::{HttpMethod, InputSourceKind, ParameterLocation, SchemaNodeType};
 
-    use crate::{ParseSource, detect_parser, parse_source};
+    use crate::{ParseSource, detect_parser, parse_source, try_parse_bundle};
 
     #[test]
     fn detects_openapi_json_sources() {
@@ -587,6 +626,49 @@ paths:
         assert_eq!(schema.node_type, SchemaNodeType::Object);
         assert!(schema.properties.contains_key("id"));
         assert!(schema.properties.contains_key("count"));
+    }
+
+    #[test]
+    fn try_parse_bundle_roundtrips_exported_collections() {
+        // First produce two collections to export.
+        let a = parse_source(ParseSource {
+            name: Some("alpha".into()),
+            body: r#"{"openapi":"3.0.3","info":{"title":"alpha","version":"1"},"paths":{"/a":{"get":{"responses":{"200":{"description":"ok"}}}}}}"#.into(),
+        })
+        .unwrap();
+        let b = parse_source(ParseSource {
+            name: Some("beta".into()),
+            body: r#"{"openapi":"3.0.3","info":{"title":"beta","version":"1"},"paths":{"/b":{"get":{"responses":{"200":{"description":"ok"}}}}}}"#.into(),
+        })
+        .unwrap();
+        let bundle = serde_json::to_string(&vec![a.clone(), b.clone()]).unwrap();
+
+        let decoded = try_parse_bundle(&bundle).unwrap().unwrap();
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].name, "alpha");
+        assert_eq!(decoded[1].name, "beta");
+    }
+
+    #[test]
+    fn try_parse_bundle_returns_none_for_non_array_inputs() {
+        assert!(
+            try_parse_bundle("curl https://example.com")
+                .unwrap()
+                .is_none()
+        );
+        assert!(try_parse_bundle("{}").unwrap().is_none());
+        assert!(
+            try_parse_bundle(r#"[{"ok": true}]"#).unwrap().is_none(),
+            "objects without id/name/endpoints are not a bundle"
+        );
+    }
+
+    #[test]
+    fn try_parse_bundle_errors_on_malformed_entries() {
+        // first entry has the expected keys but bad types → report error
+        let malformed = r#"[{"id":"x","name":"x","endpoints":[],"source":"nope"}]"#;
+        let err = try_parse_bundle(malformed).unwrap_err();
+        assert!(matches!(err, crate::ParseError::ParseFailed(_)));
     }
 
     #[test]

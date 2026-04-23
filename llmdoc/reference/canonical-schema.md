@@ -47,6 +47,18 @@ The parser invokes this right after building each `CanonicalEndpoint`, so
 imported collections ship with meaningful mocks out-of-the-box even before
 an OpenAI key is configured.
 
+## Bundle round-trip
+
+`albert_parser::try_parse_bundle(body)` recognizes a JSON array whose
+elements look like `CanonicalApiCollection` snapshots and decodes them in
+bulk. Used by the CLI `import` command, the Tauri
+`import_api_description` fast path, and the `import_bundle` command —
+letting `export-all` → `import` round-trip losslessly.
+
+Non-bundle bodies return `Ok(None)`, malformed bundles return an error
+with a zero-based entry index so the caller can point the user at the
+bad element.
+
 ## Validation
 
 `albert_core::validate_value(schema, value) -> Vec<String>` enforces the

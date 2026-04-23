@@ -1,18 +1,27 @@
-//! File ingestion helpers: read, detect format, parse, persist.
+//! File ingestion helpers: read, detect format (including bundles), parse,
+//! persist.
 
 use std::path::Path;
 
 use albert_core::CanonicalApiCollection;
-use albert_parser::{ParseSource, parse_source};
+use albert_parser::{ParseSource, parse_source, try_parse_bundle};
 use albert_storage::SqliteStore;
 
-/// Read a file from disk, parse it, and persist it into the given store.
-/// Uses the filename (minus extension) as the collection name when the
-/// caller has no better hint.
-pub fn ingest_file(
-    path: &Path,
-    store: &SqliteStore,
-) -> Result<CanonicalApiCollection, IngestError> {
+pub struct Ingested {
+    pub collections: Vec<CanonicalApiCollection>,
+    pub kind: IngestKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum IngestKind {
+    Single,
+    Bundle,
+}
+
+/// Read a file from disk, parse it (as a single collection or as a
+/// `[...]` bundle of pre-canonicalized snapshots), and persist every entry
+/// into the store.
+pub fn ingest_file(path: &Path, store: &SqliteStore) -> Result<Ingested, IngestError> {
     let body = std::fs::read_to_string(path).map_err(|source| IngestError::Read {
         path: path.display().to_string(),
         source,
@@ -22,11 +31,26 @@ pub fn ingest_file(
         .and_then(|s| s.to_str())
         .map(|s| s.to_string());
 
+    if let Some(collections) = try_parse_bundle(&body).map_err(IngestError::Parse)? {
+        for collection in &collections {
+            store
+                .save_collection(collection)
+                .map_err(IngestError::Store)?;
+        }
+        return Ok(Ingested {
+            collections,
+            kind: IngestKind::Bundle,
+        });
+    }
+
     let collection = parse_source(ParseSource { name, body }).map_err(IngestError::Parse)?;
     store
         .save_collection(&collection)
         .map_err(IngestError::Store)?;
-    Ok(collection)
+    Ok(Ingested {
+        collections: vec![collection],
+        kind: IngestKind::Single,
+    })
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -16,7 +16,8 @@ running the mock server without the Tauri shell.
 | Command   | Purpose                                                      |
 |-----------|--------------------------------------------------------------|
 | `serve`   | Start the mock HTTP gateway                                  |
-| `import`  | Parse an OpenAPI/cURL file and persist it into SQLite        |
+| `import`  | Parse an OpenAPI/cURL file (or a JSON bundle) and persist it |
+| `watch`   | Keep re-importing one or more files on every mtime change    |
 | `list`    | Print the collections stored in the database                 |
 | `export`  | Print a collection snapshot as JSON (optionally to a file)   |
 | `delete`  | Remove a collection (and its endpoints/examples) from SQLite |
@@ -60,6 +61,26 @@ running the mock server without the Tauri shell.
 ## `export-all` options
 
 - `--output <path>` — write to file; default: stdout
+
+## `import` bundle behavior
+
+If the input body is a JSON array whose entries each have `id`, `name`,
+and `endpoints`, `import` (and the Tauri `import_api_description`
+command) persists every entry in one call. This is the mirror image of
+`export-all` — a bundle round-trips losslessly through SQLite. Bodies
+that are not arrays, or arrays whose entries don't look like canonical
+snapshots, fall through to the regular OpenAPI / cURL parsers.
+
+## `watch` options
+
+- `<file>` — one or more positional file paths to watch (required).
+- `--interval-ms <n>` — poll interval (default `1000`, minimum `100`).
+- `--auto-stop-secs <n>` — exit after N seconds (for scripted tests;
+  production use relies on Ctrl-C).
+
+The watcher stats every file each tick; when its `mtime` changes (or on
+startup), the file is re-imported. Errors are written to stderr without
+aborting the loop.
 
 ## Example workflow
 

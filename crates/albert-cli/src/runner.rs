@@ -9,7 +9,7 @@ use albert_gateway::{GatewayConfig, GatewayStatus, MockGateway};
 use albert_storage::SqliteStore;
 
 use crate::args::{CliArgs, Command, help_text};
-use crate::ingest::ingest_file;
+use crate::ingest::{Ingested, ingest_file};
 
 #[derive(Debug)]
 pub enum RunOutcome {
@@ -30,7 +30,108 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::ExportAll => run_export_all(args),
         Command::Delete => run_delete(args),
         Command::Rename => run_rename(args),
+        Command::Watch => run_watch(args).await,
         Command::Serve => run_serve(args).await,
+    }
+}
+
+async fn run_watch(args: CliArgs) -> Result<RunOutcome, String> {
+    if args.import_paths.is_empty() {
+        return Err("watch requires one or more file paths".into());
+    }
+    let store = prepare_store(&args.database_url)?;
+    let interval_ms = args.watch_interval_ms.unwrap_or(1_000);
+    let interval = Duration::from_millis(interval_ms);
+    let deadline = args
+        .auto_stop_secs
+        .map(|secs| tokio::time::Instant::now() + Duration::from_secs(secs));
+
+    let mut last_seen: std::collections::HashMap<
+        std::path::PathBuf,
+        Option<std::time::SystemTime>,
+    > = std::collections::HashMap::new();
+
+    // Initial import on startup so the store reflects the current files.
+    for path in &args.import_paths {
+        process_watch_tick(path, &store, &mut last_seen, true);
+    }
+
+    println!(
+        "watching {} file(s) every {}ms (Ctrl-C to stop)",
+        args.import_paths.len(),
+        interval_ms
+    );
+
+    loop {
+        let sleep_fut = tokio::time::sleep(interval);
+        tokio::pin!(sleep_fut);
+        tokio::select! {
+            _ = &mut sleep_fut => {
+                for path in &args.import_paths {
+                    process_watch_tick(path, &store, &mut last_seen, false);
+                }
+                if let Some(deadline) = deadline
+                    && tokio::time::Instant::now() >= deadline
+                {
+                    break;
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                break;
+            }
+        }
+    }
+
+    Ok(RunOutcome::Message("watch stopped".to_string()))
+}
+
+fn process_watch_tick(
+    path: &Path,
+    store: &SqliteStore,
+    last_seen: &mut std::collections::HashMap<std::path::PathBuf, Option<std::time::SystemTime>>,
+    initial: bool,
+) {
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let entry_key = path.to_path_buf();
+    let previous = last_seen.get(&entry_key).cloned().flatten();
+    let changed = initial
+        || match (modified, previous) {
+            (Some(current), Some(prev)) => current != prev,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+    if !changed {
+        return;
+    }
+    last_seen.insert(entry_key, modified);
+    match ingest_file(path, store) {
+        Ok(Ingested {
+            collections, kind, ..
+        }) => {
+            let total: usize = collections.iter().map(|c| c.endpoints.len()).sum();
+            match kind {
+                crate::ingest::IngestKind::Single => {
+                    let c = &collections[0];
+                    println!(
+                        "[watch] {} imported {} ({} endpoints)",
+                        path.display(),
+                        c.name,
+                        c.endpoints.len()
+                    );
+                }
+                crate::ingest::IngestKind::Bundle => {
+                    println!(
+                        "[watch] {} imported bundle ({} collections, {} endpoints)",
+                        path.display(),
+                        collections.len(),
+                        total
+                    );
+                }
+            }
+        }
+        Err(err) => {
+            eprintln!("[watch] {} failed: {err}", path.display());
+        }
     }
 }
 
@@ -113,13 +214,26 @@ fn run_import(args: CliArgs) -> Result<RunOutcome, String> {
     let mut messages = Vec::new();
     for path in &args.import_paths {
         match ingest_file(path, &store) {
-            Ok(collection) => {
-                messages.push(format!(
-                    "imported {} ({} endpoints) from {}",
-                    collection.name,
-                    collection.endpoints.len(),
-                    path.display()
-                ));
+            Ok(ingested) => {
+                let count = ingested.collections.len();
+                if count == 1 {
+                    let c = &ingested.collections[0];
+                    messages.push(format!(
+                        "imported {} ({} endpoints) from {}",
+                        c.name,
+                        c.endpoints.len(),
+                        path.display()
+                    ));
+                } else {
+                    let total_endpoints: usize =
+                        ingested.collections.iter().map(|c| c.endpoints.len()).sum();
+                    messages.push(format!(
+                        "imported bundle from {} ({} collections, {} endpoints)",
+                        path.display(),
+                        count,
+                        total_endpoints
+                    ));
+                }
             }
             Err(err) => {
                 messages.push(format!("failed to import {}: {err}", path.display()));

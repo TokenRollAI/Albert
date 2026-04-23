@@ -56,28 +56,59 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     let table = state.snapshot_table();
     let overrides = state.snapshot_overrides();
     let latency = state.snapshot_latency();
-    let Some(matched) = table.match_route(&method_kind, &path) else {
-        state.record(RequestLogEntry {
-            at_epoch_ms: epoch_ms_now(),
-            method: method.to_string(),
-            path: path.clone(),
-            query: query.clone(),
-            matched_route: None,
-            collection_name: None,
-            status: 404,
-            kind: None,
-            source: "unmatched",
-            latency_ms: 0,
-            request_body: captured_string.clone(),
-        });
-        return not_found(format!(
-            "no mock registered for {} {}",
-            method.as_str(),
-            path
-        ));
+    // Fall back to GET when a HEAD request doesn't match a declared HEAD
+    // route — real APIs rarely declare HEAD separately but health checks
+    // still expect it to succeed with the GET response headers.
+    let fallback_to_get = matches!(method_kind, HttpMethod::Head);
+    let matched = match table.match_route(&method_kind, &path) {
+        Some(m) => m,
+        None if fallback_to_get => match table.match_route(&HttpMethod::Get, &path) {
+            Some(m) => m,
+            None => {
+                state.record(RequestLogEntry {
+                    at_epoch_ms: epoch_ms_now(),
+                    method: method.to_string(),
+                    path: path.clone(),
+                    query: query.clone(),
+                    matched_route: None,
+                    collection_name: None,
+                    status: 404,
+                    kind: None,
+                    source: "unmatched",
+                    latency_ms: 0,
+                    request_body: captured_string.clone(),
+                });
+                return not_found(format!(
+                    "no mock registered for {} {}",
+                    method.as_str(),
+                    path
+                ));
+            }
+        },
+        None => {
+            state.record(RequestLogEntry {
+                at_epoch_ms: epoch_ms_now(),
+                method: method.to_string(),
+                path: path.clone(),
+                query: query.clone(),
+                matched_route: None,
+                collection_name: None,
+                status: 404,
+                kind: None,
+                source: "unmatched",
+                latency_ms: 0,
+                request_body: captured_string.clone(),
+            });
+            return not_found(format!(
+                "no mock registered for {} {}",
+                method.as_str(),
+                path
+            ));
+        }
     };
     let route = matched.route;
     let matched_key = route_key(&route.method, &route.path);
+    let strip_body = fallback_to_get;
 
     let (override_kind, query_selected) = parse_query_override(query.as_deref());
     let fallback_override = overrides.get(&matched_key).cloned();
@@ -143,6 +174,7 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     });
 
     let (status, body) = render_example(example);
+    let body = if strip_body { Body::empty() } else { body };
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,

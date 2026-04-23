@@ -5,5 +5,5 @@ pub mod ingest;
 pub mod runner;
 
 pub use args::{CliArgs, CliError, parse_args};
-pub use ingest::ingest_file;
+pub use ingest::{IngestKind, Ingested, ingest_file};
 pub use runner::{RunOutcome, run_with_args};
