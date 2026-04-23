@@ -1,5 +1,6 @@
 import type {
   AppBootstrapSummary,
+  CanonicalApiCollection,
   EndpointPreview,
   PhasePreview,
   ProviderPreview
@@ -7,7 +8,7 @@ import type {
 
 export const fallbackSummary: AppBootstrapSummary = {
   project_name: "Albert",
-  current_phase: "Phase 1 - Foundation",
+  current_phase: "Phase 2 - Parsing And Persistence",
   ui_surfaces: [
     "Overview",
     "Import",
@@ -18,35 +19,35 @@ export const fallbackSummary: AppBootstrapSummary = {
   parser_capabilities: [
     {
       name: "OpenAPI parser",
-      stage: "scaffolded",
-      note: "Trait and placeholder implementation exist."
+      stage: "partial",
+      note: "Core OpenAPI JSON/YAML parsing works for canonical endpoint import."
     },
     {
       name: "cURL parser",
-      stage: "scaffolded",
-      note: "Tokenizer boundary is reserved for Phase 2."
+      stage: "partial",
+      note: "Common cURL request flags and JSON bodies are normalized."
     },
     {
       name: "Canonical schema transform",
       stage: "partial",
-      note: "Core types exist, transformation rules still need implementation."
+      note: "OpenAPI schemas and JSON payloads are converted into canonical schema nodes."
     }
   ],
   storage_capabilities: [
     {
       name: "SQLite table plan",
-      stage: "scaffolded",
-      note: "Projects, endpoints, schemas, examples, and providers are modeled."
+      stage: "partial",
+      note: "Projects, collections, endpoints, schemas, examples, and providers can be persisted."
     },
     {
       name: "Migration script",
       stage: "partial",
-      note: "Initial SQL file exists as a contract seed."
+      note: "Initial SQL migration executes through rusqlite."
     },
     {
       name: "Repository implementation",
-      stage: "not_implemented",
-      note: "Concrete SQLite wiring is deferred to Phase 2."
+      stage: "partial",
+      note: "Collection listing and endpoint listing are available for imported assets."
     }
   ],
   provider_capabilities: [
@@ -148,3 +149,75 @@ export const openQuestions = [
   "We still need to decide whether raw source snapshots are mandatory persistence artifacts."
 ];
 
+export const sampleImportText = `{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Albert Example API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/orders": {
+      "get": {
+        "summary": "List orders",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        }
+      }
+    }
+  }
+}`;
+
+export const fallbackParsedCollection: CanonicalApiCollection = {
+  id: "albert-example-api",
+  name: "Albert Example API",
+  source: "openapi",
+  description: "Fallback preview for the desktop shell.",
+  endpoints: [
+    {
+      operation_id: "listOrders",
+      method: "GET",
+      path: "/api/orders",
+      summary: "List orders",
+      description: "Fallback preview for a parsed OpenAPI endpoint.",
+      tags: ["orders"],
+      parameters: [
+        {
+          name: "status",
+          location: "query",
+          description: null,
+          required: false,
+          schema: {
+            node_type: "string",
+            properties: {}
+          }
+        }
+      ],
+      request_body: null,
+      responses: [
+        {
+          status_code: "200",
+          description: "Successful response",
+          content_type: "application/json",
+          schema: null
+        }
+      ],
+      examples: [
+        { kind: "success", title: "Success" },
+        { kind: "empty", title: "Empty" },
+        { kind: "error", title: "Error" }
+      ]
+    }
+  ]
+};

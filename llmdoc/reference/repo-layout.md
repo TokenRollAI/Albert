@@ -6,6 +6,7 @@ This document maps stable top-level directories.
 
 ## Stable Facts
 
+- `.github/workflows` owns repository CI automation.
 - `assets/branding` owns stable logo and exported brand assets.
 - `apps/desktop` owns the desktop UI shell.
 - `apps/desktop/public` owns web-facing static assets such as favicons.

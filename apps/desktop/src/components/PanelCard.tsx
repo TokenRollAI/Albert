@@ -4,16 +4,18 @@ interface PanelCardProps extends PropsWithChildren {
   eyebrow?: string;
   title: string;
   aside?: ReactNode;
+  className?: string;
 }
 
 export function PanelCard({
   eyebrow,
   title,
   aside,
+  className,
   children
 }: PanelCardProps) {
   return (
-    <section className="panel-card">
+    <section className={className ? `panel-card ${className}` : "panel-card"}>
       <header className="panel-card__header">
         <div>
           {eyebrow ? <p className="panel-card__eyebrow">{eyebrow}</p> : null}
@@ -25,4 +27,3 @@ export function PanelCard({
     </section>
   );
 }
-

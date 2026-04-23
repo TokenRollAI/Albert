@@ -22,6 +22,7 @@
 - `llmdoc/architecture/request-flow.md`: planned import and mock flows
 - `llmdoc/reference/brand-assets.md`: brand asset source-of-truth and export rules
 - `llmdoc/reference/canonical-schema.md`: internal schema model
+- `llmdoc/reference/ci.md`: CI validation baseline
 - `llmdoc/reference/repo-layout.md`: repository map
 
 ## Routing Rules
@@ -29,5 +30,6 @@
 - Read `startup.md` first.
 - Read `reference/brand-assets.md` and `guides/regenerating-brand-assets.md` before changing logo or icon assets.
 - Read `reference/canonical-schema.md` before editing parser, gateway, or storage code.
+- Read `reference/ci.md` before changing repository validation workflows.
 - Read `reference/repo-layout.md` before adding new modules or moving files.
 - Read `memory/decisions/` before changing foundational scope.

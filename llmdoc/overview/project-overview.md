@@ -21,10 +21,9 @@ Does not belong here:
 
 ## Major Areas
 
-- `apps/desktop`: operator UI
+- `apps/desktop`: placeholder operator UI for import and inspection workflows
 - `crates/albert-core`: shared domain contracts
 - `crates/albert-parser`: ingestion
 - `crates/albert-storage`: persistence
 - `crates/albert-gateway`: local runtime boundary
 - `crates/albert-openai`: provider adapter
-

@@ -4,4 +4,6 @@ node_modules/
 dist/
 target/
 *.log
+albert.db
+apps/desktop/src-tauri/albert.db
 assets/branding/.build/

@@ -18,6 +18,7 @@
 - 提供项目概览、导入、接口浏览、Provider 配置、Mock Server 状态面板
 - 承载后续项目管理和交互式配置
 - 通过 Tauri command 与 Rust 核心能力通信
+- 当前 UI 仅作为临时工作台，用于承接 Phase 2 的真实导入链路
 
 ### 2.2 领域核心层
 
@@ -85,9 +86,9 @@
 - `SchemaNode`
 - `MockExample`
 
-## 4. 一期运行流
+## 4. 当前运行流
 
-### 4.1 导入流
+### 4.1 导入流（当前已实现）
 
 1. 用户在 UI 选择 OpenAPI 文件或粘贴 cURL
 2. 前端调用 Tauri command
@@ -96,12 +97,29 @@
 5. 写入存储层
 6. UI 展示接口与样例占位
 
-### 4.2 Mock 查看流
+当前命令面：
+
+- `bootstrap_summary`
+- `parse_api_description`
+- `import_api_description`
+- `list_imported_collections`
+- `list_imported_endpoints`
+
+### 4.2 资产查看流（当前已实现）
 
 1. 用户进入接口详情页
 2. UI 读取 Canonical Endpoint 与 MockExample
 3. 根据 `success / empty / error` 切换展示
 4. 后续 phase 再接 AI 生成与网关回放
+
+### 4.3 本地持久化流（当前已实现）
+
+1. Tauri command 创建或复用 SQLite 数据库
+2. 执行 migration
+3. 保存 `api_collections`
+4. 保存 `api_endpoints`
+5. 保存请求/响应 schema 到 `api_schemas`
+6. 保存默认 `success / empty / error` mock examples
 
 ## 5. 数据持久化建议
 
@@ -119,6 +137,7 @@
 - 原始输入可选保留一份快照，便于重新解析
 - 存库主体应是标准化后的结构
 - 样例与 endpoint 分离，便于后续扩展状态与版本
+- 当前实现已支持 collection、endpoint、schema、example、provider config 的基础落库
 
 ## 6. UI 信息架构
 
@@ -128,6 +147,12 @@
 - `Endpoint Detail`: 请求结构、响应结构、Mock 样例
 - `Providers`: OpenAI 配置入口
 - `Server`: Mock Server 规划状态和未来运行参数
+
+当前说明：
+
+- 当前桌面界面应按“占位工具工作台”理解
+- 现阶段更关注命令与数据链路是否成立，而不是最终 UI 形态
+- 后续可以重新设计窗口结构，而不影响 parser、storage、gateway 的边界
 
 ## 7. 模块边界与依赖方向
 
@@ -156,4 +181,4 @@
 - 本地 HTTP 网关运行时
 - 文档 diff 与样例失效刷新
 - 多 Provider 兼容层
-
+- 前端导入体验、collection 切换、详情页细化

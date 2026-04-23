@@ -3,16 +3,18 @@
 ## Identity
 
 - Albert is an AI-driven API mock desktop client.
-- Phase 1 is a foundation release, not a feature-complete product.
+- The repository is now moving through Phase 2 parsing and persistence work.
 - The repository is currently documentation-first and skeleton-heavy by design.
 
-## Phase 1 Scope
+## Current Focus
 
 - bilingual README
-- PRD, architecture, roadmap
+- PRD, architecture, roadmap, and llmdoc
 - Tauri + React + TypeScript desktop shell
-- Rust workspace with scaffolded crates
-- canonical schema and placeholder extension points
+- canonical schema plus working OpenAPI / cURL parsing
+- SQLite persistence for imported assets
+- CI coverage for Rust, frontend build, and brand asset drift
+- the current desktop UI is only a placeholder workspace, not a final product surface
 
 ## Explicit Non-Goals
 
@@ -20,4 +22,3 @@
 - live HTTP gateway
 - caching and request fingerprints
 - multi-provider runtime
-

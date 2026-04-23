@@ -33,10 +33,24 @@
 - SQLite schema 与迁移
 - 导入后在 UI 查看接口列表与详情
 
+当前进度：
+
+- 已完成：OpenAPI JSON/YAML 基础解析
+- 已完成：常见 cURL 请求解析
+- 已完成：Canonical API Schema 转换基础能力
+- 已完成：SQLite 迁移、保存 collection、列出 collections/endpoints
+- 已完成：Tauri parse/import/list command 接线
+- 已完成：Parser 与 Storage 单元测试
+- 已完成：GitHub Actions 基线校验
+- 当前说明：桌面 UI 仅为占位工作台，不作为最终产品界面承诺
+- 待继续：前端工作台重构与产品化交互设计
+- 待继续：更完整的 OpenAPI 兼容范围
+
 验收标准：
 
 - 能把示例 OpenAPI / cURL 转成项目内可查询资产
 - UI 能展示 endpoint 结构和样例槽位
+- CI 能稳定覆盖 Rust 格式、Rust 测试、workspace 构建、前端构建和品牌资源校验
 
 ## Phase 3: Static Mock Runtime
 
@@ -89,4 +103,3 @@
 
 - 项目具备可持续演进的 AI 驱动 Mock 能力
 - 样例和接口结构可以长期同步维护
-

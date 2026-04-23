@@ -12,6 +12,18 @@ This document captures the planned runtime flow before full implementation exist
 4. Storage persists project, endpoints, schemas, and mock examples.
 5. UI renders imported assets.
 
+Current UI note:
+
+- The present desktop UI is a temporary workbench for exercising this flow.
+- UI structure may change substantially without changing the underlying import contract.
+
+Current commands:
+
+- `parse_api_description`
+- `import_api_description`
+- `list_imported_collections`
+- `list_imported_endpoints`
+
 ## Planned Mock Flow
 
 1. Local gateway receives request.
@@ -30,4 +42,3 @@ This document captures the planned runtime flow before full implementation exist
 
 - `docs/roadmap.md`
 - `llmdoc/reference/canonical-schema.md`
-

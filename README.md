@@ -65,6 +65,8 @@ Phase 1 does not yet include:
 
 ```text
 .
+|-- .github/
+|   `-- workflows/
 |-- assets/
 |   `-- branding/
 |-- apps/
@@ -100,8 +102,9 @@ npm --workspace apps/desktop run tauri:dev
 
 ## Current Status
 
-- React UI scaffold: available
-- Tauri shell: wired with a bootstrap command
-- Canonical schema model: defined
-- Parser, storage, gateway, provider crates: scaffolded
-- Full implementation: pending future phases
+- React UI scaffold: available as a placeholder desktop workspace for Phase 2 validation
+- Tauri shell: exposes bootstrap, parse, import, and list commands
+- Canonical schema model: defined and exercised by parser tests
+- Parser and storage crates: partially implemented with SQLite persistence and unit tests
+- CI: GitHub Actions validates Rust formatting, Rust tests, workspace checks, frontend build, and brand asset drift
+- Current UI should be treated as temporary tooling chrome, not the final product interface

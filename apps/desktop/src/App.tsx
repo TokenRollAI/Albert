@@ -3,34 +3,43 @@ import { useEffect, useState } from "react";
 import { PanelCard } from "./components/PanelCard";
 import { StatusPill } from "./components/StatusPill";
 import {
-  endpointPreviews,
+  fallbackParsedCollection,
   fallbackSummary,
-  openQuestions,
-  phasePreviews,
-  providerPreviews
+  sampleImportText
 } from "./data/fallback";
-import type { AppBootstrapSummary } from "./types";
-
-type SectionKey =
-  | "overview"
-  | "import"
-  | "endpoints"
-  | "providers"
-  | "server";
-
-const sections: Array<{ key: SectionKey; label: string }> = [
-  { key: "overview", label: "Overview" },
-  { key: "import", label: "Import" },
-  { key: "endpoints", label: "Endpoints" },
-  { key: "providers", label: "Providers" },
-  { key: "server", label: "Mock Server" }
-];
+import type {
+  AppBootstrapSummary,
+  CanonicalApiCollection,
+  CanonicalEndpoint,
+  ImportResult,
+  StoredCollectionSummary,
+  StoredEndpointSummary
+} from "./types";
 
 function App() {
-  const [activeSection, setActiveSection] = useState<SectionKey>("overview");
-  const [selectedPath, setSelectedPath] = useState(endpointPreviews[0]?.path ?? "");
   const [summary, setSummary] = useState<AppBootstrapSummary>(fallbackSummary);
   const [runtimeSource, setRuntimeSource] = useState("Scaffold");
+  const [importName, setImportName] = useState("Albert Example API");
+  const [importText, setImportText] = useState(sampleImportText);
+  const [parsedCollection, setParsedCollection] =
+    useState<CanonicalApiCollection>(fallbackParsedCollection);
+  const [storedCollections, setStoredCollections] = useState<StoredCollectionSummary[]>([]);
+  const [storedEndpoints, setStoredEndpoints] = useState<StoredEndpointSummary[]>([]);
+  const [selectedStoredCollectionId, setSelectedStoredCollectionId] = useState<string | null>(
+    null
+  );
+  const [selectedEndpointKey, setSelectedEndpointKey] = useState(
+    endpointKey(
+      fallbackParsedCollection.endpoints[0]?.method ?? "GET",
+      fallbackParsedCollection.endpoints[0]?.path ?? "/"
+    )
+  );
+  const [importMessage, setImportMessage] = useState(
+    "Ready. Paste OpenAPI JSON/YAML or cURL, then parse or import."
+  );
+  const [busyAction, setBusyAction] = useState<"parse" | "import" | null>(null);
+
+  const isTauriRuntime = runtimeSource === "Tauri Runtime";
 
   useEffect(() => {
     let active = true;
@@ -45,6 +54,7 @@ function App() {
 
         setSummary(data);
         setRuntimeSource("Tauri Runtime");
+        await refreshImportedCollections();
       } catch {
         if (!active) {
           return;
@@ -61,295 +71,396 @@ function App() {
     };
   }, []);
 
+  async function refreshImportedCollections(targetCollectionId?: string) {
+    try {
+      const collections = await invoke<StoredCollectionSummary[]>("list_imported_collections");
+      setStoredCollections(collections);
+
+      const nextCollectionId =
+        targetCollectionId ?? selectedStoredCollectionId ?? collections[0]?.id ?? null;
+      setSelectedStoredCollectionId(nextCollectionId);
+
+      if (!nextCollectionId) {
+        setStoredEndpoints([]);
+        return;
+      }
+
+      const endpoints = await invoke<StoredEndpointSummary[]>("list_imported_endpoints", {
+        collectionId: nextCollectionId
+      });
+      setStoredEndpoints(endpoints);
+    } catch {
+      setStoredCollections([]);
+      setStoredEndpoints([]);
+    }
+  }
+
+  async function handleSelectStoredCollection(collectionId: string) {
+    setSelectedStoredCollectionId(collectionId);
+
+    if (!isTauriRuntime) {
+      return;
+    }
+
+    try {
+      const endpoints = await invoke<StoredEndpointSummary[]>("list_imported_endpoints", {
+        collectionId
+      });
+      setStoredEndpoints(endpoints);
+    } catch {
+      setStoredEndpoints([]);
+    }
+  }
+
+  async function handleParse() {
+    if (!isTauriRuntime) {
+      setParsedCollection(fallbackParsedCollection);
+      setImportMessage("Tauri runtime unavailable. Showing local fallback preview.");
+      return;
+    }
+
+    try {
+      setBusyAction("parse");
+      const collection = await invoke<CanonicalApiCollection>("parse_api_description", {
+        body: importText,
+        name: importName || null
+      });
+      setParsedCollection(collection);
+      setSelectedEndpointKey(
+        endpointKey(collection.endpoints[0]?.method ?? "GET", collection.endpoints[0]?.path ?? "/")
+      );
+      setImportMessage(
+        `Parsed ${collection.endpoints.length} endpoint(s) from ${collection.source}.`
+      );
+    } catch (error) {
+      setImportMessage(`Parse failed: ${String(error)}`);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleImport() {
+    if (!isTauriRuntime) {
+      setImportMessage("SQLite import requires the Tauri runtime.");
+      return;
+    }
+
+    try {
+      setBusyAction("import");
+      const result = await invoke<ImportResult>("import_api_description", {
+        body: importText,
+        name: importName || null
+      });
+      const collection = await invoke<CanonicalApiCollection>("parse_api_description", {
+        body: importText,
+        name: importName || null
+      });
+      setParsedCollection(collection);
+      setSelectedEndpointKey(
+        endpointKey(collection.endpoints[0]?.method ?? "GET", collection.endpoints[0]?.path ?? "/")
+      );
+      await refreshImportedCollections(result.collection_id);
+      setImportMessage(
+        `Imported ${result.endpoint_count} endpoint(s) into ${result.database_url}.`
+      );
+    } catch (error) {
+      setImportMessage(`Import failed: ${String(error)}`);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   const selectedEndpoint =
-    endpointPreviews.find((item) => item.path === selectedPath) ?? endpointPreviews[0];
+    parsedCollection.endpoints.find(
+      (endpoint) => endpointKey(endpoint.method, endpoint.path) === selectedEndpointKey
+    ) ?? parsedCollection.endpoints[0];
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <p className="brand-block__kicker">AI-native API mocking</p>
-          <h1>Albert</h1>
-          <p className="brand-block__copy">
-            A desktop-first control plane for canonical API schemas, static mock
-            assets, and future OpenAI-backed generation.
-          </p>
+    <div className="tool-shell">
+      <header className="titlebar">
+        <div className="titlebar__left">
+          <img
+            src="/favicon-32x32.png"
+            alt="Albert"
+            className="titlebar__logo"
+          />
+          <span className="titlebar__product">Albert</span>
+          <span className="titlebar__separator">/</span>
+          <span className="titlebar__workspace">{parsedCollection.name}</span>
         </div>
 
-        <nav className="sidebar__nav">
-          {sections.map((section) => (
-            <button
-              key={section.key}
-              type="button"
-              className={
-                activeSection === section.key
-                  ? "sidebar__nav-item sidebar__nav-item--active"
-                  : "sidebar__nav-item"
-              }
-              onClick={() => setActiveSection(section.key)}
-            >
-              <span>{section.label}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="sidebar__footer">
-          <p className="sidebar__footer-label">Runtime</p>
-          <strong>{runtimeSource}</strong>
-          <p>{summary.current_phase}</p>
+        <div className="titlebar__right">
+          <ToolStat label="runtime" value={runtimeSource} />
+          <ToolStat label="phase" value={summary.current_phase} />
+          <ToolStat label="parsed" value={`${parsedCollection.endpoints.length} endpoints`} />
         </div>
-      </aside>
+      </header>
 
-      <main className="content">
-        <header className="hero">
-          <div>
-            <p className="hero__eyebrow">Foundation workspace</p>
-            <h2>Build the mock stack before the complexity arrives.</h2>
-            <p className="hero__copy">
-              Phase 1 keeps the system intentionally narrow: canonical schema,
-              parser boundaries, storage contracts, a desktop shell, and
-              explicit not-implemented seams.
-            </p>
-          </div>
-          <div className="hero__meta">
-            <div>
-              <span>Project</span>
-              <strong>{summary.project_name}</strong>
+      <div className="toolbar">
+        <div className="toolbar__group">
+          <button
+            type="button"
+            className="tool-button tool-button--primary"
+            onClick={handleParse}
+            disabled={busyAction !== null}
+          >
+            {busyAction === "parse" ? "Parsing..." : "Parse"}
+          </button>
+          <button
+            type="button"
+            className="tool-button"
+            onClick={handleImport}
+            disabled={busyAction !== null}
+          >
+            {busyAction === "import" ? "Importing..." : "Import To SQLite"}
+          </button>
+        </div>
+
+        <div className="toolbar__group toolbar__group--meta">
+          <span className="toolbar__meta">source {parsedCollection.source}</span>
+          <span className="toolbar__meta">stored {storedCollections.length}</span>
+          <span className="toolbar__meta">status {isTauriRuntime ? "connected" : "fallback"}</span>
+        </div>
+      </div>
+
+      <main className="tool-workbench">
+        <section className="tool-column tool-column--left">
+          <PanelCard
+            eyebrow="Input"
+            title="Source"
+            className="panel-card panel-card--tool panel-card--grow"
+          >
+            <div className="tool-form">
+              <label className="field-block">
+                <span>Collection</span>
+                <input
+                  type="text"
+                  value={importName}
+                  onChange={(event) => setImportName(event.target.value)}
+                  placeholder="Orders API"
+                />
+              </label>
+
+              <label className="field-block field-block--grow">
+                <span>OpenAPI JSON/YAML or cURL</span>
+                <textarea
+                  value={importText}
+                  onChange={(event) => setImportText(event.target.value)}
+                  spellCheck={false}
+                />
+              </label>
             </div>
-            <div>
-              <span>UI Surfaces</span>
-              <strong>{summary.ui_surfaces.length}</strong>
-            </div>
-          </div>
-        </header>
+          </PanelCard>
 
-        {activeSection === "overview" ? (
-          <div className="grid">
-            <PanelCard
-              eyebrow="Status"
-              title="Capability map"
-              aside={<StatusPill stage="scaffolded" />}
-            >
-              <div className="capability-columns">
-                <CapabilityGroup
-                  title="Parser"
-                  items={summary.parser_capabilities}
-                />
-                <CapabilityGroup
-                  title="Storage"
-                  items={summary.storage_capabilities}
-                />
-                <CapabilityGroup
-                  title="Provider"
-                  items={summary.provider_capabilities}
-                />
-                <CapabilityGroup
-                  title="Gateway"
-                  items={summary.gateway_capabilities}
-                />
-              </div>
-            </PanelCard>
-
-            <PanelCard eyebrow="Roadmap" title="Delivery phases">
-              <div className="phase-list">
-                {phasePreviews.map((phase) => (
-                  <article key={phase.name} className="phase-item">
-                    <h3>{phase.name}</h3>
-                    <p>{phase.summary}</p>
-                  </article>
-                ))}
-              </div>
-            </PanelCard>
-
-            <PanelCard eyebrow="Decisions" title="Open design questions">
-              <ul className="plain-list">
-                {openQuestions.map((question) => (
-                  <li key={question}>{question}</li>
-                ))}
-              </ul>
-            </PanelCard>
-          </div>
-        ) : null}
-
-        {activeSection === "import" ? (
-          <div className="grid">
-            <PanelCard eyebrow="Ingestion" title="Supported inputs">
-              <div className="import-grid">
-                <article className="import-card">
-                  <h3>OpenAPI / Swagger</h3>
-                  <p>
-                    Import JSON or YAML and normalize paths, methods, parameter
-                    rules, and response schemas into the Albert canonical model.
-                  </p>
-                </article>
-                <article className="import-card">
-                  <h3>cURL</h3>
-                  <p>
-                    Accept pasted terminal requests and extract URL, headers,
-                    query parameters, and body structure as parser input.
-                  </p>
-                </article>
-              </div>
-            </PanelCard>
-
-            <PanelCard eyebrow="Flow" title="Planned import pipeline">
-              <ol className="ordered-list">
-                <li>Receive OpenAPI or cURL content from the desktop UI.</li>
-                <li>Select the matching parser and emit canonical endpoint data.</li>
-                <li>Persist normalized assets and mock example placeholders.</li>
-                <li>Expose imported endpoints to the control panel.</li>
-              </ol>
-            </PanelCard>
-          </div>
-        ) : null}
-
-        {activeSection === "endpoints" ? (
-          <div className="grid grid--two-column">
-            <PanelCard eyebrow="Catalog" title="Endpoint inventory">
-              <div className="endpoint-list">
-                {endpointPreviews.map((endpoint) => (
-                  <button
-                    key={`${endpoint.method}:${endpoint.path}`}
-                    type="button"
-                    className={
-                      selectedEndpoint?.path === endpoint.path
-                        ? "endpoint-list__item endpoint-list__item--active"
-                        : "endpoint-list__item"
-                    }
-                    onClick={() => setSelectedPath(endpoint.path)}
-                  >
-                    <div className="endpoint-list__meta">
-                      <strong>
-                        {endpoint.method} {endpoint.path}
-                      </strong>
-                      <span>{endpoint.title}</span>
-                    </div>
-                    <StatusPill stage={endpoint.status} />
-                  </button>
-                ))}
-              </div>
-            </PanelCard>
-
-            <PanelCard eyebrow="Detail" title={selectedEndpoint.title}>
-              <div className="detail-stack">
-                <p>{selectedEndpoint.summary}</p>
-                <div className="detail-shelf">
-                  <span>Source</span>
-                  <strong>{selectedEndpoint.source}</strong>
-                </div>
-                <div>
-                  <h3>Request shape</h3>
-                  <ul className="token-list">
-                    {selectedEndpoint.request_shape.map((shape) => (
-                      <li key={shape}>{shape}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <h3>Response shape</h3>
-                  <ul className="token-list">
-                    {selectedEndpoint.response_shape.map((shape) => (
-                      <li key={shape}>{shape}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </PanelCard>
-          </div>
-        ) : null}
-
-        {activeSection === "providers" ? (
-          <div className="grid">
-            <PanelCard eyebrow="Provider" title="OpenAI adapter plan">
-              <div className="provider-list">
-                {providerPreviews.map((provider) => (
-                  <article key={provider.name} className="provider-item">
-                    <div>
-                      <h3>{provider.name}</h3>
-                      <p>{provider.note}</p>
-                    </div>
-                    <div className="provider-item__meta">
-                      <span>{provider.mode}</span>
-                      <strong>{provider.status}</strong>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </PanelCard>
-
-            <PanelCard eyebrow="Constraints" title="Phase 1 provider boundary">
-              <ul className="plain-list">
-                <li>OpenAI only</li>
-                <li>Chat Completions first</li>
-                <li>No tool calling, streaming, or reasoning controls yet</li>
-                <li>Responses API stays documented as a next-step seam</li>
-              </ul>
-            </PanelCard>
-          </div>
-        ) : null}
-
-        {activeSection === "server" ? (
-          <div className="grid">
-            <PanelCard eyebrow="Runtime" title="Mock server plan">
-              <div className="server-matrix">
-                <article>
-                  <h3>Phase 1</h3>
-                  <p>Server contracts only. No active listener.</p>
-                </article>
-                <article>
-                  <h3>Phase 3</h3>
-                  <p>Static response routing, CORS, and basic path matching.</p>
-                </article>
-                <article>
-                  <h3>Future</h3>
-                  <p>AI-driven generation, cache policies, and diff-aware refresh.</p>
-                </article>
-              </div>
-            </PanelCard>
-
-            <PanelCard eyebrow="Mock Examples" title="Supported states">
-              <div className="mock-state-row">
-                <StatusPill stage="success" />
-                <StatusPill stage="empty" />
-                <StatusPill stage="error" />
-              </div>
-              <p className="muted-copy">
-                Static examples are the only mock strategy in Phase 1. They are
-                modeled now so the gateway can consume them later without schema
-                redesign.
+          <PanelCard
+            eyebrow="Storage"
+            title="Collections"
+            className="panel-card panel-card--tool"
+          >
+            {storedCollections.length === 0 ? (
+              <p className="tool-muted">
+                {isTauriRuntime ? "No imported collections." : "Tauri runtime required for SQLite."}
               </p>
-            </PanelCard>
-          </div>
-        ) : null}
+            ) : (
+              <div className="tool-list">
+                {storedCollections.map((collection) => {
+                  const active = selectedStoredCollectionId === collection.id;
+                  return (
+                    <button
+                      key={collection.id}
+                      type="button"
+                      className={active ? "tool-list__item tool-list__item--active" : "tool-list__item"}
+                      onClick={() => handleSelectStoredCollection(collection.id)}
+                    >
+                      <strong>{collection.name}</strong>
+                      <span>
+                        {collection.source_kind} · {collection.endpoint_count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </PanelCard>
+        </section>
+
+        <section className="tool-column tool-column--center">
+          <PanelCard
+            eyebrow="Endpoints"
+            title="Collection View"
+            aside={<span className="tool-meta-chip">{parsedCollection.id}</span>}
+            className="panel-card panel-card--tool panel-card--grow"
+          >
+            <div className="endpoint-workbench">
+              <div className="endpoint-browser">
+                {parsedCollection.endpoints.map((endpoint) => {
+                  const key = endpointKey(endpoint.method, endpoint.path);
+                  const active = selectedEndpointKey === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={
+                        active
+                          ? "endpoint-browser__item endpoint-browser__item--active"
+                          : "endpoint-browser__item"
+                      }
+                      onClick={() => setSelectedEndpointKey(key)}
+                    >
+                      <strong>
+                        {endpoint.method.toUpperCase()} {endpoint.path}
+                      </strong>
+                      <span>{endpoint.summary ?? endpoint.operation_id ?? "Endpoint"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="endpoint-inspector">
+                <header className="endpoint-inspector__header">
+                  <div>
+                    <p className="endpoint-inspector__eyebrow">Selected</p>
+                    <h2>
+                      {selectedEndpoint.method.toUpperCase()} {selectedEndpoint.path}
+                    </h2>
+                  </div>
+                  <div className="endpoint-inspector__summary">
+                    {selectedEndpoint.summary ?? selectedEndpoint.operation_id ?? "Canonical endpoint"}
+                  </div>
+                </header>
+
+                <div className="inspector-grid">
+                  <InspectorBlock
+                    title="Parameters"
+                    emptyText="No parameters."
+                    items={selectedEndpoint.parameters.map(
+                      (parameter) =>
+                        `${parameter.location}.${parameter.name}${
+                          parameter.required ? " [required]" : ""
+                        }`
+                    )}
+                  />
+                  <InspectorBlock
+                    title="Request"
+                    emptyText="No request body."
+                    items={
+                      selectedEndpoint.request_body
+                        ? [
+                            selectedEndpoint.request_body.content_type,
+                            selectedEndpoint.request_body.schema.node_type
+                          ]
+                        : []
+                    }
+                  />
+                  <InspectorBlock
+                    title="Responses"
+                    emptyText="No responses."
+                    items={selectedEndpoint.responses.map(
+                      (response) =>
+                        `${response.status_code} · ${response.content_type}${
+                          response.schema ? ` · ${response.schema.node_type}` : ""
+                        }`
+                    )}
+                  />
+                  <InspectorBlock
+                    title="Tags"
+                    emptyText="No tags."
+                    items={selectedEndpoint.tags}
+                  />
+                </div>
+              </div>
+            </div>
+          </PanelCard>
+        </section>
+
+        <section className="tool-column tool-column--right">
+          <PanelCard
+            eyebrow="SQLite"
+            title="Stored Endpoints"
+            className="panel-card panel-card--tool panel-card--grow"
+          >
+            {storedEndpoints.length === 0 ? (
+              <p className="tool-muted">Import a collection to populate SQLite endpoint records.</p>
+            ) : (
+              <div className="tool-list">
+                {storedEndpoints.map((endpoint) => (
+                  <div
+                    key={endpoint.id}
+                    className="tool-list__item tool-list__item--read-only"
+                  >
+                    <strong>
+                      {endpoint.method} {endpoint.path}
+                    </strong>
+                    <span>{endpoint.summary ?? "Imported endpoint"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </PanelCard>
+
+          <PanelCard
+            eyebrow="Mocks"
+            title="Example States"
+            className="panel-card panel-card--tool"
+          >
+            <div className="tool-pill-row">
+              {selectedEndpoint.examples.map((example) => (
+                <StatusPill key={example.kind} stage={example.kind} />
+              ))}
+            </div>
+            <p className="tool-muted">
+              Static mock states are already persisted, so the runtime layer can attach routing later.
+            </p>
+          </PanelCard>
+        </section>
       </main>
+
+      <footer className="statusbar">
+        <span className="statusbar__message">{importMessage}</span>
+        <span className="statusbar__detail">
+          {selectedEndpoint.method.toUpperCase()} {selectedEndpoint.path}
+        </span>
+      </footer>
     </div>
   );
 }
 
-function CapabilityGroup({
-  title,
-  items
-}: {
-  title: string;
-  items: AppBootstrapSummary["parser_capabilities"];
-}) {
+function ToolStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="capability-group">
-      <h3>{title}</h3>
-      <ul className="plain-list">
-        {items.map((item) => (
-          <li key={item.name} className="capability-item">
-            <div className="capability-item__row">
-              <strong>{item.name}</strong>
-              <StatusPill stage={item.stage} />
-            </div>
-            <p>{item.note}</p>
-          </li>
-        ))}
-      </ul>
+    <div className="tool-stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
+}
+
+function InspectorBlock({
+  title,
+  items,
+  emptyText
+}: {
+  title: string;
+  items: string[];
+  emptyText: string;
+}) {
+  return (
+    <section className="inspector-block">
+      <h3>{title}</h3>
+      {items.length === 0 ? (
+        <p className="tool-muted">{emptyText}</p>
+      ) : (
+        <ul className="inspector-tags">
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function endpointKey(method: string, path: string) {
+  return `${method.toUpperCase()}:${path}`;
 }
 
 export default App;
-
