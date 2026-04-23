@@ -59,6 +59,23 @@ counts.
   seeds the Try-it draft with the recorded query + body so the user
   can tweak and replay.
 
+## URL bar
+
+The URL bar above the request/response grid surfaces the active method,
+path, and summary. It also hosts a **Copy as cURL** button that
+clipboards a one-liner for the active endpoint — targeting the running
+mock server's base URL when one is present, falling back to
+`https://api.example.com` otherwise.
+
+## Endpoint description
+
+When an endpoint declares a `description`, the RequestPanel renders it
+above the sub-tabs via a tiny in-house Markdown renderer
+(`components/Markdown.tsx`). Supported spans: `` `code` ``, `**bold**`,
+`*italic*`, `[link](https://…)`. Paragraphs split on blank lines, single
+newlines become `<br>`. No headings or lists — endpoint descriptions
+rarely need more and the renderer stays dependency-free.
+
 ## Try-it panel
 
 Lives under the response pane when an endpoint tab is open. Reads the

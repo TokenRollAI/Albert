@@ -1,3 +1,4 @@
+import { Markdown } from "./Markdown";
 import { SchemaTree, type SchemaNodeShape } from "./SchemaTree";
 import type {
   CanonicalEndpoint,
@@ -25,6 +26,11 @@ export function RequestPanel({ tab, onSelectInspector }: RequestPanelProps) {
 
   return (
     <section className="request-panel">
+      {endpoint.description ? (
+        <div className="endpoint-desc">
+          <Markdown source={endpoint.description} />
+        </div>
+      ) : null}
       <nav className="request-panel__tabs" role="tablist">
         {INSPECTORS.map((item) => {
           const active = item.key === inspector;

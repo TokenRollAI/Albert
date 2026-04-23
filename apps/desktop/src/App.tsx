@@ -23,6 +23,7 @@ import {
 import { useAiActions, type PromptPreview } from "./hooks/useAiActions";
 import { useCollectionActions } from "./hooks/useCollectionActions";
 import { useEndpointTabs } from "./hooks/useEndpointTabs";
+import { useImportActions } from "./hooks/useImportActions";
 import {
   useKeyboardShortcuts,
   type ShortcutBinding
@@ -63,8 +64,6 @@ function App() {
   const [refreshBusy, setRefreshBusy] = useState(false);
 
   const [importOpen, setImportOpen] = useState(false);
-  const [importBusy, setImportBusy] = useState<"parse" | "import" | null>(null);
-  const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const [mockPanelOpen, setMockPanelOpen] = useState(false);
   const [providersOpen, setProvidersOpen] = useState(false);
@@ -256,85 +255,15 @@ function App() {
     [openTab]
   );
 
-  const handleImport = useCallback(
-    async (name: string, body: string) => {
-      if (!isTauriRuntime) {
-        setImportMessage(
-          "SQLite import requires the Tauri runtime. Use Parse Preview instead."
-        );
-        return;
-      }
-      try {
-        setImportBusy("import");
-        setImportMessage(null);
-        const result = await invoke<ImportResult>("import_api_description", {
-          body,
-          name: name || null
-        });
-        const collection = await invoke<CanonicalApiCollection>(
-          "parse_api_description",
-          { body, name: name || null }
-        );
-        setPreviewCollection(null);
-        await refreshStoredCollections();
-        setStatusMessage(
-          `Imported ${result.endpoint_count} endpoint(s) into ${result.database_url}.`
-        );
-        toasts.success(
-          `Imported ${result.endpoint_count} endpoint(s) as "${result.collection_name}".`
-        );
-        setImportMessage(null);
-        setImportOpen(false);
-        const first = collection.endpoints[0];
-        if (first) {
-          openTab(result.collection_id, result.collection_name, first);
-        }
-      } catch (error) {
-        const message = `Import failed: ${String(error)}`;
-        setImportMessage(message);
-        toasts.error(message);
-      } finally {
-        setImportBusy(null);
-      }
-    },
-    [isTauriRuntime, openTab, refreshStoredCollections, toasts]
-  );
-
-  const handleParsePreview = useCallback(
-    async (name: string, body: string) => {
-      try {
-        setImportBusy("parse");
-        setImportMessage(null);
-        if (!isTauriRuntime) {
-          setPreviewCollection({
-            ...fallbackParsedCollection,
-            name: name || fallbackParsedCollection.name
-          });
-          setImportMessage(
-            "Preview uses local fallback because Tauri runtime is unavailable."
-          );
-          setStatusMessage("Preview populated from local fallback.");
-          return;
-        }
-        const collection = await invoke<CanonicalApiCollection>(
-          "parse_api_description",
-          { body, name: name || null }
-        );
-        setPreviewCollection(collection);
-        setStatusMessage(
-          `Parsed ${collection.endpoints.length} endpoint(s) from ${collection.source}.`
-        );
-        setImportMessage(
-          `Parsed ${collection.endpoints.length} endpoint(s). Review in the sidebar; import to persist.`
-        );
-      } catch (error) {
-        setImportMessage(`Parse failed: ${String(error)}`);
-      } finally {
-        setImportBusy(null);
-      }
-    },
-    [isTauriRuntime]
-  );
+  const importActions = useImportActions({
+    isTauriRuntime,
+    toasts,
+    setPreviewCollection,
+    setStatusMessage,
+    refreshStoredCollections,
+    openTab,
+    onClose: () => setImportOpen(false)
+  });
 
   const handleStartGateway = useCallback(
     async (port: number, host: string, cors: boolean) => {
@@ -504,7 +433,16 @@ function App() {
           {activeTab ? (
             <div className="workbench__grid">
               <div className="workbench__editor">
-                <UrlBar tab={activeTab} disabled />
+                <UrlBar
+                  tab={activeTab}
+                  disabled={false}
+                  baseUrl={
+                    mockGateway.status.running &&
+                    mockGateway.status.bind_address
+                      ? `http://${mockGateway.status.bind_address}`
+                      : null
+                  }
+                />
                 <RequestPanel
                   tab={activeTab}
                   onSelectInspector={(key) => setInspector(activeTab.id, key)}
@@ -551,16 +489,16 @@ function App() {
       <ImportDialog
         open={importOpen}
         onClose={() => {
-          if (importBusy) return;
+          if (importActions.importBusy) return;
           setImportOpen(false);
-          setImportMessage(null);
+          importActions.setImportMessage(null);
         }}
-        onParse={handleParsePreview}
-        onImport={handleImport}
+        onParse={importActions.runParsePreview}
+        onImport={importActions.runImport}
         canImport={isTauriRuntime}
         canFetch={isTauriRuntime}
-        busy={importBusy}
-        message={importMessage}
+        busy={importActions.importBusy}
+        message={importActions.importMessage}
         initialName="Albert Example API"
         initialBody={sampleImportText}
       />

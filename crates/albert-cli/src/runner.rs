@@ -31,9 +31,73 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::Delete => run_delete(args),
         Command::Rename => run_rename(args),
         Command::Doctor => run_doctor(args).await,
+        Command::Ping => run_ping(args).await,
         Command::Watch => run_watch(args).await,
         Command::Serve => run_serve(args).await,
     }
+}
+
+async fn run_ping(args: CliArgs) -> Result<RunOutcome, String> {
+    let base = args
+        .ping_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+
+    let status_url = format!("{base}/__albert/status");
+    let status_resp = client
+        .get(&status_url)
+        .send()
+        .await
+        .map_err(|e| format!("status request to {status_url} failed: {e}"))?;
+    let status_code = status_resp.status();
+    let status_body: serde_json::Value = status_resp
+        .json()
+        .await
+        .map_err(|e| format!("status body parse: {e}"))?;
+    if !status_code.is_success() {
+        return Err(format!(
+            "status endpoint returned {status_code}: {status_body}"
+        ));
+    }
+
+    let metrics_url = format!("{base}/__albert/metrics");
+    let metrics_resp = client
+        .get(&metrics_url)
+        .send()
+        .await
+        .map_err(|e| format!("metrics request to {metrics_url} failed: {e}"))?;
+    let metrics_body: serde_json::Value = metrics_resp
+        .json()
+        .await
+        .map_err(|e| format!("metrics body parse: {e}"))?;
+
+    let route_count = status_body
+        .get("route_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let total = metrics_body
+        .get("total_requests")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let uptime = metrics_body
+        .get("uptime_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let avg_latency = metrics_body
+        .get("average_latency_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let message = format!(
+        "[ ok ] {base} is up\n       routes: {route_count}\n       requests: {total} (avg {avg_latency}ms)\n       uptime: {uptime}ms"
+    );
+    Ok(RunOutcome::Message(message))
 }
 
 async fn run_doctor(args: CliArgs) -> Result<RunOutcome, String> {

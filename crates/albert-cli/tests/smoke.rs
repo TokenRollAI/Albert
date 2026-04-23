@@ -192,6 +192,53 @@ async fn watch_picks_up_file_changes() {
 }
 
 #[tokio::test]
+async fn ping_reports_running_gateway() {
+    // Stand up a local mock gateway on an ephemeral port.
+    let gateway = albert_gateway::MockGateway::new();
+    let status = gateway
+        .start(
+            Vec::new(),
+            albert_gateway::GatewayConfig {
+                port: 0,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let bind = status.bind_address.clone().unwrap();
+
+    let args = parse_args([
+        "ping".to_string(),
+        "--url".to_string(),
+        format!("http://{bind}"),
+    ])
+    .unwrap();
+    let outcome = run_with_args(args).await.expect("ping");
+    let message = match outcome {
+        RunOutcome::Message(msg) => msg,
+        other => panic!("unexpected: {other:?}"),
+    };
+    assert!(message.contains("[ ok ]"));
+    assert!(message.contains("routes: 0"));
+    assert!(message.contains("requests:"));
+
+    gateway.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn ping_surfaces_connection_failure() {
+    // Port guaranteed closed (use 1 — typically unavailable and fails fast).
+    let args = parse_args([
+        "ping".to_string(),
+        "--url".to_string(),
+        "http://127.0.0.1:1".to_string(),
+    ])
+    .unwrap();
+    let err = run_with_args(args).await.expect_err("should fail");
+    assert!(err.contains("status request"));
+}
+
+#[tokio::test]
 async fn doctor_succeeds_with_local_provider_override() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;

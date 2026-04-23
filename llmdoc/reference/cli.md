@@ -24,6 +24,7 @@ running the mock server without the Tauri shell.
 | `rename`  | Rename a stored collection (`--id` + `--name`)               |
 | `export-all` | Print every collection as a JSON array (optionally to a file) |
 | `doctor`  | Health checks: db migratability, env keys, provider probe   |
+| `ping`    | Probe a running mock gateway (`/__albert/status` + metrics) |
 | `help`    | Show the usage text                                          |
 | `version` | Print the crate version                                      |
 
@@ -82,6 +83,17 @@ snapshots, fall through to the regular OpenAPI / cURL parsers.
 The watcher stats every file each tick; when its `mtime` changes (or on
 startup), the file is re-imported. Errors are written to stderr without
 aborting the loop.
+
+## `ping`
+
+Hits `/__albert/status` and `/__albert/metrics` on a running gateway and
+prints a one-shot summary of route count, total requests, average
+latency, and uptime.
+
+- `--url <base>` — gateway base URL (default `http://127.0.0.1:4317`).
+
+Exits non-zero when the server is unreachable or returns a non-2xx
+status. Ideal for smoke tests in CI and shell health checks.
 
 ## `doctor`
 
