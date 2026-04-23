@@ -436,6 +436,62 @@ async fn help_and_version_return_messages() {
 }
 
 #[tokio::test]
+async fn routes_emits_tsv_and_json_rows() {
+    let temp = TempDir::new().unwrap();
+    let db_path = temp.path().join("albert.db");
+    let openapi_path = temp.path().join("spec.json");
+    fs::write(&openapi_path, OPENAPI).unwrap();
+
+    // Import first so the routes command has something to print.
+    let import_args = parse_args([
+        "import".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        openapi_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    run_with_args(import_args).await.expect("import");
+
+    // TSV form.
+    let tsv_args = parse_args([
+        "routes".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    assert_eq!(tsv_args.command, Command::Routes);
+    let tsv_message = match run_with_args(tsv_args).await.unwrap() {
+        RunOutcome::Message(m) => m,
+        other => panic!("expected Message, got {other:?}"),
+    };
+    let lines: Vec<&str> = tsv_message.lines().collect();
+    assert!(lines.iter().any(|l| l.starts_with("GET\t/ping\t")));
+    // Every line must have exactly two tabs (three columns).
+    for line in &lines {
+        assert_eq!(line.matches('\t').count(), 2, "bad line: {line}");
+    }
+
+    // JSON form.
+    let json_args = parse_args([
+        "routes".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        "--json".to_string(),
+    ])
+    .unwrap();
+    assert!(json_args.emit_json);
+    let json_message = match run_with_args(json_args).await.unwrap() {
+        RunOutcome::Message(m) => m,
+        other => panic!("expected Message, got {other:?}"),
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&json_message).unwrap();
+    let rows = parsed.as_array().expect("JSON array");
+    assert!(!rows.is_empty());
+    assert_eq!(rows[0]["method"], "GET");
+    assert_eq!(rows[0]["path"], "/ping");
+}
+
+#[tokio::test]
 async fn serve_print_config_emits_json_and_exits() {
     let args = parse_args([
         "serve".to_string(),

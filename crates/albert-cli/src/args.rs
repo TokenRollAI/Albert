@@ -10,6 +10,7 @@ pub enum Command {
     Import,
     Watch,
     List,
+    Routes,
     Export,
     ExportAll,
     Delete,
@@ -52,6 +53,9 @@ pub struct CliArgs {
     /// stdout and exits without binding a port. Useful in CI scripts to
     /// verify shell-quoted arguments were parsed as intended.
     pub print_config: bool,
+    /// Switch `routes` from tab-separated output to pretty JSON so scripts
+    /// can parse the structure directly instead of splitting strings.
+    pub emit_json: bool,
 }
 
 impl Default for CliArgs {
@@ -74,6 +78,7 @@ impl Default for CliArgs {
             watch_interval_ms: None,
             ping_url: None,
             print_config: false,
+            emit_json: false,
         }
     }
 }
@@ -115,6 +120,7 @@ where
         "import" => Command::Import,
         "watch" => Command::Watch,
         "list" => Command::List,
+        "routes" => Command::Routes,
         "export" => Command::Export,
         "export-all" => Command::ExportAll,
         "delete" => Command::Delete,
@@ -217,6 +223,9 @@ where
             "print-config" => {
                 out.print_config = true;
             }
+            "json" => {
+                out.emit_json = true;
+            }
             "url" => {
                 out.ping_url = Some(take_value(&mut i)?);
             }
@@ -256,6 +265,7 @@ pub fn help_text() -> String {
     s.push_str("    import     Import an OpenAPI/cURL file into the SQLite store\n");
     s.push_str("    watch      Re-import a file on every change (Ctrl-C to stop)\n");
     s.push_str("    list       List collections stored in the database\n");
+    s.push_str("    routes     Print every registered route (METHOD\\tpath\\tcollection)\n");
     s.push_str("    export     Print a collection snapshot as JSON\n");
     s.push_str("    export-all Print all collections as a JSON array\n");
     s.push_str("    delete     Remove a collection from the database\n");
@@ -290,7 +300,10 @@ pub fn help_text() -> String {
     s.push_str("    --name <new_name>        New display name\n\n");
     s.push_str("EXPORT OPTIONS:\n");
     s.push_str("    --id <collection_id>     Collection to export\n");
-    s.push_str("    --output <path>          File to write (default: stdout)\n");
+    s.push_str("    --output <path>          File to write (default: stdout)\n\n");
+    s.push_str("ROUTES OPTIONS:\n");
+    s.push_str("    --json                   Emit JSON array instead of TSV rows\n");
+    s.push_str("    --collection <id>        Limit to the named collection(s)\n");
     s
 }
 

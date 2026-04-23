@@ -16,6 +16,7 @@ running the mock server without the Tauri shell.
 | Command   | Purpose                                                      |
 |-----------|--------------------------------------------------------------|
 | `serve`   | Start the mock HTTP gateway                                  |
+| `routes`  | Print every registered route as TSV (`--json` for JSON)     |
 | `import`  | Parse an OpenAPI/cURL file (or a JSON bundle) and persist it |
 | `watch`   | Keep re-importing one or more files on every mtime change    |
 | `list`    | Print the collections stored in the database                 |

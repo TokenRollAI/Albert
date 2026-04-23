@@ -29,6 +29,7 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         ))),
         Command::Import => run_import(args),
         Command::List => run_list(args),
+        Command::Routes => run_routes(args),
         Command::Export => run_export(args),
         Command::ExportAll => run_export_all(args),
         Command::Delete => run_delete(args),
@@ -516,6 +517,67 @@ fn run_list(args: CliArgs) -> Result<RunOutcome, String> {
             "{:<30}  {:<8}  {:>3} endpoints    id={}",
             summary.name, summary.source_kind, summary.endpoint_count, summary.id
         ));
+    }
+    Ok(RunOutcome::Message(lines.join("\n")))
+}
+
+fn run_routes(args: CliArgs) -> Result<RunOutcome, String> {
+    let store = prepare_store(&args.database_url)?;
+    let collections = if args.collections.is_empty() {
+        store.load_all_collections().map_err(|e| e.to_string())?
+    } else {
+        let mut out = Vec::new();
+        for id in &args.collections {
+            if let Some(collection) = store.load_collection(id).map_err(|e| e.to_string())? {
+                out.push(collection);
+            } else {
+                return Err(format!("collection '{id}' not found"));
+            }
+        }
+        out
+    };
+
+    if args.emit_json {
+        // JSON: [{ method, path, collection, operation_id, summary, auth }].
+        let rows: Vec<serde_json::Value> = collections
+            .iter()
+            .flat_map(|collection| {
+                collection.endpoints.iter().map(|endpoint| {
+                    serde_json::json!({
+                        "method": endpoint.method.as_str(),
+                        "path": endpoint.path,
+                        "collection": collection.name,
+                        "collection_id": collection.id,
+                        "operation_id": endpoint.operation_id,
+                        "summary": endpoint.summary,
+                        "auth": endpoint.auth,
+                    })
+                })
+            })
+            .collect();
+        let rendered =
+            serde_json::to_string_pretty(&rows).map_err(|e| format!("serialize: {e}"))?;
+        return Ok(RunOutcome::Message(rendered));
+    }
+
+    // TSV: method\tpath\tcollection. Shell-friendly so users can pipe into
+    // `awk`, `sort -u`, etc.
+    let mut lines = Vec::new();
+    for collection in &collections {
+        for endpoint in &collection.endpoints {
+            lines.push(format!(
+                "{}\t{}\t{}",
+                endpoint.method.as_str(),
+                endpoint.path,
+                collection.name
+            ));
+        }
+    }
+    if lines.is_empty() {
+        return Ok(RunOutcome::Message(format!(
+            "no routes in {} — run `albert import <file>` first",
+            args.database_url
+        )));
     }
     Ok(RunOutcome::Message(lines.join("\n")))
 }
