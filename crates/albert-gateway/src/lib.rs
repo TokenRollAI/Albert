@@ -991,6 +991,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rate_limit_recovers_after_window_elapses() {
+        // A denied request is informational, not terminal — after the window
+        // rolls past, the route should serve again. Uses a 120ms window so
+        // the test stays fast.
+        let gateway = MockGateway::new();
+        let col = collection(
+            "win",
+            vec![endpoint(HttpMethod::Get, "/rec", json!({"ok": true}))],
+        );
+        let mut rules = BTreeMap::new();
+        rules.insert(
+            "GET /rec".to_string(),
+            config::RateLimitRule {
+                limit: 1,
+                window_ms: 120,
+            },
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    rate_limits: rules,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        let resp = client.get(format!("{base}/rec")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let resp = client.get(format!("{base}/rec")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 429);
+        assert!(resp.headers().get("retry-after").is_some());
+
+        tokio::time::sleep(std::time::Duration::from_millis(160)).await;
+
+        let resp = client.get(format!("{base}/rec")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
     async fn rate_limit_zero_denies_all_requests() {
         let gateway = MockGateway::new();
         let col = collection(
@@ -1028,6 +1073,176 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status().as_u16(), 429);
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn reconfigure_preserves_rate_limit_history_for_kept_rules() {
+        // When an admin tweaks a limit without restarting, the in-flight
+        // window must stay — otherwise a misbehaving client could dodge a
+        // tightened rule by racing a config reload.
+        let gateway = MockGateway::new();
+        let col = collection(
+            "hot",
+            vec![endpoint(HttpMethod::Get, "/ping", json!({"ok": true}))],
+        );
+        let mut initial_rules = BTreeMap::new();
+        initial_rules.insert(
+            "GET /ping".to_string(),
+            config::RateLimitRule {
+                limit: 2,
+                window_ms: 60_000,
+            },
+        );
+        let status = gateway
+            .start(
+                vec![col.clone()],
+                GatewayConfig {
+                    port: 0,
+                    rate_limits: initial_rules,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        for _ in 0..2 {
+            let resp = client.get(format!("{base}/ping")).send().await.unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+        }
+
+        // Reconfigure with the same rule; history must carry forward.
+        let mut same_rules = BTreeMap::new();
+        same_rules.insert(
+            "GET /ping".to_string(),
+            config::RateLimitRule {
+                limit: 2,
+                window_ms: 60_000,
+            },
+        );
+        gateway
+            .reconfigure(
+                vec![col.clone()],
+                BTreeMap::new(),
+                None,
+                BTreeMap::new(),
+                0.0,
+                false,
+                BTreeMap::new(),
+                BTreeMap::new(),
+                same_rules,
+            )
+            .await
+            .expect("reconfigure");
+
+        // Next hit should still be denied.
+        let resp = client.get(format!("{base}/ping")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 429);
+
+        // Remove the rule entirely; subsequent requests succeed again.
+        gateway
+            .reconfigure(
+                vec![col],
+                BTreeMap::new(),
+                None,
+                BTreeMap::new(),
+                0.0,
+                false,
+                BTreeMap::new(),
+                BTreeMap::new(),
+                BTreeMap::new(),
+            )
+            .await
+            .expect("reconfigure");
+        let resp = client.get(format!("{base}/ping")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn reconfigure_swaps_auth_gate_atomically() {
+        // A running server with a bearer gate that flips to an API-key gate
+        // must reject bearer-only requests and admit api-key ones after the
+        // swap, without dropping the port.
+        let gateway = MockGateway::new();
+        let col = collection(
+            "auth",
+            vec![endpoint(HttpMethod::Get, "/secure", json!({"ok": true}))],
+        );
+        let mut bearer_rules = BTreeMap::new();
+        bearer_rules.insert(
+            "GET /secure".to_string(),
+            vec![config::RequiredHeader {
+                name: "Authorization".to_string(),
+                value_prefix: Some("Bearer ".to_string()),
+                value_equals: None,
+            }],
+        );
+        let status = gateway
+            .start(
+                vec![col.clone()],
+                GatewayConfig {
+                    port: 0,
+                    required_headers: bearer_rules,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        let resp = client
+            .get(format!("{base}/secure"))
+            .header("authorization", "Bearer abc")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+
+        let mut api_key_rules = BTreeMap::new();
+        api_key_rules.insert(
+            "GET /secure".to_string(),
+            vec![config::RequiredHeader {
+                name: "X-Api-Key".to_string(),
+                value_prefix: None,
+                value_equals: None,
+            }],
+        );
+        gateway
+            .reconfigure(
+                vec![col],
+                BTreeMap::new(),
+                None,
+                BTreeMap::new(),
+                0.0,
+                false,
+                BTreeMap::new(),
+                api_key_rules,
+                BTreeMap::new(),
+            )
+            .await
+            .expect("reconfigure");
+
+        // Bearer token no longer satisfies the gate.
+        let resp = client
+            .get(format!("{base}/secure"))
+            .header("authorization", "Bearer abc")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 401);
+        let resp = client
+            .get(format!("{base}/secure"))
+            .header("x-api-key", "anything")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+
         gateway.stop().await.expect("stop");
     }
 
