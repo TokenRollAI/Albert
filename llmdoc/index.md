@@ -28,6 +28,7 @@
 - `llmdoc/reference/gateway-routes.md`: mock gateway routing rules and special paths
 - `llmdoc/reference/openai-adapter.md`: OpenAI adapter contract and prompt schema
 - `llmdoc/reference/ux-conventions.md`: keyboard shortcuts, toasts, drawer shell
+- `llmdoc/reference/cli.md`: albert-cli headless binary (serve / import / list / export)
 
 ## Routing Rules
 

@@ -8,6 +8,7 @@ interface SidebarProps {
   onOpenEndpoint: (collection: SidebarCollection, endpoint: CanonicalEndpoint) => void;
   onImportClick: () => void;
   onRefresh: () => void;
+  onExportCollection?: (collection: SidebarCollection) => void;
   busy: boolean;
 }
 
@@ -22,6 +23,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
     onOpenEndpoint,
     onImportClick,
     onRefresh,
+    onExportCollection,
     busy
   }: SidebarProps,
   ref
@@ -159,6 +161,28 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
                         ? "preview"
                         : "demo"}
                   </span>
+                  {onExportCollection && collection.origin === "imported" ? (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      className="btn btn--icon btn--icon-sm coll__action"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onExportCollection(collection);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.stopPropagation();
+                          event.preventDefault();
+                          onExportCollection(collection);
+                        }
+                      }}
+                      title="Download snapshot as JSON"
+                      aria-label={`Export ${collection.name} as JSON`}
+                    >
+                      <Icon name="save" size={12} />
+                    </span>
+                  ) : null}
                 </button>
                 {isOpen ? (
                   <ul className="coll__items">

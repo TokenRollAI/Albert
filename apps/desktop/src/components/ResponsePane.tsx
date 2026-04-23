@@ -8,6 +8,12 @@ import type {
   ProviderConfigDraft
 } from "../types";
 
+interface PromptPreviewPayload {
+  system: string;
+  user: string;
+  endpoint_context?: unknown;
+}
+
 interface ResponsePaneProps {
   tab: EndpointTab;
   onSelectExample: (kind: ExampleKind) => void;
@@ -19,6 +25,10 @@ interface ResponsePaneProps {
     intent: ExampleKind,
     persist: boolean
   ) => Promise<MockExample | null>;
+  onPreviewPrompt?: (
+    tab: EndpointTab,
+    intent: ExampleKind
+  ) => Promise<PromptPreviewPayload>;
   onExampleUpdated?: (tab: EndpointTab, example: MockExample) => void;
 }
 
@@ -35,6 +45,7 @@ export function ResponsePane({
   provider,
   apiKeyOverride,
   onGenerate,
+  onPreviewPrompt,
   onExampleUpdated
 }: ResponsePaneProps) {
   const { endpoint, example } = tab;
@@ -180,6 +191,18 @@ export function ResponsePane({
           </label>
         </div>
         <div className="response__toolbar-right">
+          {onPreviewPrompt ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => onPreviewPrompt(tab, example)}
+              disabled={!connected}
+              title="Show the system + user prompt"
+            >
+              <Icon name="info" size={12} />
+              <span>Preview prompt</span>
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn btn--primary btn--sm"

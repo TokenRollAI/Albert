@@ -9,6 +9,9 @@ This document defines ownership boundaries so the foundation does not collapse i
 - `apps/desktop` (`albert-desktop`): Tauri frontend shell + Rust command host.
   Owns `AppServices` (currently wraps `MockGateway`) and all `#[tauri::command]`
   entry points.
+- `crates/albert-cli` (`albert`): headless CLI binary that drives the same
+  parser / storage / gateway crates for CI and scripted workflows
+  (`serve` / `import` / `list` / `export`).
 - `crates/albert-core`: canonical types (`CanonicalApiCollection`,
   `CanonicalEndpoint`, `SchemaNode`, `MockExample`, `ProviderConfig` …) and
   shared contracts. Dependency-light.
@@ -45,11 +48,11 @@ This document defines ownership boundaries so the foundation does not collapse i
 ## Dependency direction
 
 ```
-apps/desktop
-  ├─> albert-parser  ─> albert-core
-  ├─> albert-storage ─> albert-core
-  ├─> albert-gateway ─> albert-core
-  └─> albert-openai  ─> albert-core
+apps/desktop                 crates/albert-cli
+  ├─> albert-parser  ─┐        ├─> albert-parser
+  ├─> albert-storage ─┤        ├─> albert-storage
+  ├─> albert-gateway ─┼─> albert-core   <─ crates/albert-cli
+  └─> albert-openai  ─┘        └─> albert-gateway
 ```
 
 ## Related Docs

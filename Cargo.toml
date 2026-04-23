@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "apps/desktop/src-tauri",
+  "crates/albert-cli",
   "crates/albert-core",
   "crates/albert-parser",
   "crates/albert-gateway",

@@ -76,3 +76,17 @@ pub fn load_collection_snapshot(
         .load_collection(&collection_id)
         .map_err(|error| error.to_string())
 }
+
+#[tauri::command]
+pub fn export_collection_json(
+    collection_id: String,
+    database_url: Option<String>,
+) -> Result<String, String> {
+    let store = albert_storage::SqliteStore::new(database_url.unwrap_or_else(default_database_url));
+    store.migrate().map_err(|error| error.to_string())?;
+    let collection = store
+        .load_collection(&collection_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("collection '{collection_id}' not found"))?;
+    serde_json::to_string_pretty(&collection).map_err(|err| err.to_string())
+}

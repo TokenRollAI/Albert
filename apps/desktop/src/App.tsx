@@ -3,6 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EndpointTabs } from "./components/EndpointTabs";
 import { ImportDialog } from "./components/ImportDialog";
 import { MockServerPanel } from "./components/MockServerPanel";
+import {
+  PromptPreviewModal,
+  type PromptPreview
+} from "./components/PromptPreviewModal";
 import { ProvidersPanel } from "./components/ProvidersPanel";
 import { RequestPanel } from "./components/RequestPanel";
 import { ResponsePane } from "./components/ResponsePane";
@@ -58,6 +62,12 @@ function App() {
 
   const [mockPanelOpen, setMockPanelOpen] = useState(false);
   const [providersOpen, setProvidersOpen] = useState(false);
+  const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
+  const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
+  const [promptPreviewLoading, setPromptPreviewLoading] = useState(false);
+  const [promptPreviewError, setPromptPreviewError] = useState<string | null>(
+    null
+  );
   const toasts = useToasts();
   const sidebarRef = useRef<SidebarHandle | null>(null);
 
@@ -333,6 +343,59 @@ function App() {
     [mockGateway, toasts]
   );
 
+  const handleExportCollection = useCallback(
+    async (collection: SidebarCollection) => {
+      if (!isTauriRuntime || collection.origin !== "imported") {
+        toasts.warn("Export requires an imported collection + Tauri runtime.");
+        return;
+      }
+      try {
+        const json = await invoke<string>("export_collection_json", {
+          collectionId: collection.id
+        });
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${collection.name || "collection"}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        toasts.success(`Exported ${collection.name} as JSON.`);
+      } catch (error) {
+        toasts.error(`Export failed: ${String(error)}`);
+      }
+    },
+    [isTauriRuntime, toasts]
+  );
+
+  const handlePreviewPrompt = useCallback(
+    async (
+      tab: EndpointTab,
+      intent: ExampleKind
+    ): Promise<PromptPreview> => {
+      setPromptPreviewOpen(true);
+      setPromptPreviewLoading(true);
+      setPromptPreviewError(null);
+      try {
+        const preview = await invoke<PromptPreview>("preview_generation_prompt", {
+          endpoint: tab.endpoint,
+          intent
+        });
+        setPromptPreview(preview);
+        return preview;
+      } catch (error) {
+        const message = String(error);
+        setPromptPreviewError(message);
+        throw error;
+      } finally {
+        setPromptPreviewLoading(false);
+      }
+    },
+    []
+  );
+
   const handleApplyChaos = useCallback(
     async (defaultLatencyMs: number, errorRate: number) => {
       const result = await mockGateway.update({
@@ -427,6 +490,7 @@ function App() {
             setPreviewCollection(null);
             refreshStoredCollections();
           }}
+          onExportCollection={handleExportCollection}
           busy={refreshBusy}
         />
 
@@ -455,6 +519,7 @@ function App() {
                 provider={providerDraft}
                 apiKeyOverride={apiKeyOverride}
                 onGenerate={handleGenerate}
+                onPreviewPrompt={handlePreviewPrompt}
               />
             </div>
           ) : (
@@ -509,6 +574,16 @@ function App() {
         apiKeyOverride={apiKeyOverride}
         onUpdateDraft={updateProvider}
         onUpdateApiKey={setApiKeyOverride}
+      />
+
+      <PromptPreviewModal
+        open={promptPreviewOpen}
+        preview={promptPreview}
+        loading={promptPreviewLoading}
+        error={promptPreviewError}
+        onClose={() => {
+          setPromptPreviewOpen(false);
+        }}
       />
 
       <ToastHost toasts={toasts.toasts} onDismiss={toasts.dismiss} />
