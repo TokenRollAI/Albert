@@ -47,3 +47,10 @@ CREATE TABLE IF NOT EXISTS provider_configs (
   api_key_env TEXT NOT NULL
 );
 
+-- Single-row store of gateway runtime preferences. Keyed on a constant
+-- "singleton" id so UPSERTs are trivial.
+CREATE TABLE IF NOT EXISTS gateway_preferences (
+  id TEXT PRIMARY KEY,
+  payload TEXT NOT NULL
+);
+

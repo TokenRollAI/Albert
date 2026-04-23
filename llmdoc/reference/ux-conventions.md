@@ -64,3 +64,28 @@ field. A **Clear** button wipes the draft for the active route.
 
 The panel displays the response status, elapsed ms, select headers
 (`x-albert-*`, `content-type`), and body via `JsonView`.
+
+## Mock example editing
+
+Every mock payload can be edited directly without going through the AI.
+In the response pane:
+
+- **Edit** toggles the JSON payload into a textarea seeded with the
+  current value.
+- **Save** parses the draft, fails fast with a `banner--error` if the
+  JSON is malformed, and otherwise calls the `save_mock_example` Tauri
+  command which upserts via `SqliteStore::replace_mock_example` and
+  refreshes the tab state.
+- **Generate all** (next to the per-kind Generate button) runs
+  success → empty → error sequentially, updating the UI as each
+  completes and surfacing a single toast with the final success count.
+
+## Gateway preferences
+
+The Mock Server panel remembers the last-used host/port/cors combo
+across sessions. On app startup, `load_gateway_preferences` returns the
+persisted payload (if any); on every successful `start_mock_server`
+the current host/port/cors is written back via `save_gateway_preferences`.
+The persistence is a single-row SQLite table (`gateway_preferences`)
+whose payload is an arbitrary JSON object — extending the shape on the
+frontend doesn't require a migration.

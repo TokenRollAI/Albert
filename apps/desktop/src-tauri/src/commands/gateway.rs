@@ -108,6 +108,34 @@ pub async fn mock_server_metrics(
     Ok(services.gateway.metrics().await)
 }
 
+/// Load the last-saved gateway preferences. Returns `null` when the user
+/// has never started the mock server before.
+#[tauri::command]
+pub fn load_gateway_preferences(
+    database_url: Option<String>,
+) -> Result<Option<serde_json::Value>, String> {
+    let store = albert_storage::SqliteStore::new(database_url.unwrap_or_else(default_database_url));
+    store.migrate().map_err(|error| error.to_string())?;
+    store
+        .load_gateway_preferences()
+        .map_err(|error| error.to_string())
+}
+
+/// Save gateway preferences so the next session can restore them. Accepts
+/// any JSON blob — the frontend owns the shape so we don't need to bump
+/// the migration for new fields.
+#[tauri::command]
+pub fn save_gateway_preferences(
+    payload: serde_json::Value,
+    database_url: Option<String>,
+) -> Result<(), String> {
+    let store = albert_storage::SqliteStore::new(database_url.unwrap_or_else(default_database_url));
+    store.migrate().map_err(|error| error.to_string())?;
+    store
+        .save_gateway_preferences(&payload)
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateMockServerArgs {
     #[serde(default)]

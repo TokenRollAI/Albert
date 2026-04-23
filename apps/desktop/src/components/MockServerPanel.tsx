@@ -69,6 +69,11 @@ interface MockServerPanelProps {
   busy: boolean;
   error: string | null;
   requests: RequestLogEntry[];
+  savedPreferences?: {
+    host?: string;
+    port?: number;
+    cors_enabled?: boolean;
+  } | null;
   onStart: (port: number, host: string, cors: boolean) => Promise<void>;
   onStop: () => Promise<void>;
   onApplyOverrides: (
@@ -88,17 +93,22 @@ export function MockServerPanel({
   busy,
   error,
   requests,
+  savedPreferences,
   onStart,
   onStop,
   onApplyOverrides,
   onApplyChaos,
   onToggleCaptureBodies
 }: MockServerPanelProps) {
-  const [host, setHost] = useState<string>(status.config.host ?? "127.0.0.1");
-  const [port, setPort] = useState<string>(
-    String(status.config.port ?? 4317)
+  const initialHost =
+    savedPreferences?.host ?? status.config.host ?? "127.0.0.1";
+  const initialPort = String(
+    savedPreferences?.port ?? status.config.port ?? 4317
   );
-  const [cors, setCors] = useState<boolean>(status.config.cors_enabled);
+  const initialCors = savedPreferences?.cors_enabled ?? status.config.cors_enabled;
+  const [host, setHost] = useState<string>(initialHost);
+  const [port, setPort] = useState<string>(initialPort);
+  const [cors, setCors] = useState<boolean>(initialCors);
   const [copied, setCopied] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("runtime");
   const [draftOverrides, setDraftOverrides] = useState<

@@ -46,11 +46,18 @@ interface UpdateArgs {
   captureBodies?: boolean;
 }
 
+export interface SavedGatewayPreferences {
+  host?: string;
+  port?: number;
+  cors_enabled?: boolean;
+}
+
 interface UseMockGatewayResult {
   status: GatewayStatus;
   busy: boolean;
   error: string | null;
   requests: RequestLogEntry[];
+  savedPreferences: SavedGatewayPreferences | null;
   start: (args: StartArgs) => Promise<GatewayStatus | null>;
   stop: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -65,6 +72,9 @@ export function useMockGateway({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<RequestLogEntry[]>([]);
+  const [savedPreferences, setSavedPreferences] = useState<SavedGatewayPreferences | null>(
+    null
+  );
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -110,6 +120,15 @@ export function useMockGateway({
       return;
     }
     void refresh();
+    // Best-effort preference load on mount so the Mock Server panel can
+    // seed its form with the last-used host/port/cors combo.
+    void invoke<SavedGatewayPreferences | null>("load_gateway_preferences")
+      .then((prefs) => {
+        if (mounted.current && prefs) {
+          setSavedPreferences(prefs);
+        }
+      })
+      .catch(() => {});
     const handle = window.setInterval(() => {
       void refresh();
     }, pollMs);
@@ -147,6 +166,16 @@ export function useMockGateway({
         if (mounted.current) {
           setStatus(next);
         }
+        // Best-effort save: the next session can offer the same host/port
+        // as defaults. Failures are intentionally swallowed.
+        void invoke("save_gateway_preferences", {
+          payload: {
+            host,
+            port,
+            cors_enabled: corsEnabled
+          },
+          databaseUrl: databaseUrl ?? null
+        }).catch(() => {});
         return next;
       } catch (err) {
         if (mounted.current) {
@@ -224,5 +253,15 @@ export function useMockGateway({
     [enabled]
   );
 
-  return { status, busy, error, requests, start, stop, refresh, update };
+  return {
+    status,
+    busy,
+    error,
+    requests,
+    savedPreferences,
+    start,
+    stop,
+    refresh,
+    update
+  };
 }

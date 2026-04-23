@@ -124,6 +124,32 @@ impl SqliteStore {
         Ok(())
     }
 
+    pub fn save_gateway_preferences(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Result<(), StorageError> {
+        let connection = self.connect()?;
+        connection.execute(
+            "INSERT OR REPLACE INTO gateway_preferences (id, payload) VALUES (?1, ?2)",
+            params!["singleton", serde_json::to_string(payload)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_gateway_preferences(&self) -> Result<Option<serde_json::Value>, StorageError> {
+        let connection = self.connect()?;
+        let mut statement =
+            connection.prepare("SELECT payload FROM gateway_preferences WHERE id = ?1")?;
+        let mut rows = statement.query(params!["singleton"])?;
+        if let Some(row) = rows.next()? {
+            let raw: String = row.get(0)?;
+            let value = serde_json::from_str(&raw)?;
+            Ok(Some(value))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn save_provider_config(&self, provider: &ProviderConfig) -> Result<(), StorageError> {
         let connection = self.connect()?;
         connection.execute(
@@ -658,6 +684,31 @@ mod tests {
         // Deleting again is a no-op
         let removed = store.delete_collection("orders").unwrap();
         assert!(!removed);
+    }
+
+    #[test]
+    fn gateway_preferences_roundtrip() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let store = SqliteStore::new(temp_file.path().to_string_lossy().to_string());
+        store.migrate().unwrap();
+
+        assert!(store.load_gateway_preferences().unwrap().is_none());
+
+        let payload = serde_json::json!({
+            "host": "127.0.0.1",
+            "port": 4317,
+            "cors_enabled": true,
+            "default_latency_ms": 50,
+            "error_rate": 0.1
+        });
+        store.save_gateway_preferences(&payload).unwrap();
+        let loaded = store.load_gateway_preferences().unwrap().unwrap();
+        assert_eq!(loaded, payload);
+
+        // upsert behavior: second save replaces the value
+        let next = serde_json::json!({"host": "0.0.0.0", "port": 0});
+        store.save_gateway_preferences(&next).unwrap();
+        assert_eq!(store.load_gateway_preferences().unwrap().unwrap(), next);
     }
 
     #[test]

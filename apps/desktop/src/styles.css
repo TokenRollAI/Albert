@@ -2215,3 +2215,23 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
 .metrics-row__tail {
   color: var(--text-faint);
 }
+
+/* ---------- Response body editor ---------- */
+.response__editor {
+  flex: 1;
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  resize: vertical;
+  min-height: 220px;
+  outline: none;
+}
+.response__editor:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}

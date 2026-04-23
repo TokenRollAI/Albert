@@ -37,6 +37,18 @@ in `generate_handler!` because `#[tauri::command]` generates a companion
 - `reqwest::Client` inside `OpenAiChatAdapter` builds per call right now; swap
   for a long-lived pooled client if call rate grows.
 
+## Gateway preferences persistence
+
+- A dedicated `gateway_preferences` SQLite table stores a single JSON
+  payload keyed on `"singleton"`. The frontend owns the shape so new
+  preferences can be added without a schema migration.
+- `SqliteStore::save_gateway_preferences(&Value)` and
+  `load_gateway_preferences() -> Option<Value>` are the persistence
+  surface. Tauri exposes `save_gateway_preferences` / `load_gateway_preferences`.
+- `useMockGateway` loads preferences once on mount and seeds the Mock
+  Server panel's host / port / cors form inputs. `start_mock_server`
+  writes the chosen values back best-effort (failures are swallowed).
+
 ## Storage ownership
 
 - `SqliteStore` is a thin wrapper around a path. Each command builds a fresh

@@ -444,6 +444,89 @@ function App() {
     [isTauriRuntime, toasts]
   );
 
+  const handleSaveExample = useCallback(
+    async (
+      tab: EndpointTab,
+      example: MockExample
+    ): Promise<MockExample | null> => {
+      if (!isTauriRuntime) {
+        throw new Error("Edit requires the Tauri runtime.");
+      }
+      if (!tab.collectionId || tab.collectionId.startsWith("preview:") || tab.collectionId.startsWith("fallback:")) {
+        toasts.warn("Import this collection first to save edits.");
+        throw new Error("Collection is not persisted yet.");
+      }
+      try {
+        const saved = await invoke<MockExample>("save_mock_example", {
+          args: {
+            collection_id: tab.collectionId,
+            method: tab.method,
+            path: tab.endpoint.path,
+            kind: example.kind,
+            title: example.title,
+            payload: example.payload,
+            note: example.note ?? null,
+            database_url: null
+          }
+        });
+        updateEndpointExample(tab.id, saved);
+        await refreshStoredCollections();
+        toasts.success(`Saved ${example.kind} payload for ${tab.method} ${tab.path}.`);
+        return saved;
+      } catch (error) {
+        toasts.error(`Save failed: ${String(error)}`);
+        throw error;
+      }
+    },
+    [isTauriRuntime, refreshStoredCollections, toasts, updateEndpointExample]
+  );
+
+  const handleGenerateAll = useCallback(
+    async (tab: EndpointTab, persist: boolean): Promise<void> => {
+      if (!isTauriRuntime) {
+        toasts.warn("AI generation requires the Tauri runtime.");
+        return;
+      }
+      const intents: ExampleKind[] = ["success", "empty", "error"];
+      const results: Array<{ kind: ExampleKind; ok: boolean }> = [];
+      for (const intent of intents) {
+        try {
+          const example = await invoke<MockExample>("generate_mock_example", {
+            request: {
+              endpoint: tab.endpoint,
+              intent,
+              provider: providerDraft,
+              collection_id: tab.collectionId,
+              persist,
+              database_url: null,
+              api_key_override: apiKeyOverride || null
+            }
+          });
+          updateEndpointExample(tab.id, example);
+          results.push({ kind: intent, ok: true });
+        } catch (error) {
+          results.push({ kind: intent, ok: false });
+          toasts.error(`Generate ${intent} failed: ${String(error)}`);
+        }
+      }
+      if (persist) {
+        await refreshStoredCollections();
+      }
+      const okCount = results.filter((r) => r.ok).length;
+      toasts.success(
+        `Generated ${okCount}/${intents.length} variant${okCount === 1 ? "" : "s"}.`
+      );
+    },
+    [
+      isTauriRuntime,
+      providerDraft,
+      apiKeyOverride,
+      refreshStoredCollections,
+      toasts,
+      updateEndpointExample
+    ]
+  );
+
   const handlePreviewPrompt = useCallback(
     async (
       tab: EndpointTab,
@@ -606,7 +689,9 @@ function App() {
                   provider={providerDraft}
                   apiKeyOverride={apiKeyOverride}
                   onGenerate={handleGenerate}
+                  onGenerateAll={handleGenerateAll}
                   onPreviewPrompt={handlePreviewPrompt}
+                  onSaveExample={handleSaveExample}
                 />
                 <TryItPanel
                   tab={activeTab}
@@ -659,6 +744,7 @@ function App() {
         busy={mockGateway.busy}
         error={mockGateway.error}
         requests={mockGateway.requests}
+        savedPreferences={mockGateway.savedPreferences}
         onStart={handleStartGateway}
         onStop={mockGateway.stop}
         onApplyOverrides={handleApplyOverrides}

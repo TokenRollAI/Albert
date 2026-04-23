@@ -25,10 +25,15 @@ interface ResponsePaneProps {
     intent: ExampleKind,
     persist: boolean
   ) => Promise<MockExample | null>;
+  onGenerateAll?: (tab: EndpointTab, persist: boolean) => Promise<void>;
   onPreviewPrompt?: (
     tab: EndpointTab,
     intent: ExampleKind
   ) => Promise<PromptPreviewPayload>;
+  onSaveExample?: (
+    tab: EndpointTab,
+    example: MockExample
+  ) => Promise<MockExample | null>;
   onExampleUpdated?: (tab: EndpointTab, example: MockExample) => void;
 }
 
@@ -45,14 +50,21 @@ export function ResponsePane({
   provider,
   apiKeyOverride,
   onGenerate,
+  onGenerateAll,
   onPreviewPrompt,
+  onSaveExample,
   onExampleUpdated
 }: ResponsePaneProps) {
   const { endpoint, example } = tab;
   const [generating, setGenerating] = useState<ExampleKind | null>(null);
+  const [generatingAll, setGeneratingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [persist, setPersist] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const available = endpoint.examples.map((item) => item.kind as ExampleKind);
   const selectedResponse =
@@ -121,6 +133,54 @@ export function ResponsePane({
     }
   }
 
+  async function handleGenerateAll() {
+    if (!canGenerate || !onGenerateAll) return;
+    setGeneratingAll(true);
+    setError(null);
+    try {
+      await onGenerateAll(tab, persist);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setGeneratingAll(false);
+    }
+  }
+
+  function startEdit() {
+    setEditDraft(renderedBody);
+    setEditError(null);
+    setEditing(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!onSaveExample) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(editDraft);
+    } catch (err) {
+      setEditError(`Invalid JSON: ${String(err)}`);
+      return;
+    }
+    setSaving(true);
+    setEditError(null);
+    try {
+      const saved = await onSaveExample(tab, {
+        kind: example,
+        title: currentExample?.title ?? KIND_LABEL[example],
+        payload: parsed,
+        note: "Hand-edited"
+      });
+      if (saved && onExampleUpdated) {
+        onExampleUpdated(tab, saved);
+      }
+      setEditing(false);
+    } catch (err) {
+      setEditError(String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const missingKey =
     !apiKeyOverride && !hasProcessEnv(provider.api_key_env);
 
@@ -177,10 +237,52 @@ export function ResponsePane({
             className="btn btn--ghost btn--sm"
             onClick={handleCopy}
             title="Copy payload"
+            disabled={editing}
           >
             <Icon name="copy" size={12} />
             <span>{copied ? "Copied" : "Copy payload"}</span>
           </button>
+          {onSaveExample ? (
+            !editing ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={startEdit}
+                disabled={!connected}
+                title={
+                  connected
+                    ? "Edit this mock payload"
+                    : "Tauri runtime required to persist edits"
+                }
+              >
+                <Icon name="settings" size={12} />
+                <span>Edit</span>
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn btn--primary btn--sm"
+                  onClick={handleSaveEdit}
+                  disabled={saving}
+                >
+                  <Icon name="save" size={12} />
+                  <span>{saving ? "Saving…" : "Save"}</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => {
+                    setEditing(false);
+                    setEditError(null);
+                  }}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+              </>
+            )
+          ) : null}
           <label className="toggle">
             <input
               type="checkbox"
@@ -203,11 +305,25 @@ export function ResponsePane({
               <span>Preview prompt</span>
             </button>
           ) : null}
+          {onGenerateAll ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={handleGenerateAll}
+              disabled={!canGenerate || generatingAll || generating !== null}
+              title="Generate success, empty, and error examples in one go"
+            >
+              <Icon name="zap" size={12} />
+              <span>
+                {generatingAll ? "Generating all…" : "Generate all"}
+              </span>
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn btn--primary btn--sm"
             onClick={() => handleGenerate(example)}
-            disabled={!canGenerate || generating !== null}
+            disabled={!canGenerate || generating !== null || generatingAll}
             title={
               canGenerate
                 ? `Generate ${example} example via ${provider.provider_name}`
@@ -239,7 +355,24 @@ export function ResponsePane({
       ) : null}
 
       <div className="response__body">
-        <JsonView value={renderedValue} />
+        {editing ? (
+          <>
+            <textarea
+              className="response__editor"
+              value={editDraft}
+              onChange={(event) => setEditDraft(event.target.value)}
+              spellCheck={false}
+              autoFocus
+            />
+            {editError ? (
+              <div className="banner banner--error" role="status">
+                {editError}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <JsonView value={renderedValue} />
+        )}
       </div>
     </section>
   );

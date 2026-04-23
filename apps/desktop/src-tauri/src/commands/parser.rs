@@ -1,5 +1,5 @@
-use albert_core::CanonicalApiCollection;
-use serde::Serialize;
+use albert_core::{CanonicalApiCollection, MockExample, MockExampleKind};
+use serde::{Deserialize, Serialize};
 
 use crate::services::default_database_url;
 
@@ -163,6 +163,41 @@ pub fn delete_collection(
     store
         .delete_collection(&collection_id)
         .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SaveMockExampleArgs {
+    pub collection_id: String,
+    pub method: String,
+    pub path: String,
+    pub kind: MockExampleKind,
+    pub title: Option<String>,
+    pub payload: serde_json::Value,
+    pub note: Option<String>,
+    #[serde(default)]
+    pub database_url: Option<String>,
+}
+
+#[tauri::command]
+pub fn save_mock_example(args: SaveMockExampleArgs) -> Result<MockExample, String> {
+    let store =
+        albert_storage::SqliteStore::new(args.database_url.unwrap_or_else(default_database_url));
+    store.migrate().map_err(|error| error.to_string())?;
+    let kind = args.kind;
+    let example = MockExample {
+        kind: kind.clone(),
+        title: args.title.unwrap_or_else(|| match kind {
+            MockExampleKind::Success => "Success".to_string(),
+            MockExampleKind::Empty => "Empty".to_string(),
+            MockExampleKind::Error => "Error".to_string(),
+        }),
+        payload: args.payload,
+        note: args.note.or_else(|| Some("Hand-edited".to_string())),
+    };
+    store
+        .replace_mock_example(&args.collection_id, &args.method, &args.path, &example)
+        .map_err(|error| error.to_string())?;
+    Ok(example)
 }
 
 #[tauri::command]
