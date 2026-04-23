@@ -34,6 +34,9 @@
   into `localStorage`, `restoreTabs` rehydrating persisted tabs, skipping
   tabs whose endpoint disappeared, and idempotency when tabs already
   exist.
+- `components/__tests__/RateLimitsEditor.test.tsx` — adds, removes, and
+  applies rate-limit rules, verifying the draft-vs-value dirty gate and
+  the exact payload shipped to `onApply`.
 
 ## CI integration
 

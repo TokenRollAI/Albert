@@ -367,6 +367,7 @@ function App() {
         onApplyOverrides={gatewayActions.applyOverrides}
         onApplyChaos={gatewayActions.applyChaos}
         onToggleCaptureBodies={gatewayActions.toggleCaptureBodies}
+        onApplyRateLimits={gatewayActions.applyRateLimits}
         onReplayRequest={gatewayActions.replayRequest}
       />
 

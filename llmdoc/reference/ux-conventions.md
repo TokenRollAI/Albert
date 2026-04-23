@@ -48,7 +48,11 @@ counts.
 
 - **Runtime tab** — host / port / CORS + start/stop + Chaos controls
   (default latency in ms, error rate in %). Reset button restores both to
-  zero.
+  zero. Below Chaos lives the **Rate limits** editor
+  (`components/RateLimitsEditor.tsx`): pick a route from the registered
+  list, set `limit` + `window (ms)`, "Add / replace rule", and "Apply"
+  ships the full map via `update_mock_server`. Limit 0 models a
+  maintenance window (backend returns 429 for every request).
 - **Routes tab** — one row per registered route, with a dropdown to pick
   the served example kind. Changes collect as a draft; `Apply (N)` sends
   them to `update_mock_server`.

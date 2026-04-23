@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { Icon } from "./Icon";
+import { RateLimitsEditor } from "./RateLimitsEditor";
 import type {
   GatewayStatus,
   MockExampleKind,
+  RateLimitRule,
   RequestLogEntry
 } from "../types";
 
@@ -81,6 +83,7 @@ interface MockServerPanelProps {
   ) => Promise<void>;
   onApplyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
   onToggleCaptureBodies: (enabled: boolean) => Promise<void>;
+  onApplyRateLimits: (rules: Record<string, RateLimitRule>) => Promise<void>;
   onReplayRequest?: (entry: RequestLogEntry) => void;
 }
 
@@ -100,6 +103,7 @@ export function MockServerPanel({
   onApplyOverrides,
   onApplyChaos,
   onToggleCaptureBodies,
+  onApplyRateLimits,
   onReplayRequest
 }: MockServerPanelProps) {
   const initialHost =
@@ -381,6 +385,15 @@ export function MockServerPanel({
             </section>
           ) : null}
 
+          {tab === "runtime" ? (
+            <RateLimitsEditor
+              running={status.running}
+              routes={status.routes}
+              value={status.config.rate_limits ?? {}}
+              onApply={onApplyRateLimits}
+            />
+          ) : null}
+
           {tab === "routes" ? (
             <section className="panel">
               <div className="panel__title panel__title--row">
@@ -617,7 +630,11 @@ export function MockServerPanel({
                           {entry.kind}
                         </span>
                       ) : (
-                        <span className="kind-chip">{entry.source}</span>
+                        <span
+                          className={`kind-chip kind-chip--source-${entry.source.replace(/[^a-z0-9]/gi, "-")}`}
+                        >
+                          {entry.source}
+                        </span>
                       )}
                       {entry.request_body ? (
                         <details className="reqlog__body">

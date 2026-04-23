@@ -3,6 +3,7 @@ import { seedTryItDraft } from "./useTryItDraft";
 import type {
   CanonicalEndpoint,
   MockExampleKind,
+  RateLimitRule,
   RequestLogEntry,
   SidebarCollection
 } from "../types";
@@ -20,6 +21,7 @@ interface UseGatewayActionsArgs {
       defaultLatencyMs?: number | null;
       errorRate?: number;
       captureBodies?: boolean;
+      rateLimits?: Record<string, RateLimitRule>;
     }) => Promise<unknown>;
   };
   sidebarCollections: SidebarCollection[];
@@ -39,6 +41,9 @@ export interface GatewayActions {
   ) => Promise<void>;
   applyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
   toggleCaptureBodies: (enabled: boolean) => Promise<void>;
+  applyRateLimits: (
+    rules: Record<string, RateLimitRule>
+  ) => Promise<void>;
   replayRequest: (entry: RequestLogEntry) => void;
 }
 
@@ -111,6 +116,20 @@ export function useGatewayActions({
     [mockGateway, toasts]
   );
 
+  const applyRateLimits = useCallback<GatewayActions["applyRateLimits"]>(
+    async (rules) => {
+      const result = await mockGateway.update({ rateLimits: rules });
+      if (!result) return;
+      const count = Object.keys(rules).length;
+      toasts.info(
+        count === 0
+          ? "Rate limits cleared."
+          : `Rate limits applied to ${count} route${count === 1 ? "" : "s"}.`
+      );
+    },
+    [mockGateway, toasts]
+  );
+
   const replayRequest = useCallback<GatewayActions["replayRequest"]>(
     (entry) => {
       if (!entry.matched_route) return;
@@ -145,5 +164,12 @@ export function useGatewayActions({
     [openTab, setMockPanelOpen, sidebarCollections, toasts]
   );
 
-  return { start, applyOverrides, applyChaos, toggleCaptureBodies, replayRequest };
+  return {
+    start,
+    applyOverrides,
+    applyChaos,
+    toggleCaptureBodies,
+    applyRateLimits,
+    replayRequest
+  };
 }

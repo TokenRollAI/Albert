@@ -3,7 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GatewayStatus,
   MockExampleKind,
-  RequestLogEntry
+  RateLimitRule,
+  RequestLogEntry,
+  RequiredHeader
 } from "../types";
 
 const EMPTY_STATUS: GatewayStatus = {
@@ -44,6 +46,9 @@ interface UpdateArgs {
   latencyOverrides?: Record<string, number>;
   errorRate?: number;
   captureBodies?: boolean;
+  responseHeaders?: Record<string, Record<string, string>>;
+  requiredHeaders?: Record<string, RequiredHeader[]>;
+  rateLimits?: Record<string, RateLimitRule>;
 }
 
 export interface SavedGatewayPreferences {
@@ -232,6 +237,9 @@ export function useMockGateway({
             latency_overrides: args.latencyOverrides ?? null,
             error_rate: args.errorRate ?? null,
             capture_bodies: args.captureBodies ?? null,
+            response_headers: args.responseHeaders ?? null,
+            required_headers: args.requiredHeaders ?? null,
+            rate_limits: args.rateLimits ?? null,
             database_url: null
           }
         });
