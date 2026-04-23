@@ -25,6 +25,20 @@ pub(crate) async fn status_handler(State(state): State<AppState>) -> Response {
     (StatusCode::OK, axum::Json(payload)).into_response()
 }
 
+pub(crate) async fn metrics_handler(State(state): State<AppState>) -> Response {
+    let metrics = state.snapshot_metrics();
+    let payload = serde_json::json!({
+        "total_requests": metrics.total_requests,
+        "by_method": metrics.by_method,
+        "by_status_class": metrics.by_status_class,
+        "average_latency_ms": metrics.average_latency_ms(),
+        "max_latency_ms": metrics.max_latency_ms,
+        "started_at_epoch_ms": metrics.started_at_epoch_ms,
+        "uptime_ms": epoch_ms_now().saturating_sub(metrics.started_at_epoch_ms),
+    });
+    (StatusCode::OK, axum::Json(payload)).into_response()
+}
+
 pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request) -> Response {
     let method = request.method().clone();
     let path = request.uri().path().to_string();

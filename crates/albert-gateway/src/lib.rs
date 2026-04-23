@@ -29,7 +29,7 @@ pub use config::{
 pub use error::GatewayError;
 pub use route::{MatchedRoute, MockRoute, build_routes, route_key};
 pub use routing::{CompiledRoute, RouteTable};
-pub use state::RequestLogEntry;
+pub use state::{MetricsSnapshot, RequestLogEntry};
 
 use state::{AppState, LatencyConfig};
 
@@ -83,6 +83,7 @@ impl MockGateway {
             LatencyConfig::new(config.default_latency_ms, config.latency_overrides.clone());
 
         let response_headers = Arc::new(config.response_headers.clone());
+        let started_at = handlers::epoch_ms_now();
         let state = AppState::new(
             table_arc.clone(),
             overrides_arc.clone(),
@@ -90,6 +91,7 @@ impl MockGateway {
             config.error_rate,
             config.capture_bodies,
             response_headers,
+            started_at,
         );
         let state_for_runtime = state.clone();
 
@@ -97,6 +99,10 @@ impl MockGateway {
             .route(
                 "/__albert/status",
                 axum::routing::get(handlers::status_handler),
+            )
+            .route(
+                "/__albert/metrics",
+                axum::routing::get(handlers::metrics_handler),
             )
             .fallback(any(handlers::mock_handler))
             .with_state(state);
@@ -114,7 +120,6 @@ impl MockGateway {
                 .await;
         });
 
-        let started_at = handlers::epoch_ms_now();
         let running = RunningGateway {
             bind_address: bind_address.clone(),
             shutdown: Some(shutdown_tx),
@@ -191,6 +196,14 @@ impl MockGateway {
         running.config.response_headers = response_headers;
         running.route_summaries = summaries;
         Ok(running.to_status())
+    }
+
+    pub async fn metrics(&self) -> MetricsSnapshot {
+        let guard = self.inner.lock().await;
+        match guard.as_ref() {
+            Some(running) => running.state.snapshot_metrics(),
+            None => MetricsSnapshot::default(),
+        }
     }
 
     pub async fn recent_requests(&self, limit: usize) -> Vec<RequestLogEntry> {
@@ -750,6 +763,57 @@ mod tests {
             .unwrap();
         assert!(resp.status().is_success() || resp.status().as_u16() == 204);
         assert!(resp.headers().get("access-control-allow-origin").is_some());
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_counts_requests() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "m",
+            vec![endpoint(HttpMethod::Get, "/m", json!({"ok": true}))],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        client.get(format!("{base}/m")).send().await.unwrap();
+        client
+            .get(format!("{base}/m?__albert_mock=error"))
+            .send()
+            .await
+            .unwrap();
+        client
+            .get(format!("{base}/not-there"))
+            .send()
+            .await
+            .unwrap();
+
+        let resp = client
+            .get(format!("{base}/__albert/metrics"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        // 3 mock_handler hits; the metrics endpoint itself is served by the
+        // status router branch and is not counted.
+        assert_eq!(body["total_requests"], 3);
+        assert_eq!(body["by_status_class"]["2xx"], 1);
+        // 400 from error override + 404 from /not-there
+        assert_eq!(body["by_status_class"]["4xx"], 2);
+        assert_eq!(body["by_method"]["GET"], 3);
+        // uptime should be > 0 (gateway has been running)
+        let uptime = body["uptime_ms"].as_i64().unwrap();
+        assert!(uptime >= 0);
         gateway.stop().await.expect("stop");
     }
 

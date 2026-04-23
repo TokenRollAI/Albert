@@ -26,6 +26,7 @@ pub fn run() {
             commands::gateway::stop_mock_server,
             commands::gateway::mock_server_status,
             commands::gateway::mock_server_requests,
+            commands::gateway::mock_server_metrics,
             commands::gateway::update_mock_server,
             commands::openai::generate_mock_example,
             commands::openai::preview_generation_prompt,

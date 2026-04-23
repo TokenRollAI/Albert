@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use albert_core::MockExampleKind;
-use albert_gateway::{GatewayConfig, GatewayStatus, RequestLogEntry};
+use albert_gateway::{GatewayConfig, GatewayStatus, MetricsSnapshot, RequestLogEntry};
 use serde::Deserialize;
 use tauri::State;
 
@@ -99,6 +99,13 @@ pub async fn mock_server_requests(
     services: State<'_, AppServices>,
 ) -> Result<Vec<RequestLogEntry>, String> {
     Ok(services.gateway.recent_requests(limit.unwrap_or(50)).await)
+}
+
+#[tauri::command]
+pub async fn mock_server_metrics(
+    services: State<'_, AppServices>,
+) -> Result<MetricsSnapshot, String> {
+    Ok(services.gateway.metrics().await)
 }
 
 #[derive(Debug, Clone, Deserialize)]

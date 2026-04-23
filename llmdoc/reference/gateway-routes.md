@@ -99,6 +99,12 @@ always serves the error example.
 ## Special routes
 
 - `GET /__albert/status` returns `{service, route_count}`.
+- `GET /__albert/metrics` returns a `MetricsSnapshot`:
+  `{total_requests, by_method, by_status_class, average_latency_ms,
+    max_latency_ms, started_at_epoch_ms, uptime_ms}`. Incremented
+  on every mock_handler call (not on hits to `/__albert/*` itself).
+  Also exposed from the desktop host via the `mock_server_metrics`
+  Tauri command.
 - `404` responses are JSON: `{error: "mock_not_found", message}`.
 - `HEAD` requests fall back to matching the `GET` route with the same
   path; the body is then suppressed so the response stays well-formed.
