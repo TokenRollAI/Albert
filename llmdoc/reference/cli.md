@@ -46,6 +46,11 @@ running the mock server without the Tauri shell.
 - `--capture-bodies` — record up to 4KB of each POST/PUT/PATCH/DELETE
   body into the in-memory request log (off by default; see gateway-routes
   for caveats).
+- `--print-config` — dry-run. Emits the resolved `{database_url,
+  collections, gateway}` as pretty-printed JSON to stdout, then exits 0
+  without binding a port. Useful in CI scripts to verify that shell
+  quoting or env interpolation landed where you expect. Does **not**
+  open the database, so it works even against an empty path.
 
 ## `export` options
 

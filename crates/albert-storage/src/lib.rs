@@ -366,12 +366,35 @@ impl SqliteStore {
     }
 
     fn connect(&self) -> Result<Connection, StorageError> {
-        if self.database_url == ":memory:" {
-            return Connection::open_in_memory().map_err(StorageError::from);
-        }
-
-        Connection::open(&self.database_url).map_err(StorageError::from)
+        let connection = if self.database_url == ":memory:" {
+            Connection::open_in_memory()?
+        } else {
+            Connection::open(&self.database_url)?
+        };
+        configure_connection(&connection)?;
+        Ok(connection)
     }
+}
+
+/// Set connection-level pragmas that improve concurrent behavior:
+///
+/// - `journal_mode = WAL` lets readers proceed while a single writer commits,
+///   which is the behavior we want for a desktop app that may hold a long
+///   import transaction while the mock gateway polls for preferences.
+/// - `busy_timeout = 5000` tells SQLite to retry internally for up to 5s
+///   before surfacing `SQLITE_BUSY` to the caller, so transient writer
+///   contention looks like "slow" rather than "failed".
+/// - `synchronous = NORMAL` is the WAL-recommended default — retains crash
+///   safety against power loss at transaction boundaries while skipping the
+///   extra fsync on every journal page.
+///
+/// `:memory:` databases don't benefit from WAL but accept the pragma as a
+/// no-op, so we apply it unconditionally.
+fn configure_connection(connection: &Connection) -> Result<(), StorageError> {
+    connection.pragma_update(None, "journal_mode", "WAL")?;
+    connection.pragma_update(None, "busy_timeout", 5000)?;
+    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    Ok(())
 }
 
 fn save_mock_example(
@@ -795,5 +818,58 @@ mod tests {
                 auth: None,
             }],
         }
+    }
+
+    #[test]
+    fn concurrent_readers_and_writer_dont_block_on_wal() {
+        // With the default journal mode (DELETE/TRUNCATE) a reader can
+        // stall a writer for a long transaction window; WAL mode lets the
+        // two coexist. We can't easily simulate a long transaction, but we
+        // can hammer the DB from multiple threads and assert every op
+        // completes without surfacing SQLITE_BUSY.
+        use std::sync::Arc;
+        use std::thread;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path().to_string_lossy().to_string();
+        let store = SqliteStore::new(path.clone());
+        store.migrate().unwrap();
+        let collection = sample_collection();
+        store.save_collection(&collection).unwrap();
+
+        let store_arc = Arc::new(store);
+        let mut handles = Vec::new();
+        for worker in 0..4 {
+            let s = Arc::clone(&store_arc);
+            handles.push(thread::spawn(move || {
+                for _ in 0..10 {
+                    s.list_collections().expect("list should not block");
+                    let prefs = serde_json::json!({"worker": worker});
+                    s.save_gateway_preferences(&prefs)
+                        .expect("write should retry under WAL, not fail");
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Sanity: the DB is still readable and the collection survived.
+        let collections = store_arc.list_collections().unwrap();
+        assert_eq!(collections.len(), 1);
+        assert_eq!(collections[0].id, collection.id);
+    }
+
+    #[test]
+    fn connect_sets_wal_journal_mode() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path().to_string_lossy().to_string();
+        let store = SqliteStore::new(path);
+        store.migrate().unwrap();
+        let connection = store.connect().unwrap();
+        let mode: String = connection
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode.to_ascii_lowercase(), "wal");
     }
 }

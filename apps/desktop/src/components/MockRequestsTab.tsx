@@ -1,5 +1,29 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { GatewayStatus, RequestLogEntry } from "../types";
+
+type StatusFilter = "all" | "2xx" | "4xx" | "5xx";
+const METHODS = ["ALL", "GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+type MethodFilter = (typeof METHODS)[number];
+
+/**
+ * Apply the (status-class, method) filter pair to a request log. Exported
+ * so unit tests can pin the semantics; the component itself passes the
+ * result straight into the render.
+ */
+export function filterRequests(
+  log: RequestLogEntry[],
+  status: StatusFilter,
+  method: MethodFilter
+): RequestLogEntry[] {
+  return log.filter((entry) => {
+    if (method !== "ALL" && entry.method.toUpperCase() !== method) return false;
+    if (status === "all") return true;
+    if (status === "2xx") return entry.status >= 200 && entry.status < 300;
+    if (status === "4xx") return entry.status >= 400 && entry.status < 500;
+    if (status === "5xx") return entry.status >= 500;
+    return true;
+  });
+}
 
 interface LogMetrics {
   total: number;
@@ -81,7 +105,17 @@ export function MockRequestsTab({
   onToggleCaptureBodies,
   onReplayRequest
 }: MockRequestsTabProps) {
+  // Metrics always reflect the full log so the user keeps a global picture
+  // even when the list itself is filtered.
   const metrics = useMemo(() => computeMetrics(requests), [requests]);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [methodFilter, setMethodFilter] = useState<MethodFilter>("ALL");
+  const filtered = useMemo(
+    () => filterRequests(requests, statusFilter, methodFilter),
+    [requests, statusFilter, methodFilter]
+  );
+  const filterActive =
+    statusFilter !== "all" || methodFilter !== "ALL";
 
   return (
     <>
@@ -145,17 +179,68 @@ export function MockRequestsTab({
             <span>Capture request bodies</span>
           </label>
           <span className="panel__meta">
-            last {requests.length} · refreshes every 3s
+            {filterActive
+              ? `showing ${filtered.length} of ${requests.length}`
+              : `last ${requests.length} · refreshes every 3s`}
           </span>
+        </div>
+        <div className="reqlog-filters" role="toolbar" aria-label="Request filters">
+          {(["all", "2xx", "4xx", "5xx"] as StatusFilter[]).map((key) => (
+            <button
+              key={key}
+              type="button"
+              className={
+                statusFilter === key
+                  ? "chip chip--active"
+                  : "chip"
+              }
+              onClick={() => setStatusFilter(key)}
+              aria-pressed={statusFilter === key}
+            >
+              {key}
+            </button>
+          ))}
+          <label className="reqlog-filters__method">
+            <span className="reqlog-filters__label">Method</span>
+            <select
+              className="select"
+              value={methodFilter}
+              onChange={(event) =>
+                setMethodFilter(event.target.value as MethodFilter)
+              }
+            >
+              {METHODS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
+          {filterActive ? (
+            <button
+              type="button"
+              className="chip chip--ghost"
+              onClick={() => {
+                setStatusFilter("all");
+                setMethodFilter("ALL");
+              }}
+            >
+              clear
+            </button>
+          ) : null}
         </div>
         {requests.length === 0 ? (
           <div className="empty">
             No requests captured yet. Try{" "}
             <code>curl {baseUrl ?? "http://..."}</code> to hit a route.
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="empty">
+            No requests match the current filter.
+          </div>
         ) : (
           <ul className="reqlog">
-            {requests.map((entry, idx) => (
+            {filtered.map((entry, idx) => (
               <li
                 key={`${entry.at_epoch_ms}-${idx}-${entry.path}`}
                 className={

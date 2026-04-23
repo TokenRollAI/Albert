@@ -1453,6 +1453,40 @@ body[data-theme="light"] .modal__overlay {
   background: var(--bg-hover);
   border-color: var(--border-strong);
 }
+.chip--active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.chip--ghost {
+  background: transparent;
+  color: var(--text-faint);
+}
+.chip--ghost:hover {
+  color: var(--text);
+}
+.reqlog-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 10px;
+  flex-wrap: wrap;
+}
+.reqlog-filters__method {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.reqlog-filters__label {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.reqlog-filters .select {
+  font-size: 11px;
+  padding: 3px 8px;
+}
 .kind-chip {
   font-size: 10px;
   padding: 1px 7px;

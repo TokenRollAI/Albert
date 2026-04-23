@@ -434,3 +434,28 @@ async fn help_and_version_return_messages() {
         _ => panic!("expected version message"),
     }
 }
+
+#[tokio::test]
+async fn serve_print_config_emits_json_and_exits() {
+    let args = parse_args([
+        "serve".to_string(),
+        "--host".to_string(),
+        "10.0.0.1".to_string(),
+        "--port".to_string(),
+        "0".to_string(),
+        "--error-rate".to_string(),
+        "0.1".to_string(),
+        "--print-config".to_string(),
+    ])
+    .unwrap();
+    let out = run_with_args(args).await.expect("dry-run should succeed");
+    let message = match out {
+        RunOutcome::Message(m) => m,
+        other => panic!("expected Message from --print-config, got {other:?}"),
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&message).unwrap();
+    assert_eq!(parsed["gateway"]["host"], "10.0.0.1");
+    assert_eq!(parsed["gateway"]["port"], 0);
+    // Clamped float comparison — serde_json preserves the exact literal.
+    assert!(parsed["gateway"]["error_rate"].as_f64().unwrap() > 0.09);
+}

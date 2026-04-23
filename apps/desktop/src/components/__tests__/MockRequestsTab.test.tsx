@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { computeMetrics } from "../MockRequestsTab";
+import { computeMetrics, filterRequests } from "../MockRequestsTab";
 import type { RequestLogEntry } from "../../types";
 
 function entry(overrides: Partial<RequestLogEntry> = {}): RequestLogEntry {
@@ -69,5 +69,40 @@ describe("computeMetrics", () => {
       entry({ method: "POST", path: "/lost" })
     ]);
     expect(metrics.busiestRoute).toEqual({ route: "POST /lost", count: 2 });
+  });
+});
+
+describe("filterRequests", () => {
+  const log: RequestLogEntry[] = [
+    entry({ status: 200, method: "GET", path: "/a" }),
+    entry({ status: 429, method: "POST", path: "/b" }),
+    entry({ status: 500, method: "POST", path: "/c" }),
+    entry({ status: 204, method: "DELETE", path: "/d" })
+  ];
+
+  test("status=all + method=ALL returns everything", () => {
+    expect(filterRequests(log, "all", "ALL")).toHaveLength(4);
+  });
+
+  test("2xx filter keeps only 2xx responses", () => {
+    const out = filterRequests(log, "2xx", "ALL");
+    expect(out).toHaveLength(2);
+    expect(out.every((e) => e.status >= 200 && e.status < 300)).toBe(true);
+  });
+
+  test("method filter narrows by HTTP verb", () => {
+    const out = filterRequests(log, "all", "POST");
+    expect(out).toHaveLength(2);
+    expect(out.every((e) => e.method === "POST")).toBe(true);
+  });
+
+  test("combining status + method filters intersects", () => {
+    const out = filterRequests(log, "5xx", "POST");
+    expect(out).toEqual([log[2]]);
+  });
+
+  test("empty filter set returns empty array (not the full log)", () => {
+    const out = filterRequests(log, "5xx", "GET");
+    expect(out).toHaveLength(0);
   });
 });

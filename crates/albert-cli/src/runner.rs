@@ -555,6 +555,35 @@ fn write_file(path: &Path, body: &str) -> Result<(), String> {
 }
 
 async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
+    let print_config = args.print_config;
+    let config = GatewayConfig {
+        host: args.host.clone(),
+        port: args.port,
+        cors_enabled: args.cors,
+        example_overrides: BTreeMap::new(),
+        default_latency_ms: args.default_latency_ms,
+        latency_overrides: BTreeMap::new(),
+        error_rate: args.error_rate,
+        capture_bodies: args.capture_bodies,
+        response_headers: BTreeMap::new(),
+        required_headers: BTreeMap::new(),
+        rate_limits: BTreeMap::new(),
+    };
+
+    // Dry-run: dump the resolved config as JSON so users can verify how
+    // their flags parsed (especially useful when invoking albert under
+    // sudo, npm scripts, or a CI shell that may mangle quoting).
+    if print_config {
+        let payload = serde_json::json!({
+            "database_url": args.database_url,
+            "collections": args.collections,
+            "gateway": config,
+        });
+        let rendered =
+            serde_json::to_string_pretty(&payload).map_err(|e| format!("serialize config: {e}"))?;
+        return Ok(RunOutcome::Message(rendered));
+    }
+
     let store = prepare_store(&args.database_url)?;
     let collections = if args.collections.is_empty() {
         store.load_all_collections().map_err(|e| e.to_string())?
@@ -576,19 +605,6 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
         ));
     }
 
-    let config = GatewayConfig {
-        host: args.host,
-        port: args.port,
-        cors_enabled: args.cors,
-        example_overrides: BTreeMap::new(),
-        default_latency_ms: args.default_latency_ms,
-        latency_overrides: BTreeMap::new(),
-        error_rate: args.error_rate,
-        capture_bodies: args.capture_bodies,
-        response_headers: BTreeMap::new(),
-        required_headers: BTreeMap::new(),
-        rate_limits: BTreeMap::new(),
-    };
     let gateway = MockGateway::new();
     let status = gateway
         .start(collections, config)
@@ -607,4 +623,40 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
     }
     gateway.stop().await.map_err(|e| format!("stop: {e}"))?;
     Ok(RunOutcome::Served(Box::new(status)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::args::{CliArgs, Command};
+
+    #[tokio::test]
+    async fn serve_print_config_dry_runs_without_binding() {
+        // --print-config must not require a populated database; that's the
+        // whole point of the flag (inspect resolved config, then exit).
+        let args = CliArgs {
+            command: Command::Serve,
+            database_url: "/nonexistent/path/to/nowhere.db".to_string(),
+            host: "0.0.0.0".to_string(),
+            port: 9876,
+            cors: false,
+            default_latency_ms: Some(75),
+            error_rate: 0.5,
+            print_config: true,
+            ..Default::default()
+        };
+        let outcome = run_serve(args).await.expect("dry-run should succeed");
+        let message = match outcome {
+            RunOutcome::Message(m) => m,
+            other => panic!("expected Message, got {other:?}"),
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&message).expect("print-config emits valid JSON");
+        assert_eq!(parsed["gateway"]["host"], "0.0.0.0");
+        assert_eq!(parsed["gateway"]["port"], 9876);
+        assert_eq!(parsed["gateway"]["cors_enabled"], false);
+        assert_eq!(parsed["gateway"]["default_latency_ms"], 75);
+        assert_eq!(parsed["gateway"]["error_rate"], 0.5);
+        assert_eq!(parsed["database_url"], "/nonexistent/path/to/nowhere.db");
+    }
 }

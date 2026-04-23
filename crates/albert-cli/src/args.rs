@@ -48,6 +48,10 @@ pub struct CliArgs {
     /// Target URL for the `ping` subcommand (defaults to
     /// `http://127.0.0.1:4317`).
     pub ping_url: Option<String>,
+    /// When `true`, `serve` prints the resolved gateway config as JSON to
+    /// stdout and exits without binding a port. Useful in CI scripts to
+    /// verify shell-quoted arguments were parsed as intended.
+    pub print_config: bool,
 }
 
 impl Default for CliArgs {
@@ -69,6 +73,7 @@ impl Default for CliArgs {
             new_name: None,
             watch_interval_ms: None,
             ping_url: None,
+            print_config: false,
         }
     }
 }
@@ -209,6 +214,9 @@ where
             "capture-bodies" => {
                 out.capture_bodies = true;
             }
+            "print-config" => {
+                out.print_config = true;
+            }
             "url" => {
                 out.ping_url = Some(take_value(&mut i)?);
             }
@@ -267,7 +275,8 @@ pub fn help_text() -> String {
     s.push_str("    --error-rate <0..1>      Chance of serving the error example\n");
     s.push_str("    --collection <id>        Only serve the named collection(s)\n");
     s.push_str("    --capture-bodies         Record request bodies in the log (≤4KB)\n");
-    s.push_str("    --auto-stop-secs <n>     Stop after N seconds (useful in tests)\n\n");
+    s.push_str("    --auto-stop-secs <n>     Stop after N seconds (useful in tests)\n");
+    s.push_str("    --print-config           Print resolved config as JSON and exit\n\n");
     s.push_str("DELETE OPTIONS:\n");
     s.push_str("    --id <collection_id>     Collection to remove\n\n");
     s.push_str("WATCH OPTIONS:\n");
@@ -331,5 +340,17 @@ mod tests {
     fn rejects_unknown_flag() {
         let err = parse_args(["serve", "--cosmic"]).unwrap_err();
         assert!(matches!(err, CliError::UnknownFlag(_)));
+    }
+
+    #[test]
+    fn parses_print_config_flag() {
+        let args = parse_args(["serve", "--print-config"]).unwrap();
+        assert!(args.print_config);
+    }
+
+    #[test]
+    fn print_config_defaults_to_false() {
+        let args = parse_args(["serve"]).unwrap();
+        assert!(!args.print_config);
     }
 }

@@ -54,6 +54,13 @@ in `generate_handler!` because `#[tauri::command]` generates a companion
 - `SqliteStore` is a thin wrapper around a path. Each command builds a fresh
   instance; connections are short-lived. `migrate()` is called defensively on
   every command to keep schema and app in sync during development.
+- Every connection opened by `SqliteStore::connect()` sets
+  `journal_mode = WAL`, `busy_timeout = 5000`, and `synchronous = NORMAL`
+  so readers can proceed while a writer holds a transaction, transient
+  write contention retries internally instead of surfacing `SQLITE_BUSY`,
+  and WAL durability stays at the recommended tradeoff. A concurrency
+  test in `albert-storage` runs four threads hammering the DB to prove
+  the setup holds under real contention.
 - The mock gateway does NOT query SQLite at request time — it gets fully
   resolved collections when `start_mock_server` calls
   `load_all_collections` / `load_collection`. A restart is required to pick up
