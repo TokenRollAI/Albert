@@ -70,7 +70,14 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
 
     let (override_kind, query_selected) = parse_query_override(query.as_deref());
     let fallback_override = overrides.get(&matched_key).cloned();
-    let chosen_override = override_kind.clone().or(fallback_override.clone());
+    let mut chosen_override = override_kind.clone().or(fallback_override.clone());
+    let error_rate = state.snapshot_error_rate();
+    let error_injected = if error_rate > 0.0 && roll_probability(error_rate) {
+        chosen_override = Some(MockExampleKind::Error);
+        true
+    } else {
+        false
+    };
     let Some(example) = route.preferred_example(chosen_override.as_ref()) else {
         state.record(RequestLogEntry {
             at_epoch_ms: epoch_ms_now(),
@@ -102,6 +109,8 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     };
     let source = if query_selected {
         "query"
+    } else if error_injected {
+        "error-rate"
     } else if override_kind.is_some() || fallback_override.is_some() {
         "override"
     } else {
@@ -211,4 +220,38 @@ pub(crate) fn epoch_ms_now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Dependency-free coin flip for error-rate injection. Uses a `SplitMix64`-
+/// derived linear congruential sequence seeded from the OS monotonic clock.
+fn roll_probability(threshold: f32) -> bool {
+    use std::cell::Cell;
+    thread_local! {
+        static STATE: Cell<u64> = Cell::new(seed());
+    }
+    let clamped = threshold.clamp(0.0, 1.0);
+    if clamped <= 0.0 {
+        return false;
+    }
+    if clamped >= 1.0 {
+        return true;
+    }
+    STATE.with(|slot| {
+        let mut x = slot.get();
+        if x == 0 {
+            x = seed();
+        }
+        x = x.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        slot.set(x);
+        let scaled = ((x >> 33) as f32) / ((1u64 << 31) as f32);
+        scaled < clamped
+    })
+}
+
+fn seed() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64 ^ 0xA24BAED4963EE407)
+        .unwrap_or(0xD1B54A32D192ED03)
 }

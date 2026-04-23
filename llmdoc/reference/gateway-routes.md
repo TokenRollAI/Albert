@@ -66,6 +66,15 @@ example selection but before returning the response body. The total
 effective delay is echoed in the `x-albert-mock-latency-ms` header and
 the request log's `latency_ms` field.
 
+## Error-rate injection
+
+`GatewayConfig.error_rate` (0.0 – 1.0, clamped) is the probability that a
+matched request is served its error example instead of the selected one.
+The roll uses a zero-dependency thread-local LCG seeded from the monotonic
+clock. Log entries tagged with `source: "error-rate"` indicate the
+injection fired. A rate of `0.0` disables the behavior completely; `1.0`
+always serves the error example.
+
 ## Special routes
 
 - `GET /__albert/status` returns `{service, route_count}`.

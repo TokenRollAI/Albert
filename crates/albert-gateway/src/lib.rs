@@ -82,7 +82,12 @@ impl MockGateway {
         let latency =
             LatencyConfig::new(config.default_latency_ms, config.latency_overrides.clone());
 
-        let state = AppState::new(table_arc.clone(), overrides_arc.clone(), latency);
+        let state = AppState::new(
+            table_arc.clone(),
+            overrides_arc.clone(),
+            latency,
+            config.error_rate,
+        );
         let state_for_runtime = state.clone();
 
         let mut router = Router::new()
@@ -135,22 +140,26 @@ impl MockGateway {
             overrides,
             config.default_latency_ms,
             config.latency_overrides,
+            config.error_rate,
         )
         .await
     }
 
-    /// Full reconfigure entry point; can change both overrides and latency.
+    /// Full reconfigure entry point; can change overrides, latency, and
+    /// error rate in one atomic swap.
     pub async fn reconfigure(
         &self,
         collections: Vec<CanonicalApiCollection>,
         overrides: BTreeMap<String, MockExampleKind>,
         default_latency_ms: Option<u64>,
         latency_overrides: BTreeMap<String, u64>,
+        error_rate: f32,
     ) -> Result<GatewayStatus, GatewayError> {
         let mut guard = self.inner.lock().await;
         let Some(running) = guard.as_mut() else {
             return Err(GatewayError::NotRunning);
         };
+        let clamped_rate = error_rate.clamp(0.0, 1.0);
         let routes = build_routes(&collections);
         let summaries = summarize(&routes, &overrides, &latency_overrides);
         let table = Arc::new(RouteTable::from_routes(routes));
@@ -160,9 +169,11 @@ impl MockGateway {
             default_latency_ms,
             latency_overrides.clone(),
         ));
+        running.state.replace_error_rate(clamped_rate);
         running.config.example_overrides = overrides;
         running.config.default_latency_ms = default_latency_ms;
         running.config.latency_overrides = latency_overrides;
+        running.config.error_rate = clamped_rate;
         running.route_summaries = summaries;
         Ok(running.to_status())
     }
@@ -510,6 +521,43 @@ mod tests {
         let log = gateway.recent_requests(10).await;
         assert_eq!(log[0].latency_ms, 120);
 
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn forced_error_rate_serves_error_example() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "chaos",
+            vec![endpoint(HttpMethod::Get, "/ok", json!({"ok": true}))],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    error_rate: 1.0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let bind = status.bind_address.clone().unwrap();
+        let base = format!("http://{}", bind);
+        let client = reqwest::Client::new();
+
+        for _ in 0..3 {
+            let resp = client.get(format!("{base}/ok")).send().await.unwrap();
+            assert_eq!(resp.status().as_u16(), 400);
+            assert_eq!(
+                resp.headers()
+                    .get("x-albert-mock-kind")
+                    .and_then(|v| v.to_str().ok()),
+                Some("error")
+            );
+        }
+        let log = gateway.recent_requests(3).await;
+        assert!(log.iter().all(|entry| entry.source == "error-rate"));
         gateway.stop().await.expect("stop");
     }
 

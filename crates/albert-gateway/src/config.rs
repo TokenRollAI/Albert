@@ -24,6 +24,10 @@ pub struct GatewayConfig {
     /// Applied on top of `default_latency_ms`.
     #[serde(default)]
     pub latency_overrides: BTreeMap<String, u64>,
+    /// Probability (0.0–1.0) of serving the error example instead of the
+    /// selected one, for chaos-style testing of consumer error paths.
+    #[serde(default)]
+    pub error_rate: f32,
 }
 
 impl Default for GatewayConfig {
@@ -35,6 +39,7 @@ impl Default for GatewayConfig {
             example_overrides: BTreeMap::new(),
             default_latency_ms: None,
             latency_overrides: BTreeMap::new(),
+            error_rate: 0.0,
         }
     }
 }

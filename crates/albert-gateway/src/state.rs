@@ -29,6 +29,7 @@ pub(crate) struct AppState {
     pub(crate) table: Arc<StdMutex<Arc<RouteTable>>>,
     pub(crate) overrides: Arc<StdMutex<Arc<BTreeMap<String, MockExampleKind>>>>,
     pub(crate) latency: Arc<StdMutex<LatencyConfig>>,
+    pub(crate) error_rate: Arc<StdMutex<f32>>,
     pub(crate) request_log: Arc<StdMutex<VecDeque<RequestLogEntry>>>,
 }
 
@@ -58,11 +59,13 @@ impl AppState {
         table: Arc<RouteTable>,
         overrides: Arc<BTreeMap<String, MockExampleKind>>,
         latency: LatencyConfig,
+        error_rate: f32,
     ) -> Self {
         Self {
             table: Arc::new(StdMutex::new(table)),
             overrides: Arc::new(StdMutex::new(overrides)),
             latency: Arc::new(StdMutex::new(latency)),
+            error_rate: Arc::new(StdMutex::new(error_rate.clamp(0.0, 1.0))),
             request_log: Arc::new(StdMutex::new(VecDeque::with_capacity(
                 DEFAULT_REQUEST_LOG_CAPACITY,
             ))),
@@ -81,6 +84,10 @@ impl AppState {
         self.latency.lock().expect("latency poisoned").clone()
     }
 
+    pub(crate) fn snapshot_error_rate(&self) -> f32 {
+        *self.error_rate.lock().expect("error rate poisoned")
+    }
+
     pub(crate) fn replace_table(&self, next: Arc<RouteTable>) {
         let mut slot = self.table.lock().expect("route table poisoned");
         *slot = next;
@@ -94,6 +101,11 @@ impl AppState {
     pub(crate) fn replace_latency(&self, next: LatencyConfig) {
         let mut slot = self.latency.lock().expect("latency poisoned");
         *slot = next;
+    }
+
+    pub(crate) fn replace_error_rate(&self, next: f32) {
+        let mut slot = self.error_rate.lock().expect("error rate poisoned");
+        *slot = next.clamp(0.0, 1.0);
     }
 
     pub(crate) fn record(&self, entry: RequestLogEntry) {

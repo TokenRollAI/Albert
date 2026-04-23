@@ -7,11 +7,26 @@ async boundary into axum / reqwest.
 
 ## Shared services
 
-- `AppServices { gateway: Arc<MockGateway> }` is registered via
+- `AppServices { gateway: Arc<MockGateway> }` lives at
+  `apps/desktop/src-tauri/src/services.rs` and is registered via
   `tauri::Builder::manage(...)` in `apps/desktop/src-tauri/src/lib.rs`.
 - The gateway is constructed once at app boot and reused across Tauri commands
   because its internal `Mutex<Option<RunningGateway>>` is the source of truth
   for "is the mock running".
+
+## Command surface
+
+Tauri commands are split into focused modules under
+`apps/desktop/src-tauri/src/commands/`:
+- `bootstrap` — `bootstrap_summary`, `default_gateway_config`,
+  `supported_http_methods`.
+- `parser` — parse / import / list / load-snapshot.
+- `gateway` — start / stop / status / requests / update.
+- `openai` — `generate_mock_example`, `preview_generation_prompt`.
+
+`lib.rs` only wires the Tauri builder; modules are referenced by full path
+in `generate_handler!` because `#[tauri::command]` generates a companion
+`__cmd__<name>` shadow item that isn't reachable through a `pub use`.
 
 ## Tokio
 
