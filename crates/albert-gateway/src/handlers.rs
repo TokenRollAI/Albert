@@ -15,6 +15,7 @@ const MAX_CAPTURED_BODY_BYTES: usize = 4 * 1024;
 
 use crate::route::route_key;
 use crate::state::{AppState, RequestLogEntry};
+use crate::templating::apply_templates;
 
 pub(crate) async fn status_handler(State(state): State<AppState>) -> Response {
     let table = state.snapshot_table();
@@ -135,6 +136,7 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     };
     let route = matched.route;
     let matched_key = route_key(&route.method, &route.path);
+    let path_params = matched.params.clone();
     let strip_body = fallback_to_get;
 
     // Required-header gate: evaluated before example selection so an
@@ -222,7 +224,15 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         request_body: captured_string,
     });
 
-    let (status, body) = render_example(example);
+    // Apply response templating (e.g. {{now}}, {{path.id}}) before we
+    // serialize — substitution is a string-leaf walk over the JSON value
+    // so opting out just means not using `{{ }}` in the payload.
+    let templated_payload = apply_templates(&example.payload, &path_params);
+    let templated_example = MockExample {
+        payload: templated_payload,
+        ..example.clone()
+    };
+    let (status, body) = render_example(&templated_example);
     let body = if strip_body { Body::empty() } else { body };
     let mut headers = HeaderMap::new();
     headers.insert(

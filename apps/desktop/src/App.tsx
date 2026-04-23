@@ -22,6 +22,7 @@ import {
 } from "./data/fallback";
 import { useAiActions, type PromptPreview } from "./hooks/useAiActions";
 import { useCollectionActions } from "./hooks/useCollectionActions";
+import { useCollectionData } from "./hooks/useCollectionData";
 import { useEndpointTabs } from "./hooks/useEndpointTabs";
 import { useGatewayActions } from "./hooks/useGatewayActions";
 import { useImportActions } from "./hooks/useImportActions";
@@ -35,34 +36,30 @@ import { useTheme } from "./hooks/useTheme";
 import { useToasts } from "./hooks/useToasts";
 import { seedTryItDraft } from "./hooks/useTryItDraft";
 import type {
-  AppBootstrapSummary,
   CanonicalApiCollection,
   CanonicalEndpoint,
   EndpointTab,
   ExampleKind,
-  ImportResult,
   MockExample,
   MockExampleKind,
-  RequestLogEntry,
-  SidebarCollection,
-  StoredCollectionSummary
+  SidebarCollection
 } from "./types";
 
 function App() {
   const { theme, toggleTheme } = useTheme();
 
-  const [summary, setSummary] = useState<AppBootstrapSummary>(fallbackSummary);
-  const [runtime, setRuntime] = useState("Scaffold");
-  const [statusMessage, setStatusMessage] = useState(
-    "Ready. Import an OpenAPI spec or cURL to begin."
-  );
+  const {
+    storedCollections,
+    summary,
+    runtime,
+    statusMessage,
+    setStatusMessage,
+    refreshBusy,
+    refreshStoredCollections
+  } = useCollectionData();
 
-  const [storedCollections, setStoredCollections] = useState<
-    CanonicalApiCollection[]
-  >([]);
   const [previewCollection, setPreviewCollection] =
     useState<CanonicalApiCollection | null>(null);
-  const [refreshBusy, setRefreshBusy] = useState(false);
 
   const [importOpen, setImportOpen] = useState(false);
 
@@ -174,80 +171,6 @@ function App() {
     return result;
   }, [previewCollection, storedCollections]);
 
-  const loadSnapshots = useCallback(
-    async (tauri: boolean) => {
-      if (!tauri) {
-        return [] as CanonicalApiCollection[];
-      }
-      const summaries = await invoke<StoredCollectionSummary[]>(
-        "list_imported_collections"
-      );
-      const enriched: CanonicalApiCollection[] = [];
-      for (const item of summaries) {
-        try {
-          const full = await invoke<CanonicalApiCollection | null>(
-            "load_collection_snapshot",
-            { collectionId: item.id }
-          );
-          if (full) {
-            enriched.push(full);
-          }
-        } catch {
-          /* skip one bad collection, continue */
-        }
-      }
-      return enriched;
-    },
-    []
-  );
-
-  const refreshStoredCollections = useCallback(async () => {
-    if (!isTauriRuntime) {
-      return;
-    }
-    try {
-      setRefreshBusy(true);
-      const enriched = await loadSnapshots(true);
-      setStoredCollections(enriched);
-    } catch (error) {
-      setStatusMessage(`Failed to refresh collections: ${String(error)}`);
-    } finally {
-      setRefreshBusy(false);
-    }
-  }, [isTauriRuntime, loadSnapshots]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function bootstrap() {
-      try {
-        const data = await invoke<AppBootstrapSummary>("bootstrap_summary");
-        if (cancelled) return;
-        setSummary(data);
-        setRuntime("Tauri Runtime");
-        setStatusMessage(
-          "Connected to Tauri runtime. Refreshing collections…"
-        );
-        const enriched = await loadSnapshots(true);
-        if (cancelled) return;
-        setStoredCollections(enriched);
-        setStatusMessage(
-          enriched.length === 0
-            ? "Connected. No collections imported yet."
-            : `Connected. ${enriched.length} collection(s) ready.`
-        );
-      } catch {
-        if (cancelled) return;
-        setRuntime("Local Fallback");
-        setStatusMessage(
-          "Tauri runtime unavailable. Showing local fallback preview."
-        );
-      }
-    }
-    bootstrap();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadSnapshots]);
 
   const handleOpenEndpoint = useCallback(
     (collection: SidebarCollection, endpoint: CanonicalEndpoint) => {

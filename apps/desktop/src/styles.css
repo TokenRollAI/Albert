@@ -2342,3 +2342,37 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
 .md-link:hover {
   color: var(--accent-strong);
 }
+
+/* ---------- Sidebar tag chips ---------- */
+.sidebar__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 10px 8px;
+  max-height: 92px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
+.tag-chip {
+  font-size: 10px;
+  font-family: var(--mono);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.tag-chip:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.tag-chip--active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.tag-chip--clear {
+  color: var(--danger);
+}

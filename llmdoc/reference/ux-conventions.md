@@ -20,6 +20,9 @@ Within the sidebar:
   collections. Pressing `↑` on the first row jumps back to the search
   input.
 - `Enter` on the search input opens the first visible endpoint.
+- Tag chips below the search input filter endpoints by `tags[]`. Click
+  a chip to toggle an exclusive "show only this tag" filter; click
+  again or press the `✕` chip to clear.
 
 Shortcuts are suppressed while focus is inside an editable element unless
 a modifier key is held. Conventions live in

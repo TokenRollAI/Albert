@@ -21,6 +21,7 @@ pub mod handlers;
 pub mod route;
 pub mod routing;
 pub mod state;
+pub mod templating;
 
 pub use config::{
     GatewayConfig, GatewayRouteSummary, GatewayStatus, RequiredHeader, planned_capabilities,
@@ -822,6 +823,42 @@ mod tests {
         // uptime should be > 0 (gateway has been running)
         let uptime = body["uptime_ms"].as_i64().unwrap();
         assert!(uptime >= 0);
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn response_templating_substitutes_path_params_and_uuid() {
+        let gateway = MockGateway::new();
+        let ep = endpoint(
+            HttpMethod::Get,
+            "/users/{id}",
+            json!({
+                "id": "{{path.id}}",
+                "request_id": "{{uuid}}",
+                "fetched_at": "{{now}}"
+            }),
+        );
+        let col = collection("templ", vec![ep]);
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        let resp = client.get(format!("{base}/users/42")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["id"], "42");
+        let rid = body["request_id"].as_str().unwrap();
+        assert_eq!(rid.split('-').count(), 5, "uuid shape: {rid}");
+        let now = body["fetched_at"].as_str().unwrap();
+        assert!(now.ends_with('Z'), "rfc3339: {now}");
         gateway.stop().await.expect("stop");
     }
 

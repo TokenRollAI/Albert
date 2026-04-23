@@ -33,10 +33,25 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
   ref
 ) {
   const [query, setQuery] = useState("");
+  const [activeTag, setActiveTag] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
     collections.length === 1 ? { [collections[0].id]: true } : {}
   );
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Union of all endpoint tags across currently-visible collections.
+  // Sorted alphabetically so the chip order is stable across renders.
+  const availableTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const collection of collections) {
+      for (const endpoint of collection.endpoints) {
+        for (const tag of endpoint.tags ?? []) {
+          if (tag) set.add(tag);
+        }
+      }
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [collections]);
 
   useImperativeHandle(
     ref,
@@ -51,19 +66,28 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return collections;
+    const tagActive = activeTag !== null;
+    if (!q && !tagActive) return collections;
     return collections
       .map((collection) => {
-        const matchCollection = collection.name.toLowerCase().includes(q);
-        const endpoints = collection.endpoints.filter(
-          (endpoint) =>
+        const matchCollection = !tagActive && collection.name.toLowerCase().includes(q);
+        const endpoints = collection.endpoints.filter((endpoint) => {
+          if (tagActive && !(endpoint.tags ?? []).includes(activeTag)) {
+            return false;
+          }
+          if (!q) return true;
+          return (
             endpoint.path.toLowerCase().includes(q) ||
             endpoint.method.toLowerCase().includes(q) ||
             (endpoint.summary ?? "").toLowerCase().includes(q) ||
             (endpoint.operation_id ?? "").toLowerCase().includes(q)
-        );
+          );
+        });
         if (matchCollection) {
-          return collection;
+          // Tag filter inactive and collection name matches — keep everything
+          // that passes the endpoint filter (which in this branch is just the
+          // text filter).
+          return { ...collection, endpoints };
         }
         if (endpoints.length > 0) {
           return { ...collection, endpoints };
@@ -71,7 +95,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
         return null;
       })
       .filter((value): value is SidebarCollection => value !== null);
-  }, [collections, query]);
+  }, [activeTag, collections, query]);
 
   // Flat list of all currently-visible endpoint rows, used for arrow-key
   // navigation. Only expanded collections contribute; collapsed ones are
@@ -165,6 +189,35 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
           spellCheck={false}
         />
       </div>
+
+      {availableTags.length > 0 ? (
+        <div className="sidebar__tags" role="group" aria-label="Filter by tag">
+          {availableTags.map((tag) => {
+            const active = tag === activeTag;
+            return (
+              <button
+                key={tag}
+                type="button"
+                className={active ? "tag-chip tag-chip--active" : "tag-chip"}
+                onClick={() => setActiveTag(active ? null : tag)}
+                title={active ? `Clear ${tag} filter` : `Show only ${tag}`}
+              >
+                {tag}
+              </button>
+            );
+          })}
+          {activeTag ? (
+            <button
+              type="button"
+              className="tag-chip tag-chip--clear"
+              onClick={() => setActiveTag(null)}
+              title="Clear tag filter"
+            >
+              ✕
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="sidebar__list">
         {filtered.length === 0 ? (

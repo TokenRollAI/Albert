@@ -74,6 +74,26 @@ example selection but before returning the response body. The total
 effective delay is echoed in the `x-albert-mock-latency-ms` header and
 the request log's `latency_ms` field.
 
+## Response templating
+
+Mock payloads can embed `{{ }}` tokens that the gateway expands on every
+request, before serializing to JSON:
+
+- `{{now}}` — current UTC time, RFC 3339 (`2026-04-24T12:34:56Z`).
+- `{{now.epoch_ms}}` — current time in milliseconds since the Unix epoch.
+- `{{uuid}}` — v4-shaped lowercase UUID (not cryptographic).
+- `{{random.int}}` — random integer in `0..1_000_000`.
+- `{{random.int.<max>}}` — random integer in `0..<max>`.
+- `{{path.<name>}}` — value of the matched path parameter (empty string
+  when absent).
+
+The substitution walks every string leaf of the JSON payload. Non-string
+values pass through untouched. Unknown tokens are left in place as
+`{{unknown.token}}` so users can diagnose typos instead of getting
+silent empty strings. Nine unit tests in
+`crates/albert-gateway/src/templating.rs` lock in the token set plus the
+RFC 3339 formatter.
+
 ## Request body capture
 
 `GatewayConfig.capture_bodies` (default `false`). When `true`, the handler
