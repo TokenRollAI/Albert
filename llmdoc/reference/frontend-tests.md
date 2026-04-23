@@ -13,6 +13,9 @@
 
 - `npm --workspace apps/desktop run test` — single run (used in CI).
 - `npm --workspace apps/desktop run test:watch` — interactive watch.
+- `npm test` (root) — runs `cargo test --workspace` then the vitest suite.
+- `npm run check` (root) — `cargo fmt --check` + clippy + full test run. Use
+  locally before pushing; CI runs the same gates.
 
 ## Current suites
 

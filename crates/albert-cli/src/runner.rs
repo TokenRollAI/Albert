@@ -14,7 +14,10 @@ use crate::ingest::{Ingested, ingest_file};
 #[derive(Debug)]
 pub enum RunOutcome {
     Message(String),
-    Served(GatewayStatus),
+    // Boxed because GatewayStatus is much larger than the Message variant
+    // once it carries the full runtime config (overrides, header gates,
+    // rate-limit rules, etc.); keeps the enum pointer-sized on the hot path.
+    Served(Box<GatewayStatus>),
 }
 
 pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
@@ -584,6 +587,7 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
         capture_bodies: args.capture_bodies,
         response_headers: BTreeMap::new(),
         required_headers: BTreeMap::new(),
+        rate_limits: BTreeMap::new(),
     };
     let gateway = MockGateway::new();
     let status = gateway
@@ -602,5 +606,5 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
             .map_err(|e| format!("ctrl-c: {e}"))?;
     }
     gateway.stop().await.map_err(|e| format!("stop: {e}"))?;
-    Ok(RunOutcome::Served(status))
+    Ok(RunOutcome::Served(Box::new(status)))
 }

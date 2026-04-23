@@ -31,6 +31,59 @@ pub(crate) type ResponseHeaderMap = BTreeMap<String, BTreeMap<String, String>>;
 
 pub(crate) type RequiredHeaderMap = BTreeMap<String, Vec<crate::config::RequiredHeader>>;
 
+/// Per-route sliding-window counters. Keyed by `METHOD /path`; stores
+/// `{rule, timestamps}` where `timestamps` are millisecond epochs of
+/// recent requests within the window.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RateLimitState {
+    pub rules: BTreeMap<String, crate::config::RateLimitRule>,
+    pub history: BTreeMap<String, VecDeque<u128>>,
+}
+
+/// Verdict returned when attempting to admit a request under the limit.
+pub(crate) enum RateVerdict {
+    Allowed,
+    Denied {
+        limit: u32,
+        window_ms: u64,
+        retry_after_ms: u64,
+    },
+}
+
+impl RateLimitState {
+    pub fn admit(&mut self, route_key: &str, now_ms: u128) -> RateVerdict {
+        let Some(rule) = self.rules.get(route_key).cloned() else {
+            return RateVerdict::Allowed;
+        };
+        if rule.limit == 0 {
+            // A zero-limit rule is an explicit "deny all" — useful for
+            // simulating a maintenance window.
+            return RateVerdict::Denied {
+                limit: 0,
+                window_ms: rule.window_ms,
+                retry_after_ms: rule.window_ms.max(1),
+            };
+        }
+        let window = rule.window_ms as u128;
+        let cutoff = now_ms.saturating_sub(window);
+        let deque = self.history.entry(route_key.to_string()).or_default();
+        while deque.front().is_some_and(|t| *t < cutoff) {
+            deque.pop_front();
+        }
+        if (deque.len() as u32) >= rule.limit {
+            let oldest = deque.front().copied().unwrap_or(now_ms);
+            let retry_after = window.saturating_sub(now_ms.saturating_sub(oldest));
+            return RateVerdict::Denied {
+                limit: rule.limit,
+                window_ms: rule.window_ms,
+                retry_after_ms: retry_after.min(u128::from(u64::MAX)) as u64,
+            };
+        }
+        deque.push_back(now_ms);
+        RateVerdict::Allowed
+    }
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct MetricsSnapshot {
     pub total_requests: u64,
@@ -58,6 +111,7 @@ pub(crate) struct AppState {
     pub(crate) capture_bodies: Arc<StdMutex<bool>>,
     pub(crate) response_headers: Arc<StdMutex<Arc<ResponseHeaderMap>>>,
     pub(crate) required_headers: Arc<StdMutex<Arc<RequiredHeaderMap>>>,
+    pub(crate) rate_limits: Arc<StdMutex<RateLimitState>>,
     pub(crate) metrics: Arc<StdMutex<MetricsSnapshot>>,
     pub(crate) request_log: Arc<StdMutex<VecDeque<RequestLogEntry>>>,
 }
@@ -93,6 +147,7 @@ impl AppState {
         capture_bodies: bool,
         response_headers: Arc<ResponseHeaderMap>,
         required_headers: Arc<RequiredHeaderMap>,
+        rate_limits: BTreeMap<String, crate::config::RateLimitRule>,
         started_at_epoch_ms: i64,
     ) -> Self {
         Self {
@@ -103,6 +158,10 @@ impl AppState {
             capture_bodies: Arc::new(StdMutex::new(capture_bodies)),
             response_headers: Arc::new(StdMutex::new(response_headers)),
             required_headers: Arc::new(StdMutex::new(required_headers)),
+            rate_limits: Arc::new(StdMutex::new(RateLimitState {
+                rules: rate_limits,
+                history: BTreeMap::new(),
+            })),
             metrics: Arc::new(StdMutex::new(MetricsSnapshot {
                 started_at_epoch_ms,
                 ..Default::default()
@@ -186,6 +245,24 @@ impl AppState {
             .lock()
             .expect("required headers poisoned");
         *slot = next;
+    }
+
+    /// Replace the rate-limit ruleset. Keeps the existing per-route history so
+    /// that rules tightened during a reconfigure keep applying against the
+    /// same rolling window — otherwise a client could dodge a stricter rule
+    /// by racing a config change.
+    pub(crate) fn replace_rate_limits(&self, next: BTreeMap<String, crate::config::RateLimitRule>) {
+        let mut slot = self.rate_limits.lock().expect("rate limits poisoned");
+        let keep: std::collections::BTreeSet<String> = next.keys().cloned().collect();
+        slot.rules = next;
+        slot.history.retain(|route_key, _| keep.contains(route_key));
+    }
+
+    pub(crate) fn admit_request(&self, route_key: &str, now_ms: u128) -> RateVerdict {
+        self.rate_limits
+            .lock()
+            .expect("rate limits poisoned")
+            .admit(route_key, now_ms)
     }
 
     pub(crate) fn record(&self, entry: RequestLogEntry) {

@@ -10,7 +10,13 @@
     "dev": "npm --workspace apps/desktop run dev",
     "build": "npm --workspace apps/desktop run build",
     "tauri:dev": "npm --workspace apps/desktop run tauri:dev",
-    "tauri:build": "npm --workspace apps/desktop run tauri:build"
+    "tauri:build": "npm --workspace apps/desktop run tauri:build",
+    "test": "npm run test:rust && npm run test:ui",
+    "test:rust": "cargo test --workspace --quiet",
+    "test:ui": "npm --workspace apps/desktop run test",
+    "lint": "cargo clippy --workspace --all-targets -- -D warnings",
+    "fmt": "cargo fmt --all",
+    "check": "cargo fmt --all -- --check && npm run lint && npm run test"
   }
 }
 

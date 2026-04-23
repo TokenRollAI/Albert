@@ -46,6 +46,22 @@ pub struct GatewayConfig {
     /// empty `value_prefix`/`value_equals` to require presence only.
     #[serde(default)]
     pub required_headers: BTreeMap<String, Vec<RequiredHeader>>,
+    /// Per-route request-rate caps keyed by `METHOD path`. Exceeding the
+    /// cap returns `429 Too Many Requests` with a `Retry-After` header.
+    /// Implemented as a sliding window per route — see
+    /// `state::RateLimitConfig`.
+    #[serde(default)]
+    pub rate_limits: BTreeMap<String, RateLimitRule>,
+}
+
+/// A single sliding-window rate cap: "at most `limit` requests per
+/// `window_ms` milliseconds". `limit=0` effectively denies every request
+/// (useful for maintenance simulations); the gateway clamps very small
+/// values but doesn't otherwise opine on ratios.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RateLimitRule {
+    pub limit: u32,
+    pub window_ms: u64,
 }
 
 /// A single header-presence or header-value requirement. `name` is the
@@ -74,6 +90,7 @@ impl Default for GatewayConfig {
             capture_bodies: false,
             response_headers: BTreeMap::new(),
             required_headers: BTreeMap::new(),
+            rate_limits: BTreeMap::new(),
         }
     }
 }

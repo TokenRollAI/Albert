@@ -154,6 +154,17 @@ export interface GatewayRouteSummary {
   latency_ms?: number | null;
 }
 
+export interface RequiredHeader {
+  name: string;
+  value_prefix?: string | null;
+  value_equals?: string | null;
+}
+
+export interface RateLimitRule {
+  limit: number;
+  window_ms: number;
+}
+
 export interface GatewayConfig {
   host: string;
   port: number;
@@ -163,6 +174,9 @@ export interface GatewayConfig {
   latency_overrides?: Record<string, number>;
   error_rate?: number;
   capture_bodies?: boolean;
+  response_headers?: Record<string, Record<string, string>>;
+  required_headers?: Record<string, RequiredHeader[]>;
+  rate_limits?: Record<string, RateLimitRule>;
 }
 
 export interface GatewayStatus {

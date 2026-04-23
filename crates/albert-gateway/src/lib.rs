@@ -24,8 +24,8 @@ pub mod state;
 pub mod templating;
 
 pub use config::{
-    GatewayConfig, GatewayRouteSummary, GatewayStatus, RequiredHeader, planned_capabilities,
-    supported_example_kinds,
+    GatewayConfig, GatewayRouteSummary, GatewayStatus, RateLimitRule, RequiredHeader,
+    planned_capabilities, supported_example_kinds,
 };
 pub use error::GatewayError;
 pub use route::{MatchedRoute, MockRoute, build_routes, route_key};
@@ -94,6 +94,7 @@ impl MockGateway {
             config.capture_bodies,
             response_headers,
             required_headers,
+            config.rate_limits.clone(),
             started_at,
         );
         let state_for_runtime = state.clone();
@@ -159,13 +160,14 @@ impl MockGateway {
             config.capture_bodies,
             config.response_headers,
             config.required_headers,
+            config.rate_limits,
         )
         .await
     }
 
     /// Full reconfigure entry point; can change overrides, latency, error
-    /// rate, body-capture flag, per-route response headers, and per-route
-    /// required-header gates in one atomic swap.
+    /// rate, body-capture flag, per-route response headers, per-route
+    /// required-header gates, and per-route rate limits in one atomic swap.
     #[allow(clippy::too_many_arguments)]
     pub async fn reconfigure(
         &self,
@@ -177,6 +179,7 @@ impl MockGateway {
         capture_bodies: bool,
         response_headers: BTreeMap<String, BTreeMap<String, String>>,
         required_headers: BTreeMap<String, Vec<RequiredHeader>>,
+        rate_limits: BTreeMap<String, RateLimitRule>,
     ) -> Result<GatewayStatus, GatewayError> {
         let mut guard = self.inner.lock().await;
         let Some(running) = guard.as_mut() else {
@@ -200,6 +203,7 @@ impl MockGateway {
         running
             .state
             .replace_required_headers(Arc::new(required_headers.clone()));
+        running.state.replace_rate_limits(rate_limits.clone());
         running.config.example_overrides = overrides;
         running.config.default_latency_ms = default_latency_ms;
         running.config.latency_overrides = latency_overrides;
@@ -207,6 +211,7 @@ impl MockGateway {
         running.config.capture_bodies = capture_bodies;
         running.config.response_headers = response_headers;
         running.config.required_headers = required_headers;
+        running.config.rate_limits = rate_limits;
         running.route_summaries = summaries;
         Ok(running.to_status())
     }
@@ -924,6 +929,104 @@ mod tests {
         // Source label for the 401 rows
         let log = gateway.recent_requests(3).await;
         assert!(log.iter().any(|e| e.source == "auth-required"));
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn rate_limit_returns_429_when_exceeded() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "rl",
+            vec![endpoint(HttpMethod::Get, "/ping", json!({"ok": true}))],
+        );
+        let mut rules = BTreeMap::new();
+        rules.insert(
+            "GET /ping".to_string(),
+            config::RateLimitRule {
+                limit: 2,
+                window_ms: 60_000,
+            },
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    rate_limits: rules,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        // Two permitted hits
+        for _ in 0..2 {
+            let resp = client.get(format!("{base}/ping")).send().await.unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+        }
+
+        // Third is denied with structured 429 + Retry-After.
+        let resp = client.get(format!("{base}/ping")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 429);
+        let retry_after = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .unwrap()
+            .to_string();
+        assert!(
+            retry_after.parse::<u64>().unwrap() >= 1,
+            "retry-after seconds: {retry_after}"
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "rate_limited");
+        assert_eq!(body["limit"], 2);
+
+        let log = gateway.recent_requests(3).await;
+        assert!(log.iter().any(|entry| entry.source == "rate-limited"));
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn rate_limit_zero_denies_all_requests() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "rl0",
+            vec![endpoint(
+                HttpMethod::Get,
+                "/maintenance",
+                json!({"ok": true}),
+            )],
+        );
+        let mut rules = BTreeMap::new();
+        rules.insert(
+            "GET /maintenance".to_string(),
+            config::RateLimitRule {
+                limit: 0,
+                window_ms: 30_000,
+            },
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    rate_limits: rules,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("{base}/maintenance"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 429);
         gateway.stop().await.expect("stop");
     }
 

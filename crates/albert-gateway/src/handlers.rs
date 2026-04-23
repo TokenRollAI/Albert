@@ -14,7 +14,7 @@ use tokio::time::sleep;
 const MAX_CAPTURED_BODY_BYTES: usize = 4 * 1024;
 
 use crate::route::route_key;
-use crate::state::{AppState, RequestLogEntry};
+use crate::state::{AppState, RateVerdict, RequestLogEntry};
 use crate::templating::apply_templates;
 
 pub(crate) async fn status_handler(State(state): State<AppState>) -> Response {
@@ -174,6 +174,31 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
             request_body: captured_string.clone(),
         });
         return unauthorized(err);
+    }
+
+    // Rate-limit gate: runs after auth but before example selection so a
+    // rejected request never incurs configured latency or consumes a mock.
+    let now_ms = epoch_ms_now() as u128;
+    if let RateVerdict::Denied {
+        limit,
+        window_ms,
+        retry_after_ms,
+    } = state.admit_request(&matched_key, now_ms)
+    {
+        state.record(RequestLogEntry {
+            at_epoch_ms: epoch_ms_now(),
+            method: method.to_string(),
+            path: path.clone(),
+            query: query.clone(),
+            matched_route: Some(matched_key.clone()),
+            collection_name: Some(route.collection_name.clone()),
+            status: 429,
+            kind: None,
+            source: "rate-limited",
+            latency_ms: 0,
+            request_body: captured_string.clone(),
+        });
+        return too_many_requests(limit, window_ms, retry_after_ms);
     }
 
     let (override_kind, query_selected) = parse_query_override(query.as_deref());
@@ -376,6 +401,37 @@ fn unauthorized(reason: String) -> Response {
         axum::Json(payload),
     )
         .into_response()
+}
+
+fn too_many_requests(limit: u32, window_ms: u64, retry_after_ms: u64) -> Response {
+    // Retry-After is specified in whole seconds. Round up so clients never
+    // poll before the rolling window actually opens.
+    let retry_after_secs = retry_after_ms.div_ceil(1000).max(1);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&retry_after_secs.to_string()) {
+        headers.insert(header::RETRY_AFTER, value);
+    }
+    if let Ok(name) = HeaderName::from_bytes(b"x-albert-rate-limit")
+        && let Ok(value) = HeaderValue::from_str(&limit.to_string())
+    {
+        headers.insert(name, value);
+    }
+    if let Ok(name) = HeaderName::from_bytes(b"x-albert-rate-window-ms")
+        && let Ok(value) = HeaderValue::from_str(&window_ms.to_string())
+    {
+        headers.insert(name, value);
+    }
+    let payload = serde_json::json!({
+        "error": "rate_limited",
+        "limit": limit,
+        "window_ms": window_ms,
+        "retry_after_ms": retry_after_ms,
+    });
+    (StatusCode::TOO_MANY_REQUESTS, headers, axum::Json(payload)).into_response()
 }
 
 pub(crate) fn not_found(message: String) -> Response {

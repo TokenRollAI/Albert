@@ -124,6 +124,31 @@ If any rule fails the gateway returns `401 Unauthorized` with a JSON body
 with `source: "auth-required"`. The gate runs **before** example selection
 so unauthorized requests never touch mock data and never incur latency.
 
+## Rate limiting
+
+`GatewayConfig.rate_limits` is a `METHOD /path → RateLimitRule` map. Each
+rule is `{ limit: u32, window_ms: u64 }` — "at most `limit` requests per
+`window_ms` milliseconds per route." Semantics:
+
+- Sliding window, per route. Every admitted hit pushes a timestamp onto a
+  `VecDeque<u128>`; expired entries are popped on the next evaluation.
+- `limit: 0` is an explicit deny-all — useful for simulating a maintenance
+  window. Every request is rejected until the rule is removed.
+- On rejection the gateway emits `429 Too Many Requests` with:
+  - `Retry-After: <seconds>` — the rolling-window residual, rounded up to
+    at least one second so clients can't poll before the slot opens.
+  - `x-albert-rate-limit: <limit>` / `x-albert-rate-window-ms: <window_ms>`
+    echoing the rule that fired.
+  - JSON body `{error: "rate_limited", limit, window_ms, retry_after_ms}`.
+- The log entry records `source: "rate-limited"` and `status: 429`.
+- The gate runs **after** the required-header gate but **before** example
+  selection / latency injection, so denied requests never touch mock data
+  and never sleep.
+- Reconfiguring rules via `MockGateway::reconfigure` (or `update_mock_server`)
+  preserves the rolling history for routes that keep an entry, so a
+  tightened rule starts applying immediately against the in-flight window
+  instead of resetting the counter.
+
 ## Error-rate injection
 
 `GatewayConfig.error_rate` (0.0 – 1.0, clamped) is the probability that a
