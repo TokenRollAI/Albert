@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use albert_core::HttpMethod;
 
-use crate::{MatchedRoute, MockRoute};
+use crate::route::{MatchedRoute, MockRoute};
 
 /// A compiled endpoint path, e.g. `/users/{id}/posts/{postId}` →
 /// segments `["users", "{id}", "posts", "{postId}"]` with specificity derived

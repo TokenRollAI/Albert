@@ -1,0 +1,90 @@
+//! Gateway configuration + status types.
+
+use std::collections::BTreeMap;
+
+use albert_core::{CapabilityStatus, DeliveryStage, HttpMethod, MockExampleKind};
+use serde::{Deserialize, Serialize};
+
+/// Configuration for a running mock gateway.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GatewayConfig {
+    /// Host binding, e.g. "127.0.0.1".
+    pub host: String,
+    /// Port number. Use 0 for ephemeral.
+    pub port: u16,
+    /// Enables permissive CORS so that browser clients can hit the mock.
+    pub cors_enabled: bool,
+    /// Per-endpoint example overrides, keyed by `METHOD path`.
+    #[serde(default)]
+    pub example_overrides: BTreeMap<String, MockExampleKind>,
+    /// Optional global latency floor applied to every served request.
+    #[serde(default)]
+    pub default_latency_ms: Option<u64>,
+    /// Per-route latency overrides, keyed by `METHOD path`.
+    /// Applied on top of `default_latency_ms`.
+    #[serde(default)]
+    pub latency_overrides: BTreeMap<String, u64>,
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 4317,
+            cors_enabled: true,
+            example_overrides: BTreeMap::new(),
+            default_latency_ms: None,
+            latency_overrides: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GatewayStatus {
+    pub running: bool,
+    pub bind_address: Option<String>,
+    pub route_count: usize,
+    pub started_at_epoch_ms: Option<i64>,
+    pub config: GatewayConfig,
+    pub routes: Vec<GatewayRouteSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GatewayRouteSummary {
+    pub method: HttpMethod,
+    pub path: String,
+    pub collection_name: String,
+    pub operation_id: Option<String>,
+    pub summary: Option<String>,
+    pub selected_example: Option<MockExampleKind>,
+    pub available_examples: Vec<MockExampleKind>,
+    pub latency_ms: Option<u64>,
+}
+
+pub fn supported_example_kinds() -> Vec<MockExampleKind> {
+    vec![
+        MockExampleKind::Success,
+        MockExampleKind::Empty,
+        MockExampleKind::Error,
+    ]
+}
+
+pub fn planned_capabilities() -> Vec<CapabilityStatus> {
+    vec![
+        CapabilityStatus {
+            name: "Static mock states".to_string(),
+            stage: DeliveryStage::Partial,
+            note: "Success, empty, and error examples are selected per request via override or query param.".to_string(),
+        },
+        CapabilityStatus {
+            name: "Route matching".to_string(),
+            stage: DeliveryStage::Partial,
+            note: "Matches by HTTP method and path template with `{param}` placeholders.".to_string(),
+        },
+        CapabilityStatus {
+            name: "HTTP listener".to_string(),
+            stage: DeliveryStage::Partial,
+            note: "Axum + hyper server with graceful shutdown, permissive CORS, and latency injection.".to_string(),
+        },
+    ]
+}

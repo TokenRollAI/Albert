@@ -128,6 +128,10 @@ struct StartMockServerArgs {
     #[serde(default)]
     example_overrides: Option<BTreeMap<String, MockExampleKind>>,
     #[serde(default)]
+    default_latency_ms: Option<u64>,
+    #[serde(default)]
+    latency_overrides: Option<BTreeMap<String, u64>>,
+    #[serde(default)]
     database_url: Option<String>,
 }
 
@@ -162,6 +166,8 @@ async fn start_mock_server(
         port: args.port.unwrap_or(4317),
         cors_enabled: args.cors_enabled.unwrap_or(true),
         example_overrides: args.example_overrides.unwrap_or_default(),
+        default_latency_ms: args.default_latency_ms,
+        latency_overrides: args.latency_overrides.unwrap_or_default(),
     };
 
     services
@@ -201,6 +207,10 @@ struct UpdateMockServerArgs {
     #[serde(default)]
     example_overrides: Option<BTreeMap<String, MockExampleKind>>,
     #[serde(default)]
+    default_latency_ms: Option<Option<u64>>,
+    #[serde(default)]
+    latency_overrides: Option<BTreeMap<String, u64>>,
+    #[serde(default)]
     database_url: Option<String>,
 }
 
@@ -228,9 +238,21 @@ async fn update_mock_server(
             .load_all_collections()
             .map_err(|error| error.to_string())?
     };
+
+    let current = services.gateway.status().await.config;
+    let default_latency_ms = args
+        .default_latency_ms
+        .unwrap_or(current.default_latency_ms);
+    let latency_overrides = args.latency_overrides.unwrap_or(current.latency_overrides);
+
     services
         .gateway
-        .update(collections, args.example_overrides.unwrap_or_default())
+        .reconfigure(
+            collections,
+            args.example_overrides.unwrap_or_default(),
+            default_latency_ms,
+            latency_overrides,
+        )
         .await
         .map_err(|error| error.to_string())
 }

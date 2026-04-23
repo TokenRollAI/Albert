@@ -27,6 +27,7 @@
 - `llmdoc/reference/repo-layout.md`: repository map
 - `llmdoc/reference/gateway-routes.md`: mock gateway routing rules and special paths
 - `llmdoc/reference/openai-adapter.md`: OpenAI adapter contract and prompt schema
+- `llmdoc/reference/ux-conventions.md`: keyboard shortcuts, toasts, drawer shell
 
 ## Routing Rules
 

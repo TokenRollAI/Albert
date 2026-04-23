@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import type { CanonicalEndpoint, SidebarCollection } from "../types";
 
@@ -11,17 +11,36 @@ interface SidebarProps {
   busy: boolean;
 }
 
-export function Sidebar({
-  collections,
-  activeTabId,
-  onOpenEndpoint,
-  onImportClick,
-  onRefresh,
-  busy
-}: SidebarProps) {
+export interface SidebarHandle {
+  focusSearch: () => void;
+}
+
+export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
+  {
+    collections,
+    activeTabId,
+    onOpenEndpoint,
+    onImportClick,
+    onRefresh,
+    busy
+  }: SidebarProps,
+  ref
+) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
     collections.length === 1 ? { [collections[0].id]: true } : {}
+  );
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusSearch: () => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    }),
+    []
   );
 
   const filtered = useMemo(() => {
@@ -82,10 +101,11 @@ export function Sidebar({
       <div className="sidebar__search">
         <Icon name="search" size={14} />
         <input
+          ref={inputRef}
           type="text"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search endpoints"
+          placeholder="Search endpoints  (⌘K)"
           spellCheck={false}
         />
       </div>
@@ -185,4 +205,4 @@ export function Sidebar({
       </div>
     </aside>
   );
-}
+});

@@ -1,13 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EndpointTabs } from "./components/EndpointTabs";
 import { ImportDialog } from "./components/ImportDialog";
 import { MockServerPanel } from "./components/MockServerPanel";
 import { ProvidersPanel } from "./components/ProvidersPanel";
 import { RequestPanel } from "./components/RequestPanel";
 import { ResponsePane } from "./components/ResponsePane";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, type SidebarHandle } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
+import { ToastHost } from "./components/ToastHost";
 import { TopBar } from "./components/TopBar";
 import { UrlBar } from "./components/UrlBar";
 import { WorkbenchEmpty } from "./components/WorkbenchEmpty";
@@ -17,9 +18,11 @@ import {
   sampleImportText
 } from "./data/fallback";
 import { useEndpointTabs } from "./hooks/useEndpointTabs";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useMockGateway } from "./hooks/useMockGateway";
 import { useProviderDraft } from "./hooks/useProviderDraft";
 import { useTheme } from "./hooks/useTheme";
+import { useToasts } from "./hooks/useToasts";
 import type {
   AppBootstrapSummary,
   CanonicalApiCollection,
@@ -55,6 +58,8 @@ function App() {
 
   const [mockPanelOpen, setMockPanelOpen] = useState(false);
   const [providersOpen, setProvidersOpen] = useState(false);
+  const toasts = useToasts();
+  const sidebarRef = useRef<SidebarHandle | null>(null);
 
   const {
     tabs,
@@ -79,6 +84,34 @@ function App() {
   const isTauriRuntime = runtime === "Tauri Runtime";
 
   const mockGateway = useMockGateway({ enabled: isTauriRuntime });
+
+  useKeyboardShortcuts(
+    useMemo(
+      () => [
+        {
+          combo: "Mod+K",
+          description: "Focus collection search",
+          handler: () => sidebarRef.current?.focusSearch()
+        },
+        {
+          combo: "Mod+.",
+          description: "Toggle mock server panel",
+          handler: () => setMockPanelOpen((prev) => !prev)
+        },
+        {
+          combo: "Mod+i",
+          description: "Open import dialog",
+          handler: () => setImportOpen(true)
+        },
+        {
+          combo: "Mod+Shift+p",
+          description: "Open providers panel",
+          handler: () => setProvidersOpen((prev) => !prev)
+        }
+      ],
+      []
+    )
+  );
 
   const sidebarCollections: SidebarCollection[] = useMemo(() => {
     const result: SidebarCollection[] = [];
@@ -218,6 +251,9 @@ function App() {
         setStatusMessage(
           `Imported ${result.endpoint_count} endpoint(s) into ${result.database_url}.`
         );
+        toasts.success(
+          `Imported ${result.endpoint_count} endpoint(s) as "${result.collection_name}".`
+        );
         setImportMessage(null);
         setImportOpen(false);
         const first = collection.endpoints[0];
@@ -225,12 +261,14 @@ function App() {
           openTab(result.collection_id, result.collection_name, first);
         }
       } catch (error) {
-        setImportMessage(`Import failed: ${String(error)}`);
+        const message = `Import failed: ${String(error)}`;
+        setImportMessage(message);
+        toasts.error(message);
       } finally {
         setImportBusy(null);
       }
     },
-    [isTauriRuntime, openTab, refreshStoredCollections]
+    [isTauriRuntime, openTab, refreshStoredCollections, toasts]
   );
 
   const handleParsePreview = useCallback(
@@ -271,20 +309,28 @@ function App() {
 
   const handleStartGateway = useCallback(
     async (port: number, host: string, cors: boolean) => {
-      await mockGateway.start({
+      const result = await mockGateway.start({
         port,
         host,
         corsEnabled: cors
       });
+      if (result?.running && result.bind_address) {
+        toasts.success(`Mock server listening at http://${result.bind_address}`);
+      }
     },
-    [mockGateway]
+    [mockGateway, toasts]
   );
 
   const handleApplyOverrides = useCallback(
     async (overrides: Record<string, MockExampleKind>) => {
-      await mockGateway.update(overrides);
+      const result = await mockGateway.update(overrides);
+      if (result) {
+        toasts.info(
+          `Applied overrides for ${Object.keys(overrides).length} route(s).`
+        );
+      }
     },
-    [mockGateway]
+    [mockGateway, toasts]
   );
 
   const handleGenerate = useCallback(
@@ -296,31 +342,40 @@ function App() {
       if (!isTauriRuntime) {
         throw new Error("AI generation requires the Tauri runtime.");
       }
-      const example = await invoke<MockExample>("generate_mock_example", {
-        request: {
-          endpoint: tab.endpoint,
-          intent,
-          provider: providerDraft,
-          collection_id: tab.collectionId,
-          persist,
-          database_url: null,
-          api_key_override: apiKeyOverride || null
+      try {
+        const example = await invoke<MockExample>("generate_mock_example", {
+          request: {
+            endpoint: tab.endpoint,
+            intent,
+            provider: providerDraft,
+            collection_id: tab.collectionId,
+            persist,
+            database_url: null,
+            api_key_override: apiKeyOverride || null
+          }
+        });
+        updateEndpointExample(tab.id, example);
+        if (persist) {
+          await refreshStoredCollections();
         }
-      });
-      updateEndpointExample(tab.id, example);
-      if (persist) {
-        await refreshStoredCollections();
+        setStatusMessage(
+          `AI ${intent} example ready for ${tab.method} ${tab.path}.`
+        );
+        toasts.success(
+          `${intent} mock generated for ${tab.method} ${tab.path}.`
+        );
+        return example;
+      } catch (error) {
+        toasts.error(`Generation failed: ${String(error)}`);
+        throw error;
       }
-      setStatusMessage(
-        `AI ${intent} example ready for ${tab.method} ${tab.path}.`
-      );
-      return example;
     },
     [
       isTauriRuntime,
       providerDraft,
       apiKeyOverride,
       refreshStoredCollections,
+      toasts,
       updateEndpointExample
     ]
   );
@@ -345,6 +400,7 @@ function App() {
 
       <div className="shell__main">
         <Sidebar
+          ref={sidebarRef}
           collections={sidebarCollections}
           activeTabId={activeId}
           onOpenEndpoint={handleOpenEndpoint}
@@ -436,6 +492,8 @@ function App() {
         onUpdateDraft={updateProvider}
         onUpdateApiKey={setApiKeyOverride}
       />
+
+      <ToastHost toasts={toasts.toasts} onDismiss={toasts.dismiss} />
     </div>
   );
 }

@@ -3,10 +3,22 @@
 ## Runtime shape
 
 - Crate: `albert-gateway` (`axum` + `hyper` via `tokio`).
-- Entry point: `MockGateway::start(collections, GatewayConfig)`.
+- Modules:
+  - `config` — `GatewayConfig`, `GatewayStatus`, `GatewayRouteSummary`,
+    capability surface.
+  - `error` — `GatewayError`.
+  - `route` — `MockRoute`, `MatchedRoute`, `route_key`, `build_routes`.
+  - `routing` — `RouteTable`, `CompiledRoute`, path template compilation.
+  - `state` — `AppState`, `LatencyConfig`, `RequestLogEntry`.
+  - `handlers` — axum handlers (`status_handler`, `mock_handler`) plus
+    `parse_query_override`, `not_found`, `epoch_ms_now`.
+  - `lib` — public `MockGateway`, `start`/`stop`/`update`/`reconfigure` +
+    tests.
 - Shutdown: `MockGateway::stop()` sends a oneshot signal; axum uses
   `with_graceful_shutdown`, then the spawned task is awaited.
-- Shared with handlers via `AppState { table: Arc<RouteTable>, overrides }`.
+- Shared with handlers via `AppState` (three `StdMutex`-guarded slots: the
+  route table, the overrides map, the latency config) + a request log
+  `VecDeque` bounded to 100 entries.
 
 ## Route matching
 
@@ -43,6 +55,16 @@ Status code mapping:
 - `x-albert-mock-kind: success | empty | error`
 - `x-albert-mock-route: METHOD /path`
 - `x-albert-mock-source: query` when a query override was honored
+- `x-albert-mock-latency-ms: <n>` when latency injection delayed the response
+
+## Latency injection
+
+`GatewayConfig.default_latency_ms` adds a fixed delay to every served route.
+`GatewayConfig.latency_overrides` is a `METHOD /path → u64` map that is
+added on top of the default. Delays are applied after route matching and
+example selection but before returning the response body. The total
+effective delay is echoed in the `x-albert-mock-latency-ms` header and
+the request log's `latency_ms` field.
 
 ## Special routes
 
@@ -59,10 +81,13 @@ Status code mapping:
 - `MockGateway::update(collections, overrides)` swaps the route table and
   override map of a running server without releasing the port — useful when
   importing a new collection or flipping example kinds from the UI.
+- `MockGateway::reconfigure(collections, overrides, default_latency, latency_overrides)`
+  also rewrites the latency config in-place.
 - `MockGateway::recent_requests(limit)` returns up to 100 of the most recent
   entries (newest first). Each entry captures timestamp, method, path, query,
-  the matched route key, status, served `MockExampleKind`, and a `source`
-  label (`default | override | query | unmatched | unsupported | no-example`).
+  the matched route key, status, served `MockExampleKind`, a `source`
+  label (`default | override | query | unmatched | unsupported | no-example`),
+  and the `latency_ms` injected.
 - Exposed via Tauri commands `update_mock_server` and `mock_server_requests`.
 
 ## Tests
