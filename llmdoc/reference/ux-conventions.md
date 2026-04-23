@@ -99,7 +99,9 @@ Drafts are persisted in `localStorage` keyed by `METHOD /path` via
 field. A **Clear** button wipes the draft for the active route.
 
 The panel displays the response status, elapsed ms, select headers
-(`x-albert-*`, `content-type`), and body via `JsonView`.
+(`x-albert-*`, `content-type`), and body via `JsonView`. `Mod+Enter`
+anywhere inside the Try-it surface (including the body textarea) fires
+Send, matching the Postman / Insomnia muscle memory.
 
 Every successful send is appended to `useTryItHistory`, a bounded
 last-5 history keyed by `METHOD /path` in `localStorage`. The
@@ -107,6 +109,17 @@ last-5 history keyed by `METHOD /path` in `localStorage`. The
 the status / timestamp / method+url / elapsed ms for each entry; a
 `Clear` button wipes the list. History survives across sessions so
 users can spot-check whether a change altered response times.
+
+## Endpoint tab persistence
+
+`useEndpointTabs` mirrors the open-tab set into `localStorage` under
+`albert.tabs.v1` (tab id + collection id + method + path + inspector +
+example). On boot, once `useCollectionData` loads the persisted
+collections, App.tsx calls `restoreTabs(storedCollections)` which
+re-resolves each persisted ref against the live endpoint tree and
+reopens the surviving tabs (along with the last-active id). Tabs whose
+collection or endpoint has been deleted are silently dropped rather
+than restored with stale data.
 
 ## Mock example editing
 

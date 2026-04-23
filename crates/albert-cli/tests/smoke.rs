@@ -270,6 +270,56 @@ async fn export_all_and_bundle_reimport_roundtrip() {
 }
 
 #[tokio::test]
+async fn verify_hits_every_route() {
+    let temp = TempDir::new().expect("tempdir");
+    let db_path = temp.path().join("albert.db");
+    let openapi_path = temp.path().join("spec.json");
+    fs::write(&openapi_path, OPENAPI).unwrap();
+
+    // Seed the db so the gateway has something to serve.
+    let args = parse_args([
+        "import".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        openapi_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    run_with_args(args).await.expect("import");
+
+    // Spin up a gateway with those collections.
+    let store = albert_storage::SqliteStore::new(db_path.to_string_lossy().to_string());
+    let collections = store.load_all_collections().unwrap();
+    let gateway = albert_gateway::MockGateway::new();
+    let status = gateway
+        .start(
+            collections,
+            albert_gateway::GatewayConfig {
+                port: 0,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let bind = status.bind_address.clone().unwrap();
+
+    let args = parse_args([
+        "verify".to_string(),
+        "--url".to_string(),
+        format!("http://{bind}"),
+    ])
+    .unwrap();
+    let outcome = run_with_args(args).await.expect("verify");
+    let message = match outcome {
+        RunOutcome::Message(msg) => msg,
+        other => panic!("unexpected: {other:?}"),
+    };
+    assert!(message.contains("[ ok ]"));
+    assert!(message.contains("verified"));
+
+    gateway.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn ping_reports_running_gateway() {
     // Stand up a local mock gateway on an ephemeral port.
     let gateway = albert_gateway::MockGateway::new();

@@ -136,6 +136,9 @@ always serves the error example.
 ## Special routes
 
 - `GET /__albert/status` returns `{service, route_count}`.
+- `GET /__albert/routes` returns `{routes: [{method, path}, ...]}` — the
+  compiled route table without payload data. Used by the CLI `verify`
+  subcommand to enumerate what to probe.
 - `GET /__albert/metrics` returns a `MetricsSnapshot`:
   `{total_requests, by_method, by_status_class, average_latency_ms,
     max_latency_ms, started_at_epoch_ms, uptime_ms}`. Incremented

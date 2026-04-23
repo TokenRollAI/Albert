@@ -32,8 +32,133 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::Rename => run_rename(args),
         Command::Doctor => run_doctor(args).await,
         Command::Ping => run_ping(args).await,
+        Command::Verify => run_verify(args).await,
         Command::Watch => run_watch(args).await,
         Command::Serve => run_serve(args).await,
+    }
+}
+
+async fn run_verify(args: CliArgs) -> Result<RunOutcome, String> {
+    let base = args
+        .ping_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+
+    // Pull the registered route list from /__albert/routes.
+    let routes_url = format!("{base}/__albert/routes");
+    let resp = client
+        .get(&routes_url)
+        .send()
+        .await
+        .map_err(|e| format!("routes request to {routes_url} failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "routes endpoint returned {} at {routes_url}",
+            resp.status()
+        ));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("routes body parse: {e}"))?;
+    let routes: Vec<(String, String)> = body
+        .get("routes")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| {
+                    let method = entry.get("method")?.as_str()?.to_string();
+                    let path = entry.get("path")?.as_str()?.to_string();
+                    Some((method, path))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if routes.is_empty() {
+        return Ok(RunOutcome::Message(format!(
+            "[ ok ] {base} has no routes to verify"
+        )));
+    }
+
+    let mut passes: u32 = 0;
+    let mut failures: Vec<String> = Vec::new();
+    let mut lines = Vec::new();
+
+    for (method, path) in &routes {
+        // Substitute path-parameter placeholders with a plausible token so
+        // the route actually matches. Real parameter validation should be
+        // done elsewhere; this just avoids 404s on templated paths.
+        let concrete_path = path.replace("{", ":").replace("}", "");
+        let concrete_path = concrete_path
+            .split('/')
+            .map(|seg| {
+                if let Some(name) = seg.strip_prefix(':') {
+                    // Use a sentinel per-param so logs are easy to read.
+                    format!("_{name}")
+                } else {
+                    seg.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        let target = format!("{base}{concrete_path}");
+
+        let req = match method.to_ascii_uppercase().as_str() {
+            "GET" => client.get(&target),
+            "HEAD" => client.head(&target),
+            "OPTIONS" => client.request(reqwest::Method::OPTIONS, &target),
+            "POST" => client.post(&target).json(&serde_json::json!({})),
+            "PUT" => client.put(&target).json(&serde_json::json!({})),
+            "PATCH" => client.patch(&target).json(&serde_json::json!({})),
+            "DELETE" => client.delete(&target),
+            other => {
+                failures.push(format!("{other} {path}: unsupported method"));
+                continue;
+            }
+        };
+
+        match req.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.as_u16() >= 500 {
+                    failures.push(format!("{method} {path}: HTTP {status}"));
+                    lines.push(format!("[fail] {method} {path} → {status}"));
+                } else {
+                    passes += 1;
+                    lines.push(format!("[ ok ] {method} {path} → {status}"));
+                }
+            }
+            Err(err) => {
+                failures.push(format!("{method} {path}: {err}"));
+                lines.push(format!("[fail] {method} {path}: {err}"));
+            }
+        }
+    }
+
+    let summary = format!(
+        "\nverified {passes}/{total} route(s) against {base}",
+        total = routes.len()
+    );
+
+    if failures.is_empty() {
+        Ok(RunOutcome::Message(format!(
+            "{}{summary}",
+            lines.join("\n")
+        )))
+    } else {
+        Err(format!(
+            "{}{summary}\n\n{} failure(s):\n- {}",
+            lines.join("\n"),
+            failures.len(),
+            failures.join("\n- ")
+        ))
     }
 }
 

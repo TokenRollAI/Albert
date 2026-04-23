@@ -84,6 +84,16 @@ impl RouteTable {
         self.routes.is_empty()
     }
 
+    /// Expose the (method, path) pairs for the compiled routes so that
+    /// diagnostic endpoints can advertise what's available without needing
+    /// access to the higher-level `MockRoute` list.
+    pub fn route_pairs(&self) -> Vec<(HttpMethod, String)> {
+        self.routes
+            .iter()
+            .map(|r| (r.route.method.clone(), r.route.path.clone()))
+            .collect()
+    }
+
     pub fn match_route<'a>(&'a self, method: &HttpMethod, path: &str) -> Option<MatchedRoute<'a>> {
         let request_segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         for candidate in &self.routes {

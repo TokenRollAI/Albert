@@ -126,8 +126,19 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
     }
   }
 
+  function handlePanelKey(event: React.KeyboardEvent<HTMLElement>) {
+    // Mod+Enter fires from anywhere inside the panel, including the body
+    // textarea. This matches Postman / Insomnia muscle memory.
+    const isMac = /mac|iphone|ipad|ipod/i.test(navigator.platform);
+    const mod = isMac ? event.metaKey : event.ctrlKey;
+    if (mod && event.key === "Enter" && canSend && !sending) {
+      event.preventDefault();
+      void send();
+    }
+  }
+
   return (
-    <section className="tryit">
+    <section className="tryit" onKeyDown={handlePanelKey}>
       <header className="tryit__head">
         <h3>Try it</h3>
         {baseUrl ? (

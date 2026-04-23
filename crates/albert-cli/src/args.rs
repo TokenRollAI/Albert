@@ -16,6 +16,7 @@ pub enum Command {
     Rename,
     Doctor,
     Ping,
+    Verify,
     Help,
     Version,
 }
@@ -115,6 +116,7 @@ where
         "rename" => Command::Rename,
         "doctor" => Command::Doctor,
         "ping" => Command::Ping,
+        "verify" => Command::Verify,
         "help" | "--help" | "-h" => Command::Help,
         "version" | "--version" | "-V" => Command::Version,
         other => return Err(CliError::UnknownCommand(other.to_string())),
@@ -252,6 +254,7 @@ pub fn help_text() -> String {
     s.push_str("    rename     Rename an existing collection\n");
     s.push_str("    doctor     Run health checks (db, env, provider reachability)\n");
     s.push_str("    ping       Probe a running mock gateway via /__albert endpoints\n");
+    s.push_str("    verify     Hit every declared route on a running gateway\n");
     s.push_str("    help       Print this help\n");
     s.push_str("    version    Print the crate version\n\n");
     s.push_str("SHARED OPTIONS:\n");
@@ -271,7 +274,7 @@ pub fn help_text() -> String {
     s.push_str("    <file>                   Path to watch (positional, required)\n");
     s.push_str("    --interval-ms <n>        Poll interval in ms (default 1000, min 100)\n");
     s.push_str("    --auto-stop-secs <n>     Exit after N seconds (useful in tests)\n\n");
-    s.push_str("PING OPTIONS:\n");
+    s.push_str("PING / VERIFY OPTIONS:\n");
     s.push_str("    --url <base>             Gateway base URL (default http://127.0.0.1:4317)\n\n");
     s.push_str("RENAME OPTIONS:\n");
     s.push_str("    --id <collection_id>     Collection to rename\n");

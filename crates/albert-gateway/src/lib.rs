@@ -107,6 +107,10 @@ impl MockGateway {
                 "/__albert/metrics",
                 axum::routing::get(handlers::metrics_handler),
             )
+            .route(
+                "/__albert/routes",
+                axum::routing::get(handlers::routes_handler),
+            )
             .fallback(any(handlers::mock_handler))
             .with_state(state);
         if config.cors_enabled {

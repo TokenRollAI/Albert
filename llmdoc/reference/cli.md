@@ -25,6 +25,7 @@ running the mock server without the Tauri shell.
 | `export-all` | Print every collection as a JSON array (optionally to a file) |
 | `doctor`  | Health checks: db migratability, env keys, provider probe   |
 | `ping`    | Probe a running mock gateway (`/__albert/status` + metrics) |
+| `verify`  | Hit every declared route on a running gateway; fail on 5xx  |
 | `help`    | Show the usage text                                          |
 | `version` | Print the crate version                                      |
 
@@ -94,6 +95,21 @@ latency, and uptime.
 
 Exits non-zero when the server is unreachable or returns a non-2xx
 status. Ideal for smoke tests in CI and shell health checks.
+
+## `verify`
+
+Pulls the registered route list from `/__albert/routes` and hits every
+one. Path parameters are substituted with an `_<name>` sentinel so
+templated routes like `/users/{id}` actually match. GETs go out as GETs,
+POST/PUT/PATCH carry an empty `{}` JSON body, etc.
+
+- Per-route `[ ok ] METHOD path → status` or `[fail] METHOD path: <err>`.
+- Exit non-zero when any route returns 5xx, a transport error, or an
+  unsupported method; 4xx is considered reachable (auth / validation
+  failures are load-bearing in the mock, not infra bugs).
+- `--url <base>` — gateway base URL (default `http://127.0.0.1:4317`).
+
+Covered by `verify_hits_every_route` in the CLI smoke suite.
 
 ## `doctor`
 

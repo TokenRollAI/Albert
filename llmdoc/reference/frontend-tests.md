@@ -27,6 +27,10 @@
   `seedTryItDraft` → live-hook event bridge.
 - `hooks/__tests__/useTryItHistory.test.tsx` — verifies the 5-entry cap,
   cross-session rehydration, and `clear` semantics.
+- `hooks/__tests__/useEndpointTabs.test.tsx` — verifies tab persistence
+  into `localStorage`, `restoreTabs` rehydrating persisted tabs, skipping
+  tabs whose endpoint disappeared, and idempotency when tabs already
+  exist.
 
 ## CI integration
 

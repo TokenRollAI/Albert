@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  CanonicalApiCollection,
   CanonicalEndpoint,
   EndpointTab,
   ExampleKind,
@@ -13,6 +14,54 @@ export function makeTabId(
   path: string
 ): string {
   return `${collectionId}::${method.toUpperCase()}:${path}`;
+}
+
+const TABS_STORAGE_KEY = "albert.tabs.v1";
+
+interface PersistedTabRef {
+  id: string;
+  collectionId: string;
+  collectionName: string;
+  method: string;
+  path: string;
+  inspector: InspectorKey;
+  example: ExampleKind;
+}
+
+interface PersistedTabState {
+  activeId: string | null;
+  tabs: PersistedTabRef[];
+}
+
+function persist(state: PersistedTabState): void {
+  try {
+    window.localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    /* ignore quota/storage errors */
+  }
+}
+
+function loadPersisted(): PersistedTabState {
+  try {
+    const raw = window.localStorage.getItem(TABS_STORAGE_KEY);
+    if (!raw) return { activeId: null, tabs: [] };
+    const parsed = JSON.parse(raw) as Partial<PersistedTabState>;
+    const tabs = Array.isArray(parsed.tabs) ? parsed.tabs : [];
+    return {
+      activeId: typeof parsed.activeId === "string" ? parsed.activeId : null,
+      tabs: tabs.filter(
+        (t): t is PersistedTabRef =>
+          typeof t === "object" &&
+          t !== null &&
+          typeof (t as PersistedTabRef).id === "string" &&
+          typeof (t as PersistedTabRef).collectionId === "string" &&
+          typeof (t as PersistedTabRef).method === "string" &&
+          typeof (t as PersistedTabRef).path === "string"
+      )
+    };
+  } catch {
+    return { activeId: null, tabs: [] };
+  }
 }
 
 function defaultExample(endpoint: CanonicalEndpoint): ExampleKind {
@@ -38,9 +87,35 @@ export function useEndpointTabs(): {
   setExample: (id: string, example: ExampleKind) => void;
   updateEndpointExample: (id: string, example: MockExample) => void;
   resetTabs: () => void;
+  restoreTabs: (collections: CanonicalApiCollection[]) => void;
 } {
   const [tabs, setTabs] = useState<EndpointTab[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const mounted = useRef(false);
+
+  // Persist the tab set whenever it changes. Stored as lightweight refs
+  // (id + locator) rather than full CanonicalEndpoint blobs — the real
+  // endpoint is re-resolved from storage on next boot. Skip the initial
+  // render so mounting a fresh hook doesn't wipe the persisted state
+  // before `restoreTabs` gets a chance to hydrate it.
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    persist({
+      activeId,
+      tabs: tabs.map((tab) => ({
+        id: tab.id,
+        collectionId: tab.collectionId,
+        collectionName: tab.collectionName,
+        method: tab.method,
+        path: tab.path,
+        inspector: tab.inspector,
+        example: tab.example
+      }))
+    });
+  }, [tabs, activeId]);
 
   const openTab = useCallback(
     (
@@ -144,6 +219,48 @@ export function useEndpointTabs(): {
     setActiveId(null);
   }, []);
 
+  /**
+   * Walk the persisted tab set and reopen any tab whose collection +
+   * endpoint still exist in the freshly-loaded `collections`. Safe to
+   * call multiple times — it bails out when the live state already has
+   * tabs (so user edits aren't clobbered).
+   */
+  const restoreTabs = useCallback(
+    (collections: CanonicalApiCollection[]) => {
+      if (tabs.length > 0) return;
+      const persisted = loadPersisted();
+      if (persisted.tabs.length === 0) return;
+      const revived: EndpointTab[] = [];
+      for (const ref of persisted.tabs) {
+        const collection = collections.find((c) => c.id === ref.collectionId);
+        if (!collection) continue;
+        const endpoint = collection.endpoints.find(
+          (e) =>
+            e.method.toUpperCase() === ref.method.toUpperCase() &&
+            e.path === ref.path
+        );
+        if (!endpoint) continue;
+        revived.push({
+          id: ref.id,
+          collectionId: ref.collectionId,
+          collectionName: collection.name,
+          method: endpoint.method.toUpperCase(),
+          path: endpoint.path,
+          endpoint,
+          inspector: ref.inspector ?? "params",
+          example: ref.example ?? defaultExample(endpoint)
+        });
+      }
+      if (revived.length === 0) return;
+      setTabs(revived);
+      const activeStillValid =
+        persisted.activeId != null &&
+        revived.some((t) => t.id === persisted.activeId);
+      setActiveId(activeStillValid ? persisted.activeId : revived[0].id);
+    },
+    [tabs.length]
+  );
+
   const activeTab = tabs.find((tab) => tab.id === activeId) ?? null;
 
   return {
@@ -156,6 +273,7 @@ export function useEndpointTabs(): {
     setInspector,
     setExample,
     updateEndpointExample,
-    resetTabs
+    resetTabs,
+    restoreTabs
   };
 }

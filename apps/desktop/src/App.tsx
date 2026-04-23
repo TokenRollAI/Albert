@@ -85,8 +85,18 @@ function App() {
     setInspector,
     setExample,
     updateEndpointExample,
-    resetTabs
+    resetTabs,
+    restoreTabs
   } = useEndpointTabs();
+
+  // Reopen persisted tabs once collections finish loading. The hook
+  // guards against double-apply (it bails when tabs already exist), so
+  // running this effect on every storedCollections change is harmless.
+  useEffect(() => {
+    if (storedCollections.length > 0) {
+      restoreTabs(storedCollections);
+    }
+  }, [storedCollections, restoreTabs]);
 
   const {
     draft: providerDraft,

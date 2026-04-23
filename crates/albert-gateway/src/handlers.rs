@@ -26,6 +26,21 @@ pub(crate) async fn status_handler(State(state): State<AppState>) -> Response {
     (StatusCode::OK, axum::Json(payload)).into_response()
 }
 
+pub(crate) async fn routes_handler(State(state): State<AppState>) -> Response {
+    let table = state.snapshot_table();
+    let payload = serde_json::json!({
+        "routes": table
+            .route_pairs()
+            .into_iter()
+            .map(|(method, path)| serde_json::json!({
+                "method": method.as_str(),
+                "path": path,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    (StatusCode::OK, axum::Json(payload)).into_response()
+}
+
 pub(crate) async fn metrics_handler(State(state): State<AppState>) -> Response {
     let metrics = state.snapshot_metrics();
     let payload = serde_json::json!({
