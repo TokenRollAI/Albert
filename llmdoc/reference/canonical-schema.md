@@ -47,3 +47,20 @@ The parser invokes this right after building each `CanonicalEndpoint`, so
 imported collections ship with meaningful mocks out-of-the-box even before
 an OpenAI key is configured.
 
+## cURL parser coverage
+
+The `albert-parser::curl` module recognizes the following flag set:
+
+- `-X` / `--request` — explicit HTTP method
+- `-H` / `--header` — request headers (preserved as `ParameterLocation::Header` parameters)
+- `-d` / `--data` / `--data-raw` / `--data-binary` / `--data-ascii` — raw request body
+- `--data-urlencode` — accumulates into an `application/x-www-form-urlencoded` body with percent encoding
+- `-u` / `--user <user:pass>` — surfaces as `Authorization: Basic <user:pass>` header
+- `-b` / `--cookie <value>` — stored as the `Cookie` header
+- `--url <url>` — explicit URL (otherwise any positional token beginning
+  with `http://`, `https://`, or `/` is treated as the URL)
+
+`Content-Type` is intentionally suppressed from the header parameter list
+because it's already materialized on the request body. `Authorization`,
+`Accept`, `Cookie`, and custom headers all land as canonical parameters.
+

@@ -49,7 +49,16 @@ counts.
 
 Lives under the response pane when an endpoint tab is open. Reads the
 currently running mock gateway's bind address and lets the user send a
-request with path-parameter inputs (auto-extracted from `{id}` tokens),
-optional query string, and a JSON body draft (shown only for non-GET/HEAD
-methods). The panel displays the response status, elapsed ms, select
-headers (`x-albert-*`, `content-type`), and body via `JsonView`.
+request with:
+
+- path-parameter inputs (auto-extracted from `{id}` tokens)
+- a query string
+- repeatable `KEY: VALUE` custom headers (auth tokens, etc.)
+- a JSON body draft (shown only for non-GET/HEAD methods)
+
+Drafts are persisted in `localStorage` keyed by `METHOD /path` via
+`useTryItDraft`, so switching tabs or restarting the app preserves every
+field. A **Clear** button wipes the draft for the active route.
+
+The panel displays the response status, elapsed ms, select headers
+(`x-albert-*`, `content-type`), and body via `JsonView`.

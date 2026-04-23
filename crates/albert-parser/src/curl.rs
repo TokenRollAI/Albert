@@ -78,6 +78,7 @@ fn parse_curl_tokens(tokens: &[String]) -> Result<ParsedCurlRequest, ParseError>
     let mut headers = BTreeMap::<String, String>::new();
     let mut body = None::<String>;
     let mut url = None::<String>;
+    let mut urlencoded_pairs: Vec<String> = Vec::new();
 
     let mut index = 0;
     while index < tokens.len() {
@@ -106,6 +107,32 @@ fn parse_curl_tokens(tokens: &[String]) -> Result<ParsedCurlRequest, ParseError>
                 })?;
                 body = Some(value.clone());
             }
+            "--data-urlencode" => {
+                index += 1;
+                let value = tokens.get(index).ok_or_else(|| {
+                    ParseError::ParseFailed("missing value after --data-urlencode".to_string())
+                })?;
+                urlencoded_pairs.push(value.clone());
+            }
+            "-u" | "--user" => {
+                index += 1;
+                let value = tokens.get(index).ok_or_else(|| {
+                    ParseError::ParseFailed("missing credential after -u/--user".to_string())
+                })?;
+                // RFC 7617 Basic auth. We record the literal `user:pass` string so
+                // the UI can surface that auth is expected without materializing
+                // a base64 blob in logs/tests.
+                headers
+                    .entry("Authorization".to_string())
+                    .or_insert_with(|| format!("Basic {}", value));
+            }
+            "-b" | "--cookie" => {
+                index += 1;
+                let value = tokens.get(index).ok_or_else(|| {
+                    ParseError::ParseFailed("missing value after -b/--cookie".to_string())
+                })?;
+                headers.entry("Cookie".to_string()).or_insert(value.clone());
+            }
             "--url" => {
                 index += 1;
                 let value = tokens.get(index).ok_or_else(|| {
@@ -119,6 +146,24 @@ fn parse_curl_tokens(tokens: &[String]) -> Result<ParsedCurlRequest, ParseError>
             _ => {}
         }
         index += 1;
+    }
+
+    if !urlencoded_pairs.is_empty() && body.is_none() {
+        let encoded = urlencoded_pairs
+            .iter()
+            .map(|raw| match raw.find('=') {
+                Some(idx) => {
+                    let (k, v) = raw.split_at(idx);
+                    format!("{}={}", urlencoding_encode(k), urlencoding_encode(&v[1..]))
+                }
+                None => urlencoding_encode(raw),
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        body = Some(encoded);
+        headers
+            .entry("Content-Type".to_string())
+            .or_insert_with(|| "application/x-www-form-urlencoded".to_string());
     }
 
     let url =
@@ -201,16 +246,36 @@ fn canonical_request_body(
     })
 }
 
+/// Minimal percent-encoder covering the subset of characters the curl
+/// `--data-urlencode` flag typically normalizes. We only escape characters
+/// that are unsafe in a form body.
+fn urlencoding_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for byte in input.as_bytes() {
+        let byte = *byte;
+        let is_safe = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~');
+        if is_safe {
+            out.push(byte as char);
+        } else if byte == b' ' {
+            out.push('+');
+        } else {
+            out.push_str(&format!("%{:02X}", byte));
+        }
+    }
+    out
+}
+
 fn parse_header(header: &str) -> Option<(String, String)> {
     let (name, value) = header.split_once(':')?;
     Some((name.trim().to_string(), value.trim().to_string()))
 }
 
 fn is_protocol_header(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "accept" | "authorization" | "content-type"
-    )
+    // Content-Type is already expressed on the request body. Other headers —
+    // including Authorization, Cookie, Accept — are meaningful to preserve
+    // as canonical parameters so downstream consumers (UI, tests) can see
+    // them.
+    matches!(name.to_ascii_lowercase().as_str(), "content-type")
 }
 
 fn looks_like_url(token: &str) -> bool {

@@ -329,7 +329,14 @@ paths:
         let endpoint = &collection.endpoints[0];
 
         assert_eq!(endpoint.method, HttpMethod::Get);
-        assert_eq!(endpoint.parameters.len(), 2);
+        // 2 query params (status, page) + Accept header
+        assert_eq!(endpoint.parameters.len(), 3);
+        assert!(
+            endpoint
+                .parameters
+                .iter()
+                .any(|p| p.name == "Accept" && p.location == ParameterLocation::Header)
+        );
         assert!(endpoint.request_body.is_none());
     }
 
@@ -485,6 +492,62 @@ components:
         assert_eq!(param.name, "page_size");
         assert!(param.required);
         assert_eq!(param.schema.node_type, SchemaNodeType::Integer);
+    }
+
+    #[test]
+    fn curl_parses_basic_auth_and_cookie() {
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: r#"curl -u alice:secret -b "SESSION=xyz" "https://api.example.com/secure""#
+                .to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        let auth = endpoint
+            .parameters
+            .iter()
+            .find(|p| p.name == "Authorization")
+            .expect("authorization header parameter");
+        assert_eq!(auth.location, ParameterLocation::Header);
+        let example = auth
+            .schema
+            .example
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert!(example.starts_with("Basic alice:secret"));
+
+        let cookie = endpoint
+            .parameters
+            .iter()
+            .find(|p| p.name == "Cookie")
+            .expect("cookie header parameter");
+        assert_eq!(
+            cookie.schema.example.as_ref().and_then(|v| v.as_str()),
+            Some("SESSION=xyz")
+        );
+    }
+
+    #[test]
+    fn curl_expands_data_urlencoded_into_form_body() {
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: r#"curl https://api.example.com/login --data-urlencode "user=alice" --data-urlencode "pass=p@ss w0rd""#.to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        assert_eq!(endpoint.method, HttpMethod::Post);
+        let body = endpoint.request_body.as_ref().expect("request body");
+        assert_eq!(body.content_type, "application/x-www-form-urlencoded");
+        let example = body
+            .schema
+            .example
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .unwrap();
+        // percent-encoded + form-joined
+        assert!(example.contains("user=alice"));
+        assert!(example.contains("pass=p%40ss+w0rd"));
     }
 
     #[test]

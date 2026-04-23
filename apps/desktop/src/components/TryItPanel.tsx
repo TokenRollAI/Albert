@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Icon } from "./Icon";
 import { JsonView } from "./JsonView";
+import { useTryItDraft } from "../hooks/useTryItDraft";
 import type { EndpointTab } from "../types";
 
 interface TryItPanelProps {
@@ -45,22 +46,27 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
     () => extractPathParams(tab.endpoint.path),
     [tab.endpoint.path]
   );
-  const [params, setParams] = useState<Record<string, string>>({});
-  const [query, setQuery] = useState<string>("");
-  const [bodyDraft, setBodyDraft] = useState<string>("");
-  const [headers, setHeaders] = useState<Array<{ key: string; value: string }>>([]);
+  const routeKey = `${tab.method.toUpperCase()} ${tab.endpoint.path}`;
+  const {
+    draft,
+    updateParams,
+    updateQuery,
+    updateBody,
+    updateHeaders,
+    reset
+  } = useTryItDraft(routeKey);
+  const params = draft.params;
+  const query = draft.query;
+  const bodyDraft = draft.body;
+  const headers = draft.headers;
+  const setParams = (next: Record<string, string>) => updateParams(next);
+  const setQuery = (value: string) => updateQuery(value);
+  const setBodyDraft = (value: string) => updateBody(value);
+  const setHeaders = (next: Array<{ key: string; value: string }>) =>
+    updateHeaders(next);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<ResponseState | null>(null);
-
-  useEffect(() => {
-    setParams({});
-    setQuery("");
-    setBodyDraft("");
-    setHeaders([]);
-    setResponse(null);
-    setError(null);
-  }, [tab.id]);
 
   const canSend = Boolean(baseUrl);
 
@@ -137,7 +143,7 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
                   type="text"
                   value={params[name] ?? ""}
                   onChange={(event) =>
-                    setParams((prev) => ({ ...prev, [name]: event.target.value }))
+                    setParams({ ...params, [name]: event.target.value })
                   }
                   spellCheck={false}
                 />
@@ -166,9 +172,7 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
           <button
             type="button"
             className="btn btn--ghost btn--sm"
-            onClick={() =>
-              setHeaders((prev) => [...prev, { key: "", value: "" }])
-            }
+            onClick={() => setHeaders([...headers, { key: "", value: "" }])}
           >
             <Icon name="plus" size={12} />
             <span>Add</span>
@@ -241,6 +245,19 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
         >
           <Icon name="paper-plane" size={12} />
           <span>{sending ? "Sending…" : `Send ${tab.method}`}</span>
+        </button>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={() => {
+            reset();
+            setResponse(null);
+            setError(null);
+          }}
+          disabled={sending}
+          title="Clear inputs for this endpoint"
+        >
+          Clear
         </button>
         {response ? (
           <span className="tryit__meta">
