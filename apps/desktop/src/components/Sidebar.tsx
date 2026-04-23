@@ -1,6 +1,28 @@
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
-import type { CanonicalEndpoint, SidebarCollection } from "../types";
+import type {
+  AuthRequirementHint,
+  CanonicalEndpoint,
+  SidebarCollection
+} from "../types";
+
+function authTitle(hint: AuthRequirementHint): string {
+  const base = (() => {
+    switch (hint.scheme) {
+      case "http_bearer":
+        return `Requires ${hint.header_name}: Bearer …`;
+      case "http_basic":
+        return `Requires ${hint.header_name}: Basic …`;
+      case "oauth2":
+        return `Requires ${hint.header_name}: Bearer … (OAuth2)`;
+      case "api_key_header":
+        return `Requires ${hint.header_name} header`;
+      default:
+        return `Requires ${hint.header_name}`;
+    }
+  })();
+  return hint.description ? `${base} — ${hint.description}` : base;
+}
 
 interface SidebarProps {
   collections: SidebarCollection[];
@@ -371,6 +393,15 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
                             <span className="endpoint__path">
                               {endpoint.path}
                             </span>
+                            {endpoint.auth ? (
+                              <span
+                                className="endpoint__auth"
+                                title={authTitle(endpoint.auth)}
+                                aria-label="Requires authentication"
+                              >
+                                <Icon name="shield" size={11} />
+                              </span>
+                            ) : null}
                           </button>
                         </li>
                       );

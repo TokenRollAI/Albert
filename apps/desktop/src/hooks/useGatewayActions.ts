@@ -17,6 +17,14 @@ interface UseGatewayActionsArgs {
       host: string;
       port: number;
       corsEnabled: boolean;
+      defaultLatencyMs?: number | null;
+      latencyOverrides?: Record<string, number>;
+      errorRate?: number;
+      captureBodies?: boolean;
+      responseHeaders?: Record<string, Record<string, string>>;
+      requiredHeaders?: Record<string, RequiredHeader[]>;
+      rateLimits?: Record<string, RateLimitRule>;
+      exampleOverrides?: Record<string, MockExampleKind>;
     }) => Promise<{ running: boolean; bind_address?: string | null } | null>;
     update: (args: {
       overrides?: Record<string, MockExampleKind>;
@@ -26,6 +34,16 @@ interface UseGatewayActionsArgs {
       rateLimits?: Record<string, RateLimitRule>;
       requiredHeaders?: Record<string, RequiredHeader[]>;
     }) => Promise<unknown>;
+    savedPreferences?: {
+      default_latency_ms?: number | null;
+      latency_overrides?: Record<string, number>;
+      error_rate?: number;
+      capture_bodies?: boolean;
+      response_headers?: Record<string, Record<string, string>>;
+      required_headers?: Record<string, RequiredHeader[]>;
+      rate_limits?: Record<string, RateLimitRule>;
+      example_overrides?: Record<string, MockExampleKind>;
+    } | null;
   };
   sidebarCollections: SidebarCollection[];
   openTab: (
@@ -65,10 +83,23 @@ export function useGatewayActions({
 }: UseGatewayActionsArgs): GatewayActions {
   const start = useCallback<GatewayActions["start"]>(
     async (port, host, cors) => {
+      // Replay the persisted chaos / auth-gate / rate-limit set on start
+      // so restarts feel like a resume, not a reset. The persisted map
+      // may be stale if the user deleted collections — the gateway
+      // silently ignores unknown route keys, which is the behavior we want.
+      const saved = mockGateway.savedPreferences ?? null;
       const result = await mockGateway.start({
         port,
         host,
-        corsEnabled: cors
+        corsEnabled: cors,
+        defaultLatencyMs: saved?.default_latency_ms ?? null,
+        latencyOverrides: saved?.latency_overrides,
+        errorRate: saved?.error_rate,
+        captureBodies: saved?.capture_bodies,
+        responseHeaders: saved?.response_headers,
+        requiredHeaders: saved?.required_headers,
+        rateLimits: saved?.rate_limits,
+        exampleOverrides: saved?.example_overrides
       });
       if (result?.running && result.bind_address) {
         toasts.success(

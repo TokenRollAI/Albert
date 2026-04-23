@@ -1,10 +1,32 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { JsonView } from "./JsonView";
 import { useTryItDraft } from "../hooks/useTryItDraft";
 import { useTryItHistory } from "../hooks/useTryItHistory";
-import type { EndpointTab } from "../types";
+import type { AuthRequirementHint, EndpointTab } from "../types";
+
+/**
+ * Default value template for a given auth hint. Used to pre-seed the
+ * Authorization (or custom) header row so users aren't retyping the
+ * scheme prefix every time. Keeping this outside the component so a
+ * unit test can pin the shapes.
+ */
+export function placeholderForAuthHint(
+  hint: AuthRequirementHint
+): string | null {
+  switch (hint.scheme) {
+    case "http_bearer":
+    case "oauth2":
+      return "Bearer ";
+    case "http_basic":
+      return "Basic ";
+    case "api_key_header":
+      return "";
+    default:
+      return null;
+  }
+}
 
 interface TryItPanelProps {
   tab: EndpointTab;
@@ -70,6 +92,33 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<ResponseState | null>(null);
+
+  // Seed the Authorization (or custom) header the first time we see an
+  // auth hint for a fresh draft. Runs per `routeKey`, not per render, so
+  // flipping tabs doesn't clobber a value the user has typed — the guard
+  // uses the currently-persisted header list at seed time.
+  const seededFor = useRef<string | null>(null);
+  useEffect(() => {
+    const hint = tab.endpoint.auth;
+    if (!hint) return;
+    const placeholder = placeholderForAuthHint(hint);
+    if (placeholder === null) return; // "other" — can't guess a shape.
+    if (seededFor.current === routeKey) return;
+    const alreadyHasHeader = headers.some(
+      (row) => row.key.trim().toLowerCase() === hint.header_name.toLowerCase()
+    );
+    if (!alreadyHasHeader) {
+      setHeaders([
+        ...headers,
+        { key: hint.header_name, value: placeholder }
+      ]);
+    }
+    seededFor.current = routeKey;
+    // We intentionally don't depend on `headers` here — this is a one-shot
+    // per-route seed, not a reactive sync. Re-running on every header
+    // edit would fight with the user.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey, tab.endpoint.auth]);
 
   const canSend = Boolean(baseUrl);
 

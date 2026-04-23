@@ -712,6 +712,33 @@ mod tests {
         let next = serde_json::json!({"host": "0.0.0.0", "port": 0});
         store.save_gateway_preferences(&next).unwrap();
         assert_eq!(store.load_gateway_preferences().unwrap().unwrap(), next);
+
+        // The slot is shape-agnostic: persisting the full runtime config
+        // (rate_limits, required_headers, overrides) must survive a
+        // round-trip without migration.
+        let full = serde_json::json!({
+            "host": "127.0.0.1",
+            "port": 4317,
+            "cors_enabled": true,
+            "default_latency_ms": 25,
+            "latency_overrides": { "GET /slow": 150 },
+            "error_rate": 0.2,
+            "capture_bodies": true,
+            "response_headers": {
+                "GET /users": { "x-custom": "hello" }
+            },
+            "required_headers": {
+                "GET /secret": [
+                    { "name": "Authorization", "value_prefix": "Bearer " }
+                ]
+            },
+            "rate_limits": {
+                "GET /ping": { "limit": 5, "window_ms": 1000 }
+            },
+            "example_overrides": { "GET /users": "error" }
+        });
+        store.save_gateway_preferences(&full).unwrap();
+        assert_eq!(store.load_gateway_preferences().unwrap().unwrap(), full);
     }
 
     #[test]

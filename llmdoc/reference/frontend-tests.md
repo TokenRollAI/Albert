@@ -40,6 +40,20 @@
 - `lib/__tests__/authHints.test.ts` — covers the hint→RequiredHeader
   conversion for bearer / basic / OAuth2 / apiKey-header schemes and
   the `seedRequiredHeadersFromEndpoints` batch helper.
+- `components/__tests__/RequestPanel.auth.test.tsx` — renders the
+  RequestPanel with each `auth.scheme` variant and asserts the
+  warning-tinted chip copy (bearer / api-key / OAuth2 / missing).
+- `components/__tests__/TryItPanel.auth.test.tsx` — verifies the
+  placeholderForAuthHint helper and the auto-seed effect: the panel
+  prefills an Authorization (or custom) header row on first render
+  when the endpoint declares auth, and never overwrites a user-edited
+  draft header.
+- `components/__tests__/MockRequestsTab.test.tsx` — pins down the
+  pure-function `computeMetrics`: status-class buckets, average/max
+  latency, busiest-route detection, empty-log safety, and the
+  `METHOD path` fallback when `matched_route` is null.
+- `hooks/__tests__/useAppDrawers.test.tsx` — covers the drawer-state
+  hook: independent slots, open/close/toggle/set semantics.
 
 ## CI integration
 

@@ -36,6 +36,13 @@ interface StartArgs {
   corsEnabled: boolean;
   collectionIds?: string[];
   exampleOverrides?: Record<string, MockExampleKind>;
+  defaultLatencyMs?: number | null;
+  latencyOverrides?: Record<string, number>;
+  errorRate?: number;
+  captureBodies?: boolean;
+  responseHeaders?: Record<string, Record<string, string>>;
+  requiredHeaders?: Record<string, RequiredHeader[]>;
+  rateLimits?: Record<string, RateLimitRule>;
   databaseUrl?: string;
 }
 
@@ -51,10 +58,47 @@ interface UpdateArgs {
   rateLimits?: Record<string, RateLimitRule>;
 }
 
+/**
+ * Best-effort persistence of the full gateway config so the next session
+ * resumes with the same enforcement rules. Failures are swallowed —
+ * persistence is a convenience, not a guarantee.
+ */
+async function persistConfig(
+  status: GatewayStatus,
+  databaseUrl?: string
+): Promise<void> {
+  const { config } = status;
+  const payload: SavedGatewayPreferences = {
+    host: config.host,
+    port: config.port,
+    cors_enabled: config.cors_enabled,
+    example_overrides: config.example_overrides,
+    default_latency_ms: config.default_latency_ms ?? null,
+    latency_overrides: config.latency_overrides,
+    error_rate: config.error_rate,
+    capture_bodies: config.capture_bodies,
+    response_headers: config.response_headers,
+    required_headers: config.required_headers,
+    rate_limits: config.rate_limits
+  };
+  await invoke("save_gateway_preferences", {
+    payload,
+    databaseUrl: databaseUrl ?? null
+  });
+}
+
 export interface SavedGatewayPreferences {
   host?: string;
   port?: number;
   cors_enabled?: boolean;
+  example_overrides?: Record<string, MockExampleKind>;
+  default_latency_ms?: number | null;
+  latency_overrides?: Record<string, number>;
+  error_rate?: number;
+  capture_bodies?: boolean;
+  response_headers?: Record<string, Record<string, string>>;
+  required_headers?: Record<string, RequiredHeader[]>;
+  rate_limits?: Record<string, RateLimitRule>;
 }
 
 interface UseMockGatewayResult {
@@ -149,6 +193,13 @@ export function useMockGateway({
       corsEnabled,
       collectionIds,
       exampleOverrides,
+      defaultLatencyMs,
+      latencyOverrides,
+      errorRate,
+      captureBodies,
+      responseHeaders,
+      requiredHeaders,
+      rateLimits,
       databaseUrl
     }: StartArgs) => {
       if (!enabled) {
@@ -165,22 +216,22 @@ export function useMockGateway({
             cors_enabled: corsEnabled,
             collection_ids: collectionIds ?? null,
             example_overrides: exampleOverrides ?? null,
+            default_latency_ms: defaultLatencyMs ?? null,
+            latency_overrides: latencyOverrides ?? null,
+            error_rate: errorRate ?? null,
+            capture_bodies: captureBodies ?? null,
+            response_headers: responseHeaders ?? null,
+            required_headers: requiredHeaders ?? null,
+            rate_limits: rateLimits ?? null,
             database_url: databaseUrl ?? null
           }
         });
         if (mounted.current) {
           setStatus(next);
         }
-        // Best-effort save: the next session can offer the same host/port
-        // as defaults. Failures are intentionally swallowed.
-        void invoke("save_gateway_preferences", {
-          payload: {
-            host,
-            port,
-            cors_enabled: corsEnabled
-          },
-          databaseUrl: databaseUrl ?? null
-        }).catch(() => {});
+        // Persist the full running config so the next session restarts
+        // with the same chaos / auth gates / rate-limit enforcement.
+        void persistConfig(next, databaseUrl).catch(() => {});
         return next;
       } catch (err) {
         if (mounted.current) {
@@ -246,6 +297,9 @@ export function useMockGateway({
         if (mounted.current) {
           setStatus(next);
         }
+        // Keep persisted preferences in sync with the live config so a
+        // restart doesn't regress freshly-applied rules.
+        void persistConfig(next).catch(() => {});
         return next;
       } catch (err) {
         if (mounted.current) {

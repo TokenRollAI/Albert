@@ -161,10 +161,22 @@ In the response pane:
 
 ## Gateway preferences
 
-The Mock Server panel remembers the last-used host/port/cors combo
-across sessions. On app startup, `load_gateway_preferences` returns the
-persisted payload (if any); on every successful `start_mock_server`
-the current host/port/cors is written back via `save_gateway_preferences`.
-The persistence is a single-row SQLite table (`gateway_preferences`)
-whose payload is an arbitrary JSON object — extending the shape on the
-frontend doesn't require a migration.
+The Mock Server panel persists the full runtime config across sessions,
+not just host/port/cors. On startup, `load_gateway_preferences` returns
+the persisted payload (if any); on every successful `start_mock_server`
+and `update_mock_server` the current `status.config` is written back via
+`save_gateway_preferences`. Persisted fields include:
+
+- `host`, `port`, `cors_enabled`
+- `example_overrides`, `default_latency_ms`, `latency_overrides`
+- `error_rate`, `capture_bodies`
+- `response_headers`, `required_headers`, `rate_limits`
+
+`useGatewayActions.start` reads the saved payload and replays all
+enforcement fields on the next start, so restarting the server feels
+like a resume, not a reset. The gateway silently ignores route keys
+whose endpoints have since been deleted, so stale rules are harmless.
+
+The storage layer is still a single-row SQLite table
+(`gateway_preferences`) whose payload is an arbitrary JSON object —
+extending the shape on the frontend never requires a migration.

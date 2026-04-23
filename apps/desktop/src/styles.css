@@ -450,6 +450,18 @@ body[data-theme="light"] .btn--primary {
   white-space: nowrap;
   font-family: var(--mono);
   font-size: 0.78rem;
+  flex: 1 1 auto;
+}
+
+.endpoint__auth {
+  display: inline-flex;
+  align-items: center;
+  color: var(--warning);
+  opacity: 0.8;
+  flex: 0 0 auto;
+}
+.endpoint__auth:hover {
+  opacity: 1;
 }
 
 .endpoint--empty {
