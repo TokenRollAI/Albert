@@ -21,6 +21,7 @@ import {
   sampleImportText
 } from "./data/fallback";
 import { useAiActions, type PromptPreview } from "./hooks/useAiActions";
+import { useAppDrawers } from "./hooks/useAppDrawers";
 import { useCollectionActions } from "./hooks/useCollectionActions";
 import { useCollectionData } from "./hooks/useCollectionData";
 import { useEndpointTabs } from "./hooks/useEndpointTabs";
@@ -61,11 +62,7 @@ function App() {
   const [previewCollection, setPreviewCollection] =
     useState<CanonicalApiCollection | null>(null);
 
-  const [importOpen, setImportOpen] = useState(false);
-
-  const [mockPanelOpen, setMockPanelOpen] = useState(false);
-  const [providersOpen, setProvidersOpen] = useState(false);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const drawers = useAppDrawers();
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [promptPreviewLoading, setPromptPreviewLoading] = useState(false);
@@ -119,17 +116,17 @@ function App() {
       {
         combo: "Mod+.",
         description: "Toggle mock server panel",
-        handler: () => setMockPanelOpen((prev) => !prev)
+        handler: () => drawers.mockServer.toggle()
       },
       {
         combo: "Mod+i",
         description: "Open import dialog",
-        handler: () => setImportOpen(true)
+        handler: () => drawers.import.open$()
       },
       {
         combo: "Mod+Shift+p",
         description: "Open providers panel",
-        handler: () => setProvidersOpen((prev) => !prev)
+        handler: () => drawers.providers.toggle()
       },
       {
         combo: "Mod+w",
@@ -141,7 +138,7 @@ function App() {
       {
         combo: "Mod+/",
         description: "Show keyboard shortcuts",
-        handler: () => setShortcutsOpen((prev) => !prev)
+        handler: () => drawers.shortcuts.toggle()
       }
     ],
     [activeId, closeTab]
@@ -196,7 +193,7 @@ function App() {
     setStatusMessage,
     refreshStoredCollections,
     openTab,
-    onClose: () => setImportOpen(false)
+    onClose: () => drawers.import.close()
   });
 
   const collectionActions = useCollectionActions({
@@ -210,7 +207,7 @@ function App() {
     mockGateway,
     sidebarCollections,
     openTab,
-    setMockPanelOpen,
+    setMockPanelOpen: drawers.mockServer.set,
     toasts
   });
 
@@ -244,9 +241,9 @@ function App() {
         workspace={workspaceName}
         theme={theme}
         onToggleTheme={toggleTheme}
-        onImportClick={() => setImportOpen(true)}
-        onMockServerClick={() => setMockPanelOpen(true)}
-        onProvidersClick={() => setProvidersOpen(true)}
+        onImportClick={() => drawers.import.open$()}
+        onMockServerClick={() => drawers.mockServer.open$()}
+        onProvidersClick={() => drawers.providers.open$()}
         onExportAll={collectionActions.exportAll}
         canExportAll={isTauriRuntime && storedCollections.length > 0}
         gatewayRunning={mockGateway.status.running}
@@ -259,7 +256,7 @@ function App() {
           collections={sidebarCollections}
           activeTabId={activeId}
           onOpenEndpoint={handleOpenEndpoint}
-          onImportClick={() => setImportOpen(true)}
+          onImportClick={() => drawers.import.open$()}
           onRefresh={() => {
             resetTabs();
             setPreviewCollection(null);
@@ -277,7 +274,7 @@ function App() {
             activeId={activeId}
             onActivate={activateTab}
             onClose={closeTab}
-            onNew={() => setImportOpen(true)}
+            onNew={() => drawers.import.open$()}
           />
 
           {activeTab ? (
@@ -322,7 +319,7 @@ function App() {
               </div>
             </div>
           ) : (
-            <WorkbenchEmpty onImportClick={() => setImportOpen(true)} />
+            <WorkbenchEmpty onImportClick={drawers.import.open$} />
           )}
         </main>
       </div>
@@ -337,10 +334,10 @@ function App() {
       />
 
       <ImportDialog
-        open={importOpen}
+        open={drawers.import.open}
         onClose={() => {
           if (importActions.importBusy) return;
-          setImportOpen(false);
+          drawers.import.close();
           importActions.setImportMessage(null);
         }}
         onParse={importActions.runParsePreview}
@@ -354,8 +351,8 @@ function App() {
       />
 
       <MockServerPanel
-        open={mockPanelOpen}
-        onClose={() => setMockPanelOpen(false)}
+        open={drawers.mockServer.open}
+        onClose={drawers.mockServer.close}
         connected={isTauriRuntime}
         status={mockGateway.status}
         busy={mockGateway.busy}
@@ -373,8 +370,8 @@ function App() {
       />
 
       <ProvidersPanel
-        open={providersOpen}
-        onClose={() => setProvidersOpen(false)}
+        open={drawers.providers.open}
+        onClose={drawers.providers.close}
         draft={providerDraft}
         apiKeyOverride={apiKeyOverride}
         connected={isTauriRuntime}
@@ -393,9 +390,9 @@ function App() {
       />
 
       <ShortcutsOverlay
-        open={shortcutsOpen}
+        open={drawers.shortcuts.open}
         bindings={shortcutBindings}
-        onClose={() => setShortcutsOpen(false)}
+        onClose={drawers.shortcuts.close}
       />
 
       <ToastHost toasts={toasts.toasts} onDismiss={toasts.dismiss} />
