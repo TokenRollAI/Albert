@@ -97,3 +97,71 @@ pub fn preview_generation_prompt(
 ) -> PromptPreview {
     preview_prompt(&endpoint, intent).into()
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TestConnectionArgs {
+    pub provider: ProviderConfigInput,
+    #[serde(default)]
+    pub api_key_override: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TestConnectionResult {
+    pub ok: bool,
+    pub message: String,
+    pub status: Option<u16>,
+}
+
+/// Quick round-trip probe that exercises the configured provider without
+/// generating a full payload. Uses the adapter's prompt builder with a
+/// trivial endpoint so a missing key / bad base URL / 4xx all surface the
+/// same way.
+#[tauri::command]
+pub async fn test_provider_connection(args: TestConnectionArgs) -> TestConnectionResult {
+    use albert_core::{CanonicalEndpoint, HttpMethod};
+
+    let provider: ProviderConfig = args.provider.into();
+    let mut adapter = OpenAiChatAdapter::new(provider);
+    if let Some(key) = args.api_key_override
+        && !key.trim().is_empty()
+    {
+        adapter = adapter.with_api_key(key);
+    }
+    // Shorten the timeout so an unreachable provider doesn't hang the UI.
+    adapter = adapter.with_timeout(std::time::Duration::from_secs(8));
+
+    let endpoint = CanonicalEndpoint {
+        operation_id: Some("test".into()),
+        method: HttpMethod::Get,
+        path: "/ping".into(),
+        summary: Some("connectivity probe".into()),
+        description: None,
+        tags: Vec::new(),
+        parameters: Vec::new(),
+        request_body: None,
+        responses: Vec::new(),
+        examples: Vec::new(),
+    };
+    let bundle = albert_openai::build_prompt_bundle(&endpoint, GenerationIntent::Success);
+
+    match adapter.call_chat(&bundle).await {
+        Ok(_) => TestConnectionResult {
+            ok: true,
+            message: "Provider reachable and returned valid JSON.".to_string(),
+            status: Some(200),
+        },
+        Err(err) => {
+            let (status, message) = match &err {
+                albert_openai::OpenAiError::Provider { status, body } => {
+                    (Some(*status), format!("HTTP {status}: {body}"))
+                }
+                other => (None, other.to_string()),
+            };
+            TestConnectionResult {
+                ok: false,
+                message,
+                status,
+            }
+        }
+    }
+}

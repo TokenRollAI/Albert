@@ -69,6 +69,10 @@ request with:
 - a query string
 - repeatable `KEY: VALUE` custom headers (auth tokens, etc.)
 - a JSON body draft (shown only for non-GET/HEAD methods)
+- a "Fill from schema" button next to the body label that calls the
+  `synthesize_request_body` Tauri command and replaces the draft with a
+  schema-walked sample (only rendered when the endpoint has a declared
+  request body)
 
 Drafts are persisted in `localStorage` keyed by `METHOD /path` via
 `useTryItDraft`, so switching tabs or restarting the app preserves every

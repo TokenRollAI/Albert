@@ -22,6 +22,7 @@ pub fn run() {
             commands::parser::delete_collection,
             commands::parser::rename_collection,
             commands::parser::save_mock_example,
+            commands::parser::synthesize_request_body,
             commands::fetch::fetch_remote_source,
             commands::gateway::start_mock_server,
             commands::gateway::stop_mock_server,
@@ -33,6 +34,7 @@ pub fn run() {
             commands::gateway::update_mock_server,
             commands::openai::generate_mock_example,
             commands::openai::preview_generation_prompt,
+            commands::openai::test_provider_connection,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Albert desktop app");

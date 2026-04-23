@@ -96,6 +96,15 @@ When `persist` is true the example is saved via
 `SqliteStore::replace_mock_example`, which also rewrites the collection
 snapshot JSON to keep subsequent `load_collection_snapshot` reads consistent.
 
+## Test-connection probe
+
+The `test_provider_connection` Tauri command exercises the same
+`call_chat` path as `generate_mock_example` but uses a trivial synthetic
+endpoint (`GET /ping`) and an 8-second timeout. It returns
+`{ ok, message, status }` so the Providers panel can surface a green
+`✓ connected` chip or a red `✗ failed` chip with the raw error (missing
+key / transport / provider 4xx / provider 5xx) rendered in a banner.
+
 ## Tests
 
 - Unit tests (`src/lib.rs`) cover prompt construction, schema hints, code

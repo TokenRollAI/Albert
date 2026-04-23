@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useMemo, useState } from "react";
 import { Icon } from "./Icon";
 import { JsonView } from "./JsonView";
@@ -224,7 +225,32 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
       tab.method.toUpperCase() !== "HEAD" ? (
         <div className="tryit__section">
           <label className="tryit__field">
-            <span>Request body (JSON)</span>
+            <span className="tryit__label--row">
+              <span>Request body (JSON)</span>
+              {tab.endpoint.request_body ? (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={async () => {
+                    try {
+                      const synthesized = await invoke<unknown>(
+                        "synthesize_request_body",
+                        { endpoint: tab.endpoint }
+                      );
+                      if (synthesized !== null && synthesized !== undefined) {
+                        setBodyDraft(JSON.stringify(synthesized, null, 2));
+                      }
+                    } catch {
+                      /* ignore — fall back to manual entry */
+                    }
+                  }}
+                  title="Generate a sample body from the endpoint schema"
+                >
+                  <Icon name="zap" size={12} />
+                  <span>Fill from schema</span>
+                </button>
+              ) : null}
+            </span>
             <textarea
               value={bodyDraft}
               onChange={(event) => setBodyDraft(event.target.value)}

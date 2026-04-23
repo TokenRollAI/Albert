@@ -1,11 +1,20 @@
+import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import { Icon } from "./Icon";
 import type { ProviderConfigDraft } from "../types";
+
+interface TestConnectionResult {
+  ok: boolean;
+  message: string;
+  status?: number | null;
+}
 
 interface ProvidersPanelProps {
   open: boolean;
   onClose: () => void;
   draft: ProviderConfigDraft;
   apiKeyOverride: string;
+  connected: boolean;
   onUpdateDraft: (patch: Partial<ProviderConfigDraft>) => void;
   onUpdateApiKey: (value: string) => void;
 }
@@ -45,10 +54,35 @@ export function ProvidersPanel({
   onClose,
   draft,
   apiKeyOverride,
+  connected,
   onUpdateDraft,
   onUpdateApiKey
 }: ProvidersPanelProps) {
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
+
   if (!open) return null;
+
+  async function runTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await invoke<TestConnectionResult>(
+        "test_provider_connection",
+        {
+          args: {
+            provider: draft,
+            api_key_override: apiKeyOverride || null
+          }
+        }
+      );
+      setTestResult(result);
+    } catch (err) {
+      setTestResult({ ok: false, message: String(err) });
+    } finally {
+      setTesting(false);
+    }
+  }
   return (
     <div className="drawer" role="dialog" aria-label="Provider configuration">
       <div className="drawer__backdrop" onClick={onClose} />
@@ -151,6 +185,40 @@ export function ProvidersPanel({
               environment where the Tauri backend runs (e.g. via{" "}
               <code>.env</code>).
             </p>
+
+            <div className="row-actions">
+              <button
+                type="button"
+                className="btn btn--primary btn--sm"
+                onClick={runTest}
+                disabled={!connected || testing}
+                title={
+                  connected
+                    ? "Send a minimal chat request to verify auth + reachability"
+                    : "Tauri runtime required"
+                }
+              >
+                <Icon name="zap" size={12} />
+                <span>{testing ? "Testing…" : "Test connection"}</span>
+              </button>
+              {testResult ? (
+                <span
+                  className={
+                    testResult.ok
+                      ? "provider-test-result provider-test-result--ok"
+                      : "provider-test-result provider-test-result--err"
+                  }
+                  title={testResult.message}
+                >
+                  {testResult.ok ? "✓ connected" : "✗ failed"}
+                </span>
+              ) : null}
+            </div>
+            {testResult && !testResult.ok ? (
+              <div className="banner banner--error" role="status">
+                {testResult.message}
+              </div>
+            ) : null}
           </section>
         </div>
       </div>

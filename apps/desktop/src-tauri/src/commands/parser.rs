@@ -1,4 +1,6 @@
-use albert_core::{CanonicalApiCollection, MockExample, MockExampleKind};
+use albert_core::{
+    CanonicalApiCollection, CanonicalEndpoint, MockExample, MockExampleKind, synthesize_value,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::services::default_database_url;
@@ -23,6 +25,18 @@ pub struct ImportResult {
     pub collection_name: String,
     pub endpoint_count: usize,
     pub database_url: String,
+}
+
+/// Synthesize a JSON sample for a request body based on the canonical
+/// schema. Returns `null` when the endpoint doesn't declare a request body,
+/// so the frontend can show a placeholder instead of failing.
+#[tauri::command]
+pub fn synthesize_request_body(endpoint: CanonicalEndpoint) -> serde_json::Value {
+    endpoint
+        .request_body
+        .as_ref()
+        .map(|body| synthesize_value(&body.schema))
+        .unwrap_or(serde_json::Value::Null)
 }
 
 #[tauri::command]

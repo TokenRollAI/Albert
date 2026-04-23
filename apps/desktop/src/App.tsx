@@ -21,6 +21,7 @@ import {
   sampleImportText
 } from "./data/fallback";
 import { useAiActions, type PromptPreview } from "./hooks/useAiActions";
+import { useCollectionActions } from "./hooks/useCollectionActions";
 import { useEndpointTabs } from "./hooks/useEndpointTabs";
 import {
   useKeyboardShortcuts,
@@ -361,105 +362,12 @@ function App() {
     [mockGateway, toasts]
   );
 
-  const handleRenameCollection = useCallback(
-    async (collection: SidebarCollection) => {
-      if (!isTauriRuntime || collection.origin !== "imported") {
-        toasts.warn("Rename requires an imported collection + Tauri runtime.");
-        return;
-      }
-      const next = window.prompt(
-        `Rename "${collection.name}" to:`,
-        collection.name
-      );
-      if (!next || !next.trim() || next.trim() === collection.name) return;
-      try {
-        await invoke<boolean>("rename_collection", {
-          collectionId: collection.id,
-          newName: next.trim()
-        });
-        await refreshStoredCollections();
-        toasts.success(`Renamed to "${next.trim()}".`);
-      } catch (error) {
-        toasts.error(`Rename failed: ${String(error)}`);
-      }
-    },
-    [isTauriRuntime, refreshStoredCollections, toasts]
-  );
-
-  const handleExportAll = useCallback(async () => {
-    if (!isTauriRuntime) {
-      toasts.warn("Export all requires the Tauri runtime.");
-      return;
-    }
-    try {
-      const json = await invoke<string>("export_all_collections_json");
-      const blob = new Blob([json], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `albert-bundle-${new Date()
-        .toISOString()
-        .slice(0, 10)}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      toasts.success("Exported all collections as a bundle.");
-    } catch (error) {
-      toasts.error(`Export all failed: ${String(error)}`);
-    }
-  }, [isTauriRuntime, toasts]);
-
-  const handleDeleteCollection = useCallback(
-    async (collection: SidebarCollection) => {
-      if (!isTauriRuntime || collection.origin !== "imported") {
-        toasts.warn("Delete requires an imported collection + Tauri runtime.");
-        return;
-      }
-      const confirmed = window.confirm(
-        `Delete "${collection.name}" and all its endpoints? This cannot be undone.`
-      );
-      if (!confirmed) return;
-      try {
-        await invoke<boolean>("delete_collection", {
-          collectionId: collection.id
-        });
-        await refreshStoredCollections();
-        resetTabs();
-        toasts.success(`Deleted ${collection.name}.`);
-      } catch (error) {
-        toasts.error(`Delete failed: ${String(error)}`);
-      }
-    },
-    [isTauriRuntime, refreshStoredCollections, resetTabs, toasts]
-  );
-
-  const handleExportCollection = useCallback(
-    async (collection: SidebarCollection) => {
-      if (!isTauriRuntime || collection.origin !== "imported") {
-        toasts.warn("Export requires an imported collection + Tauri runtime.");
-        return;
-      }
-      try {
-        const json = await invoke<string>("export_collection_json", {
-          collectionId: collection.id
-        });
-        const blob = new Blob([json], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `${collection.name || "collection"}.json`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        toasts.success(`Exported ${collection.name} as JSON.`);
-      } catch (error) {
-        toasts.error(`Export failed: ${String(error)}`);
-      }
-    },
-    [isTauriRuntime, toasts]
-  );
+  const collectionActions = useCollectionActions({
+    isTauriRuntime,
+    toasts,
+    refreshStoredCollections,
+    resetTabs
+  });
 
   const handleApplyChaos = useCallback(
     async (defaultLatencyMs: number, errorRate: number) => {
@@ -560,7 +468,7 @@ function App() {
         onImportClick={() => setImportOpen(true)}
         onMockServerClick={() => setMockPanelOpen(true)}
         onProvidersClick={() => setProvidersOpen(true)}
-        onExportAll={handleExportAll}
+        onExportAll={collectionActions.exportAll}
         canExportAll={isTauriRuntime && storedCollections.length > 0}
         gatewayRunning={mockGateway.status.running}
         gatewayBind={mockGateway.status.bind_address ?? null}
@@ -578,9 +486,9 @@ function App() {
             setPreviewCollection(null);
             refreshStoredCollections();
           }}
-          onExportCollection={handleExportCollection}
-          onDeleteCollection={handleDeleteCollection}
-          onRenameCollection={handleRenameCollection}
+          onExportCollection={collectionActions.exportOne}
+          onDeleteCollection={collectionActions.remove}
+          onRenameCollection={collectionActions.rename}
           busy={refreshBusy}
         />
 
@@ -679,6 +587,7 @@ function App() {
         onClose={() => setProvidersOpen(false)}
         draft={providerDraft}
         apiKeyOverride={apiKeyOverride}
+        connected={isTauriRuntime}
         onUpdateDraft={updateProvider}
         onUpdateApiKey={setApiKeyOverride}
       />

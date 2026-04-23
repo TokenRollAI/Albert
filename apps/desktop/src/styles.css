@@ -2290,3 +2290,21 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   font-size: 12px;
   color: var(--text-muted);
 }
+
+/* ---------- Provider test result chip ---------- */
+.provider-test-result {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
+}
+.provider-test-result--ok {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 30%, var(--border));
+}
+.provider-test-result--err {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border));
+}
