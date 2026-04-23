@@ -74,3 +74,13 @@ where `GenerationRequest` includes the full `CanonicalEndpoint`, an intent, a
 When `persist` is true the example is saved via
 `SqliteStore::replace_mock_example`, which also rewrites the collection
 snapshot JSON to keep subsequent `load_collection_snapshot` reads consistent.
+
+## Tests
+
+- Unit tests (`src/lib.rs`) cover prompt construction, schema hints, code
+  fence stripping, missing-api-key error surfacing.
+- Integration tests (`tests/adapter_integration.rs`) stand up a tiny
+  dependency-free `tokio::net::TcpListener` that replies with a canned
+  chat-completions JSON body. They assert the adapter decodes the content
+  end-to-end into a `MockExample` (success path) and surfaces HTTP 4xx/5xx
+  responses with status + body (error path).

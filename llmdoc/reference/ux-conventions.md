@@ -41,4 +41,15 @@ counts.
   the served example kind. Changes collect as a draft; `Apply (N)` sends
   them to `update_mock_server`.
 - **Requests tab** — scrolling log. Each row shows timestamp, method,
-  path, status, latency, served-kind or source label.
+  path, status, latency, served-kind or source label. A "Capture request
+  bodies" toggle arms the backend to store up to 4KB per request; when
+  captured, rows expose a `<details>` body preview.
+
+## Try-it panel
+
+Lives under the response pane when an endpoint tab is open. Reads the
+currently running mock gateway's bind address and lets the user send a
+request with path-parameter inputs (auto-extracted from `{id}` tokens),
+optional query string, and a JSON body draft (shown only for non-GET/HEAD
+methods). The panel displays the response status, elapsed ms, select
+headers (`x-albert-*`, `content-type`), and body via `JsonView`.

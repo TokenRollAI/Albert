@@ -8,6 +8,7 @@ import {
   type PromptPreview
 } from "./components/PromptPreviewModal";
 import { ProvidersPanel } from "./components/ProvidersPanel";
+import { TryItPanel } from "./components/TryItPanel";
 import { RequestPanel } from "./components/RequestPanel";
 import { ResponsePane } from "./components/ResponsePane";
 import { Sidebar, type SidebarHandle } from "./components/Sidebar";
@@ -545,15 +546,26 @@ function App() {
                   onSelectInspector={(key) => setInspector(activeTab.id, key)}
                 />
               </div>
-              <ResponsePane
-                tab={activeTab}
-                onSelectExample={(kind) => setExample(activeTab.id, kind)}
-                connected={isTauriRuntime}
-                provider={providerDraft}
-                apiKeyOverride={apiKeyOverride}
-                onGenerate={handleGenerate}
-                onPreviewPrompt={handlePreviewPrompt}
-              />
+              <div className="workbench__response">
+                <ResponsePane
+                  tab={activeTab}
+                  onSelectExample={(kind) => setExample(activeTab.id, kind)}
+                  connected={isTauriRuntime}
+                  provider={providerDraft}
+                  apiKeyOverride={apiKeyOverride}
+                  onGenerate={handleGenerate}
+                  onPreviewPrompt={handlePreviewPrompt}
+                />
+                <TryItPanel
+                  tab={activeTab}
+                  baseUrl={
+                    mockGateway.status.running &&
+                    mockGateway.status.bind_address
+                      ? `http://${mockGateway.status.bind_address}`
+                      : null
+                  }
+                />
+              </div>
             </div>
           ) : (
             <WorkbenchEmpty onImportClick={() => setImportOpen(true)} />
