@@ -23,6 +23,7 @@ import {
 import { useAiActions, type PromptPreview } from "./hooks/useAiActions";
 import { useCollectionActions } from "./hooks/useCollectionActions";
 import { useEndpointTabs } from "./hooks/useEndpointTabs";
+import { useGatewayActions } from "./hooks/useGatewayActions";
 import { useImportActions } from "./hooks/useImportActions";
 import {
   useKeyboardShortcuts,
@@ -265,32 +266,6 @@ function App() {
     onClose: () => setImportOpen(false)
   });
 
-  const handleStartGateway = useCallback(
-    async (port: number, host: string, cors: boolean) => {
-      const result = await mockGateway.start({
-        port,
-        host,
-        corsEnabled: cors
-      });
-      if (result?.running && result.bind_address) {
-        toasts.success(`Mock server listening at http://${result.bind_address}`);
-      }
-    },
-    [mockGateway, toasts]
-  );
-
-  const handleApplyOverrides = useCallback(
-    async (overrides: Record<string, MockExampleKind>) => {
-      const result = await mockGateway.update({ overrides });
-      if (result) {
-        toasts.info(
-          `Applied overrides for ${Object.keys(overrides).length} route(s).`
-        );
-      }
-    },
-    [mockGateway, toasts]
-  );
-
   const collectionActions = useCollectionActions({
     isTauriRuntime,
     toasts,
@@ -298,71 +273,13 @@ function App() {
     resetTabs
   });
 
-  const handleApplyChaos = useCallback(
-    async (defaultLatencyMs: number, errorRate: number) => {
-      const result = await mockGateway.update({
-        defaultLatencyMs,
-        errorRate
-      });
-      if (result) {
-        toasts.info(
-          errorRate > 0
-            ? `Chaos: ${defaultLatencyMs}ms latency, ${Math.round(errorRate * 100)}% errors.`
-            : `Latency floor set to ${defaultLatencyMs}ms.`
-        );
-      }
-    },
-    [mockGateway, toasts]
-  );
-
-  const handleReplayRequest = useCallback(
-    (entry: RequestLogEntry) => {
-      if (!entry.matched_route) return;
-      // matched_route format is "METHOD /path"
-      const [methodRaw, ...pathParts] = entry.matched_route.split(" ");
-      const path = pathParts.join(" ");
-      const method = methodRaw.toUpperCase();
-
-      // Find the collection + endpoint whose canonical route matches.
-      for (const collection of sidebarCollections) {
-        const match = collection.endpoints.find(
-          (e) =>
-            e.path === path && e.method.toUpperCase() === method
-        );
-        if (match) {
-          openTab(collection.id, collection.name, match);
-          // Seed the Try-it draft for this endpoint with the replayed
-          // request's query + body. Path params are inferred from the
-          // matched_route template by scanning the live path; we can't
-          // always recover them 100% (we'd need the original path from
-          // the request), so leave them blank for the user to fill.
-          const routeKey = `${method} ${path}`;
-          seedTryItDraft(routeKey, {
-            query: entry.query ?? "",
-            body: entry.request_body ?? "",
-            // keep existing params/headers
-            params: undefined,
-            headers: undefined
-          });
-          setMockPanelOpen(false);
-          toasts.info(`Loaded ${method} ${path} into Try-it.`);
-          return;
-        }
-      }
-      toasts.warn(
-        `Could not find a local definition for ${method} ${path}.`
-      );
-    },
-    [sidebarCollections, openTab, toasts]
-  );
-
-  const handleToggleCaptureBodies = useCallback(
-    async (enabled: boolean) => {
-      await mockGateway.update({ captureBodies: enabled });
-      toasts.info(enabled ? "Request body capture on." : "Request body capture off.");
-    },
-    [mockGateway, toasts]
-  );
+  const gatewayActions = useGatewayActions({
+    mockGateway,
+    sidebarCollections,
+    openTab,
+    setMockPanelOpen,
+    toasts
+  });
 
   const aiActions = useAiActions({
     isTauriRuntime,
@@ -512,12 +429,12 @@ function App() {
         error={mockGateway.error}
         requests={mockGateway.requests}
         savedPreferences={mockGateway.savedPreferences}
-        onStart={handleStartGateway}
+        onStart={gatewayActions.start}
         onStop={mockGateway.stop}
-        onApplyOverrides={handleApplyOverrides}
-        onApplyChaos={handleApplyChaos}
-        onToggleCaptureBodies={handleToggleCaptureBodies}
-        onReplayRequest={handleReplayRequest}
+        onApplyOverrides={gatewayActions.applyOverrides}
+        onApplyChaos={gatewayActions.applyChaos}
+        onToggleCaptureBodies={gatewayActions.toggleCaptureBodies}
+        onReplayRequest={gatewayActions.replayRequest}
       />
 
       <ProvidersPanel

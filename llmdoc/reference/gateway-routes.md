@@ -87,6 +87,23 @@ GET and HEAD requests always skip capture. The flag can be toggled live
 via `MockGateway::reconfigure` (or the Mock Server drawer / CLI
 `--capture-bodies`).
 
+## Required headers (auth simulation)
+
+`GatewayConfig.required_headers` is a `METHOD /path → Vec<RequiredHeader>`
+map. Each rule is `{ name, value_prefix?, value_equals? }`:
+
+- `name` — header name (case-insensitive on the wire).
+- `value_prefix` — request header value must start with this string. Use
+  for things like `Bearer ` or `Basic `.
+- `value_equals` — request header value must match exactly. Combine with
+  `value_prefix` when both need to hold.
+- Empty `value_prefix` + `value_equals` means "presence only".
+
+If any rule fails the gateway returns `401 Unauthorized` with a JSON body
+`{error: "unauthorized", message: "<reason>"}` and records the request
+with `source: "auth-required"`. The gate runs **before** example selection
+so unauthorized requests never touch mock data and never incur latency.
+
 ## Error-rate injection
 
 `GatewayConfig.error_rate` (0.0 – 1.0, clamped) is the probability that a

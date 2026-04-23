@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use albert_core::MockExampleKind;
-use albert_gateway::{GatewayConfig, GatewayStatus, MetricsSnapshot, RequestLogEntry};
+use albert_gateway::{
+    GatewayConfig, GatewayStatus, MetricsSnapshot, RequestLogEntry, RequiredHeader,
+};
 use serde::Deserialize;
 use tauri::State;
 
@@ -29,6 +31,8 @@ pub struct StartMockServerArgs {
     pub capture_bodies: Option<bool>,
     #[serde(default)]
     pub response_headers: Option<BTreeMap<String, BTreeMap<String, String>>>,
+    #[serde(default)]
+    pub required_headers: Option<BTreeMap<String, Vec<RequiredHeader>>>,
     #[serde(default)]
     pub database_url: Option<String>,
 }
@@ -69,6 +73,7 @@ pub async fn start_mock_server(
         error_rate: args.error_rate.unwrap_or(0.0),
         capture_bodies: args.capture_bodies.unwrap_or(false),
         response_headers: args.response_headers.unwrap_or_default(),
+        required_headers: args.required_headers.unwrap_or_default(),
     };
 
     services
@@ -153,6 +158,8 @@ pub struct UpdateMockServerArgs {
     #[serde(default)]
     pub response_headers: Option<BTreeMap<String, BTreeMap<String, String>>>,
     #[serde(default)]
+    pub required_headers: Option<BTreeMap<String, Vec<RequiredHeader>>>,
+    #[serde(default)]
     pub database_url: Option<String>,
 }
 
@@ -192,6 +199,7 @@ pub async fn update_mock_server(
     let error_rate = args.error_rate.unwrap_or(current.error_rate);
     let capture_bodies = args.capture_bodies.unwrap_or(current.capture_bodies);
     let response_headers = args.response_headers.unwrap_or(current.response_headers);
+    let required_headers = args.required_headers.unwrap_or(current.required_headers);
 
     services
         .gateway
@@ -203,6 +211,7 @@ pub async fn update_mock_server(
             error_rate,
             capture_bodies,
             response_headers,
+            required_headers,
         )
         .await
         .map_err(|error| error.to_string())

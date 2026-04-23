@@ -23,7 +23,7 @@ pub mod routing;
 pub mod state;
 
 pub use config::{
-    GatewayConfig, GatewayRouteSummary, GatewayStatus, planned_capabilities,
+    GatewayConfig, GatewayRouteSummary, GatewayStatus, RequiredHeader, planned_capabilities,
     supported_example_kinds,
 };
 pub use error::GatewayError;
@@ -83,6 +83,7 @@ impl MockGateway {
             LatencyConfig::new(config.default_latency_ms, config.latency_overrides.clone());
 
         let response_headers = Arc::new(config.response_headers.clone());
+        let required_headers = Arc::new(config.required_headers.clone());
         let started_at = handlers::epoch_ms_now();
         let state = AppState::new(
             table_arc.clone(),
@@ -91,6 +92,7 @@ impl MockGateway {
             config.error_rate,
             config.capture_bodies,
             response_headers,
+            required_headers,
             started_at,
         );
         let state_for_runtime = state.clone();
@@ -151,13 +153,14 @@ impl MockGateway {
             config.error_rate,
             config.capture_bodies,
             config.response_headers,
+            config.required_headers,
         )
         .await
     }
 
     /// Full reconfigure entry point; can change overrides, latency, error
-    /// rate, body-capture flag, and per-route response headers in one
-    /// atomic swap.
+    /// rate, body-capture flag, per-route response headers, and per-route
+    /// required-header gates in one atomic swap.
     #[allow(clippy::too_many_arguments)]
     pub async fn reconfigure(
         &self,
@@ -168,6 +171,7 @@ impl MockGateway {
         error_rate: f32,
         capture_bodies: bool,
         response_headers: BTreeMap<String, BTreeMap<String, String>>,
+        required_headers: BTreeMap<String, Vec<RequiredHeader>>,
     ) -> Result<GatewayStatus, GatewayError> {
         let mut guard = self.inner.lock().await;
         let Some(running) = guard.as_mut() else {
@@ -188,12 +192,16 @@ impl MockGateway {
         running
             .state
             .replace_response_headers(Arc::new(response_headers.clone()));
+        running
+            .state
+            .replace_required_headers(Arc::new(required_headers.clone()));
         running.config.example_overrides = overrides;
         running.config.default_latency_ms = default_latency_ms;
         running.config.latency_overrides = latency_overrides;
         running.config.error_rate = clamped_rate;
         running.config.capture_bodies = capture_bodies;
         running.config.response_headers = response_headers;
+        running.config.required_headers = required_headers;
         running.route_summaries = summaries;
         Ok(running.to_status())
     }
@@ -814,6 +822,67 @@ mod tests {
         // uptime should be > 0 (gateway has been running)
         let uptime = body["uptime_ms"].as_i64().unwrap();
         assert!(uptime >= 0);
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn required_headers_gate_returns_401() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "secure",
+            vec![endpoint(HttpMethod::Get, "/secret", json!({"data": "ok"}))],
+        );
+        let mut required = BTreeMap::new();
+        required.insert(
+            "GET /secret".to_string(),
+            vec![config::RequiredHeader {
+                name: "Authorization".to_string(),
+                value_prefix: Some("Bearer ".to_string()),
+                value_equals: None,
+            }],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    required_headers: required,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        // Missing header → 401
+        let resp = client.get(format!("{base}/secret")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 401);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "unauthorized");
+        assert!(body["message"].as_str().unwrap().contains("Authorization"));
+
+        // Wrong prefix → 401
+        let resp = client
+            .get(format!("{base}/secret"))
+            .header("authorization", "Basic abc")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 401);
+
+        // Correct header → 200
+        let resp = client
+            .get(format!("{base}/secret"))
+            .header("authorization", "Bearer secret-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+
+        // Source label for the 401 rows
+        let log = gateway.recent_requests(3).await;
+        assert!(log.iter().any(|e| e.source == "auth-required"));
         gateway.stop().await.expect("stop");
     }
 

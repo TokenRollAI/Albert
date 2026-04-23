@@ -29,6 +29,8 @@ pub(crate) const DEFAULT_REQUEST_LOG_CAPACITY: usize = 100;
 
 pub(crate) type ResponseHeaderMap = BTreeMap<String, BTreeMap<String, String>>;
 
+pub(crate) type RequiredHeaderMap = BTreeMap<String, Vec<crate::config::RequiredHeader>>;
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct MetricsSnapshot {
     pub total_requests: u64,
@@ -55,6 +57,7 @@ pub(crate) struct AppState {
     pub(crate) error_rate: Arc<StdMutex<f32>>,
     pub(crate) capture_bodies: Arc<StdMutex<bool>>,
     pub(crate) response_headers: Arc<StdMutex<Arc<ResponseHeaderMap>>>,
+    pub(crate) required_headers: Arc<StdMutex<Arc<RequiredHeaderMap>>>,
     pub(crate) metrics: Arc<StdMutex<MetricsSnapshot>>,
     pub(crate) request_log: Arc<StdMutex<VecDeque<RequestLogEntry>>>,
 }
@@ -89,6 +92,7 @@ impl AppState {
         error_rate: f32,
         capture_bodies: bool,
         response_headers: Arc<ResponseHeaderMap>,
+        required_headers: Arc<RequiredHeaderMap>,
         started_at_epoch_ms: i64,
     ) -> Self {
         Self {
@@ -98,6 +102,7 @@ impl AppState {
             error_rate: Arc::new(StdMutex::new(error_rate.clamp(0.0, 1.0))),
             capture_bodies: Arc::new(StdMutex::new(capture_bodies)),
             response_headers: Arc::new(StdMutex::new(response_headers)),
+            required_headers: Arc::new(StdMutex::new(required_headers)),
             metrics: Arc::new(StdMutex::new(MetricsSnapshot {
                 started_at_epoch_ms,
                 ..Default::default()
@@ -165,6 +170,21 @@ impl AppState {
             .response_headers
             .lock()
             .expect("response headers poisoned");
+        *slot = next;
+    }
+
+    pub(crate) fn snapshot_required_headers(&self) -> Arc<RequiredHeaderMap> {
+        self.required_headers
+            .lock()
+            .expect("required headers poisoned")
+            .clone()
+    }
+
+    pub(crate) fn replace_required_headers(&self, next: Arc<RequiredHeaderMap>) {
+        let mut slot = self
+            .required_headers
+            .lock()
+            .expect("required headers poisoned");
         *slot = next;
     }
 

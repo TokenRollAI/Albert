@@ -40,6 +40,25 @@ pub struct GatewayConfig {
     /// silently ignored.
     #[serde(default)]
     pub response_headers: BTreeMap<String, BTreeMap<String, String>>,
+    /// Per-route required-header gates keyed by `METHOD path`. If any
+    /// listed rule is not satisfied the gateway returns `401 Unauthorized`
+    /// with a structured JSON body describing which rule failed. Use the
+    /// empty `value_prefix`/`value_equals` to require presence only.
+    #[serde(default)]
+    pub required_headers: BTreeMap<String, Vec<RequiredHeader>>,
+}
+
+/// A single header-presence or header-value requirement. `name` is the
+/// header name (case-insensitive on the wire). `value_prefix` and
+/// `value_equals` are mutually compatible — if both are set, both must
+/// hold. When neither is set, only presence is checked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RequiredHeader {
+    pub name: String,
+    #[serde(default)]
+    pub value_prefix: Option<String>,
+    #[serde(default)]
+    pub value_equals: Option<String>,
 }
 
 impl Default for GatewayConfig {
@@ -54,6 +73,7 @@ impl Default for GatewayConfig {
             error_rate: 0.0,
             capture_bodies: false,
             response_headers: BTreeMap::new(),
+            required_headers: BTreeMap::new(),
         }
     }
 }

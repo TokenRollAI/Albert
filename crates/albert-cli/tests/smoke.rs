@@ -192,6 +192,84 @@ async fn watch_picks_up_file_changes() {
 }
 
 #[tokio::test]
+async fn export_all_and_bundle_reimport_roundtrip() {
+    let temp = TempDir::new().expect("tempdir");
+    let db_path = temp.path().join("origin.db");
+    let spec_a = temp.path().join("a.json");
+    let spec_b = temp.path().join("b.json");
+    fs::write(&spec_a, OPENAPI).unwrap();
+    fs::write(
+        &spec_b,
+        r#"{"openapi":"3.0.3","info":{"title":"B","version":"1"},"paths":{"/b":{"get":{"responses":{"200":{"description":"ok"}}}}}}"#,
+    )
+    .unwrap();
+
+    // import two specs
+    for spec in [&spec_a, &spec_b] {
+        let args = parse_args([
+            "import".to_string(),
+            "--db".to_string(),
+            db_path.to_string_lossy().to_string(),
+            spec.to_string_lossy().to_string(),
+        ])
+        .unwrap();
+        run_with_args(args).await.expect("import");
+    }
+
+    // export-all to a bundle file
+    let bundle = temp.path().join("bundle.json");
+    let args = parse_args([
+        "export-all".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        "--output".to_string(),
+        bundle.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    run_with_args(args).await.expect("export-all");
+    assert!(bundle.exists());
+
+    // import the bundle into a fresh DB
+    let replica_db = temp.path().join("replica.db");
+    let args = parse_args([
+        "import".to_string(),
+        "--db".to_string(),
+        replica_db.to_string_lossy().to_string(),
+        bundle.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    let outcome = run_with_args(args).await.expect("bundle import");
+    match outcome {
+        RunOutcome::Message(msg) => {
+            assert!(msg.contains("bundle"), "{msg}");
+            assert!(msg.contains("2 collections"), "{msg}");
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
+
+    // Verify identical collection count + ids in the replica.
+    let origin = albert_storage::SqliteStore::new(db_path.to_string_lossy().to_string());
+    origin.migrate().unwrap();
+    let replica = albert_storage::SqliteStore::new(replica_db.to_string_lossy().to_string());
+    replica.migrate().unwrap();
+    let mut origin_ids: Vec<String> = origin
+        .list_collections()
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    let mut replica_ids: Vec<String> = replica
+        .list_collections()
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    origin_ids.sort();
+    replica_ids.sort();
+    assert_eq!(origin_ids, replica_ids);
+}
+
+#[tokio::test]
 async fn ping_reports_running_gateway() {
     // Stand up a local mock gateway on an ephemeral port.
     let gateway = albert_gateway::MockGateway::new();

@@ -44,6 +44,19 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     let path = request.uri().path().to_string();
     let query = request.uri().query().map(|q| q.to_string());
     let capture_bodies = state.snapshot_capture_bodies();
+    // Snapshot request headers before we consume the body; required-header
+    // gating needs them and we don't want the Request value moved into the
+    // body-capture helper before we've read them.
+    let request_headers: Vec<(String, String)> = request
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|v| (name.as_str().to_ascii_lowercase(), v.to_string()))
+        })
+        .collect();
     let captured_body = if capture_bodies && method != Method::GET && method != Method::HEAD {
         capture_request_body(request).await
     } else {
@@ -123,6 +136,28 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     let route = matched.route;
     let matched_key = route_key(&route.method, &route.path);
     let strip_body = fallback_to_get;
+
+    // Required-header gate: evaluated before example selection so an
+    // unauthorized request never touches the mock data.
+    let required = state.snapshot_required_headers();
+    if let Some(rules) = required.get(&matched_key)
+        && let Some(err) = evaluate_required_headers(rules, &request_headers)
+    {
+        state.record(RequestLogEntry {
+            at_epoch_ms: epoch_ms_now(),
+            method: method.to_string(),
+            path: path.clone(),
+            query: query.clone(),
+            matched_route: Some(matched_key.clone()),
+            collection_name: Some(route.collection_name.clone()),
+            status: 401,
+            kind: None,
+            source: "auth-required",
+            latency_ms: 0,
+            request_body: captured_string.clone(),
+        });
+        return unauthorized(err);
+    }
 
     let (override_kind, query_selected) = parse_query_override(query.as_deref());
     let fallback_override = overrides.get(&matched_key).cloned();
@@ -269,6 +304,53 @@ fn http_method_to_canonical(method: &Method) -> Option<HttpMethod> {
         "HEAD" => HttpMethod::Head,
         _ => return None,
     })
+}
+
+fn evaluate_required_headers(
+    rules: &[crate::config::RequiredHeader],
+    request_headers: &[(String, String)],
+) -> Option<String> {
+    for rule in rules {
+        let wanted = rule.name.to_ascii_lowercase();
+        let actual = request_headers
+            .iter()
+            .find(|(name, _)| *name == wanted)
+            .map(|(_, value)| value.as_str());
+        match actual {
+            None => {
+                return Some(format!("missing required header '{}'", rule.name));
+            }
+            Some(value) => {
+                if let Some(prefix) = &rule.value_prefix
+                    && !value.starts_with(prefix)
+                {
+                    return Some(format!("header '{}' must start with '{prefix}'", rule.name));
+                }
+                if let Some(expected) = &rule.value_equals
+                    && value != expected
+                {
+                    return Some(format!(
+                        "header '{}' does not match expected value",
+                        rule.name
+                    ));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn unauthorized(reason: String) -> Response {
+    let payload = serde_json::json!({
+        "error": "unauthorized",
+        "message": reason,
+    });
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::CONTENT_TYPE, "application/json")],
+        axum::Json(payload),
+    )
+        .into_response()
 }
 
 pub(crate) fn not_found(message: String) -> Response {
