@@ -30,8 +30,74 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::ExportAll => run_export_all(args),
         Command::Delete => run_delete(args),
         Command::Rename => run_rename(args),
+        Command::Doctor => run_doctor(args).await,
         Command::Watch => run_watch(args).await,
         Command::Serve => run_serve(args).await,
+    }
+}
+
+async fn run_doctor(args: CliArgs) -> Result<RunOutcome, String> {
+    let mut lines = Vec::new();
+    let mut failures: u32 = 0;
+
+    // 1. Database
+    match SqliteStore::new(&args.database_url).migrate() {
+        Ok(()) => lines.push(format!(
+            "[ ok ] database migratable ({})",
+            args.database_url
+        )),
+        Err(err) => {
+            failures += 1;
+            lines.push(format!("[fail] database migration: {err}"));
+        }
+    }
+
+    // 2. Env var — we can't know the user's provider without loading their
+    // UI state, but we can sanity-check the commonly-used env names.
+    for key in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] {
+        match std::env::var(key) {
+            Ok(ref v) if !v.is_empty() => {
+                lines.push(format!("[ ok ] {key} is set (len={})", v.len()));
+            }
+            _ => lines.push(format!("[warn] {key} is not set")),
+        }
+    }
+
+    // 3. Optional provider reachability: try https://api.openai.com if no
+    // collection is specified, else use the first --collection id as a
+    // sentinel (users can override by setting ALBERT_PROVIDER_URL).
+    let probe_url = std::env::var("ALBERT_PROVIDER_URL")
+        .unwrap_or_else(|_| "https://api.openai.com/v1/models".to_string());
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("client build failed: {e}"))?;
+    match client.head(&probe_url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            if status.as_u16() < 500 {
+                lines.push(format!(
+                    "[ ok ] provider reachable at {probe_url} (HTTP {status})"
+                ));
+            } else {
+                failures += 1;
+                lines.push(format!("[fail] provider returned {status} at {probe_url}"));
+            }
+        }
+        Err(err) => {
+            failures += 1;
+            lines.push(format!("[fail] provider unreachable at {probe_url}: {err}"));
+        }
+    }
+
+    if failures > 0 {
+        Err(format!(
+            "{}\n\n{} check(s) failed",
+            lines.join("\n"),
+            failures
+        ))
+    } else {
+        Ok(RunOutcome::Message(lines.join("\n")))
     }
 }
 

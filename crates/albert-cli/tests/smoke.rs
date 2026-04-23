@@ -192,6 +192,55 @@ async fn watch_picks_up_file_changes() {
 }
 
 #[tokio::test]
+async fn doctor_succeeds_with_local_provider_override() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+
+    // Serve one HEAD request with 200 OK.
+    let server = tokio::spawn(async move {
+        if let Ok((mut socket, _)) = listener.accept().await {
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await;
+            let _ = socket.shutdown().await;
+        }
+    });
+
+    let probe = format!("http://{addr}/healthz");
+    // Scope the env override to this test only — deliberately unset before
+    // re-reading so the other tests never see it.
+    unsafe {
+        std::env::set_var("ALBERT_PROVIDER_URL", &probe);
+    }
+
+    let temp = TempDir::new().expect("tempdir");
+    let db_path = temp.path().join("albert.db");
+    let args = parse_args([
+        "doctor".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    let out = run_with_args(args).await.expect("doctor");
+    let message = match out {
+        RunOutcome::Message(msg) => msg,
+        other => panic!("unexpected: {other:?}"),
+    };
+    unsafe {
+        std::env::remove_var("ALBERT_PROVIDER_URL");
+    }
+    server.abort();
+
+    assert!(message.contains("[ ok ] database"));
+    assert!(message.contains("provider reachable at"));
+}
+
+#[tokio::test]
 async fn help_and_version_return_messages() {
     let args = parse_args(["help".to_string()]).unwrap();
     let out = run_with_args(args).await.unwrap();

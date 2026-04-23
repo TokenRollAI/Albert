@@ -17,11 +17,11 @@ albert-core = { path = "../albert-core" }
 albert-gateway = { path = "../albert-gateway" }
 albert-parser = { path = "../albert-parser" }
 albert-storage = { path = "../albert-storage" }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros", "net", "signal", "time", "io-util"] }
 
 [dev-dependencies]
-reqwest = { workspace = true }
 tempfile = "3"

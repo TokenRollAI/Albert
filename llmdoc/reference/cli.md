@@ -23,6 +23,7 @@ running the mock server without the Tauri shell.
 | `delete`  | Remove a collection (and its endpoints/examples) from SQLite |
 | `rename`  | Rename a stored collection (`--id` + `--name`)               |
 | `export-all` | Print every collection as a JSON array (optionally to a file) |
+| `doctor`  | Health checks: db migratability, env keys, provider probe   |
 | `help`    | Show the usage text                                          |
 | `version` | Print the crate version                                      |
 
@@ -81,6 +82,24 @@ snapshots, fall through to the regular OpenAPI / cURL parsers.
 The watcher stats every file each tick; when its `mtime` changes (or on
 startup), the file is re-imported. Errors are written to stderr without
 aborting the loop.
+
+## `doctor`
+
+Runs three sequential checks and exits non-zero when any fail:
+
+1. **Database** — `SqliteStore::migrate()` against `--db` (default
+   `albert.db`).
+2. **Environment keys** — warns when `OPENAI_API_KEY` or
+   `ANTHROPIC_API_KEY` are missing or empty. These are advisory only;
+   a missing key does not fail the run because not every user uses every
+   provider.
+3. **Provider reachability** — issues a HEAD request against
+   `ALBERT_PROVIDER_URL` (default `https://api.openai.com/v1/models`).
+   5xx responses fail; 4xx is treated as reachable (auth errors still
+   mean the host answered). Override `ALBERT_PROVIDER_URL` in tests or
+   air-gapped setups to point somewhere local.
+
+Output is a plain-text report with `[ ok ]`, `[warn]`, `[fail]` prefixes.
 
 ## Example workflow
 

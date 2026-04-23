@@ -3,11 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EndpointTabs } from "./components/EndpointTabs";
 import { ImportDialog } from "./components/ImportDialog";
 import { MockServerPanel } from "./components/MockServerPanel";
-import {
-  PromptPreviewModal,
-  type PromptPreview
-} from "./components/PromptPreviewModal";
+import { PromptPreviewModal } from "./components/PromptPreviewModal";
 import { ProvidersPanel } from "./components/ProvidersPanel";
+import { ShortcutsOverlay } from "./components/ShortcutsOverlay";
 import { TryItPanel } from "./components/TryItPanel";
 import { RequestPanel } from "./components/RequestPanel";
 import { ResponsePane } from "./components/ResponsePane";
@@ -22,8 +20,12 @@ import {
   fallbackSummary,
   sampleImportText
 } from "./data/fallback";
+import { useAiActions, type PromptPreview } from "./hooks/useAiActions";
 import { useEndpointTabs } from "./hooks/useEndpointTabs";
-import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import {
+  useKeyboardShortcuts,
+  type ShortcutBinding
+} from "./hooks/useKeyboardShortcuts";
 import { useMockGateway } from "./hooks/useMockGateway";
 import { useProviderDraft } from "./hooks/useProviderDraft";
 import { useTheme } from "./hooks/useTheme";
@@ -65,6 +67,7 @@ function App() {
 
   const [mockPanelOpen, setMockPanelOpen] = useState(false);
   const [providersOpen, setProvidersOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [promptPreviewLoading, setPromptPreviewLoading] = useState(false);
@@ -98,40 +101,45 @@ function App() {
 
   const mockGateway = useMockGateway({ enabled: isTauriRuntime });
 
-  useKeyboardShortcuts(
-    useMemo(
-      () => [
-        {
-          combo: "Mod+K",
-          description: "Focus collection search",
-          handler: () => sidebarRef.current?.focusSearch()
-        },
-        {
-          combo: "Mod+.",
-          description: "Toggle mock server panel",
-          handler: () => setMockPanelOpen((prev) => !prev)
-        },
-        {
-          combo: "Mod+i",
-          description: "Open import dialog",
-          handler: () => setImportOpen(true)
-        },
-        {
-          combo: "Mod+Shift+p",
-          description: "Open providers panel",
-          handler: () => setProvidersOpen((prev) => !prev)
-        },
-        {
-          combo: "Mod+w",
-          description: "Close active endpoint tab",
-          handler: () => {
-            if (activeId) closeTab(activeId);
-          }
+  const shortcutBindings = useMemo<ShortcutBinding[]>(
+    () => [
+      {
+        combo: "Mod+K",
+        description: "Focus collection search",
+        handler: () => sidebarRef.current?.focusSearch()
+      },
+      {
+        combo: "Mod+.",
+        description: "Toggle mock server panel",
+        handler: () => setMockPanelOpen((prev) => !prev)
+      },
+      {
+        combo: "Mod+i",
+        description: "Open import dialog",
+        handler: () => setImportOpen(true)
+      },
+      {
+        combo: "Mod+Shift+p",
+        description: "Open providers panel",
+        handler: () => setProvidersOpen((prev) => !prev)
+      },
+      {
+        combo: "Mod+w",
+        description: "Close active endpoint tab",
+        handler: () => {
+          if (activeId) closeTab(activeId);
         }
-      ],
-      [activeId, closeTab]
-    )
+      },
+      {
+        combo: "Mod+/",
+        description: "Show keyboard shortcuts",
+        handler: () => setShortcutsOpen((prev) => !prev)
+      }
+    ],
+    [activeId, closeTab]
   );
+
+  useKeyboardShortcuts(shortcutBindings);
 
   const sidebarCollections: SidebarCollection[] = useMemo(() => {
     const result: SidebarCollection[] = [];
@@ -453,115 +461,6 @@ function App() {
     [isTauriRuntime, toasts]
   );
 
-  const handleSaveExample = useCallback(
-    async (
-      tab: EndpointTab,
-      example: MockExample
-    ): Promise<MockExample | null> => {
-      if (!isTauriRuntime) {
-        throw new Error("Edit requires the Tauri runtime.");
-      }
-      if (!tab.collectionId || tab.collectionId.startsWith("preview:") || tab.collectionId.startsWith("fallback:")) {
-        toasts.warn("Import this collection first to save edits.");
-        throw new Error("Collection is not persisted yet.");
-      }
-      try {
-        const saved = await invoke<MockExample>("save_mock_example", {
-          args: {
-            collection_id: tab.collectionId,
-            method: tab.method,
-            path: tab.endpoint.path,
-            kind: example.kind,
-            title: example.title,
-            payload: example.payload,
-            note: example.note ?? null,
-            database_url: null
-          }
-        });
-        updateEndpointExample(tab.id, saved);
-        await refreshStoredCollections();
-        toasts.success(`Saved ${example.kind} payload for ${tab.method} ${tab.path}.`);
-        return saved;
-      } catch (error) {
-        toasts.error(`Save failed: ${String(error)}`);
-        throw error;
-      }
-    },
-    [isTauriRuntime, refreshStoredCollections, toasts, updateEndpointExample]
-  );
-
-  const handleGenerateAll = useCallback(
-    async (tab: EndpointTab, persist: boolean): Promise<void> => {
-      if (!isTauriRuntime) {
-        toasts.warn("AI generation requires the Tauri runtime.");
-        return;
-      }
-      const intents: ExampleKind[] = ["success", "empty", "error"];
-      const results: Array<{ kind: ExampleKind; ok: boolean }> = [];
-      for (const intent of intents) {
-        try {
-          const example = await invoke<MockExample>("generate_mock_example", {
-            request: {
-              endpoint: tab.endpoint,
-              intent,
-              provider: providerDraft,
-              collection_id: tab.collectionId,
-              persist,
-              database_url: null,
-              api_key_override: apiKeyOverride || null
-            }
-          });
-          updateEndpointExample(tab.id, example);
-          results.push({ kind: intent, ok: true });
-        } catch (error) {
-          results.push({ kind: intent, ok: false });
-          toasts.error(`Generate ${intent} failed: ${String(error)}`);
-        }
-      }
-      if (persist) {
-        await refreshStoredCollections();
-      }
-      const okCount = results.filter((r) => r.ok).length;
-      toasts.success(
-        `Generated ${okCount}/${intents.length} variant${okCount === 1 ? "" : "s"}.`
-      );
-    },
-    [
-      isTauriRuntime,
-      providerDraft,
-      apiKeyOverride,
-      refreshStoredCollections,
-      toasts,
-      updateEndpointExample
-    ]
-  );
-
-  const handlePreviewPrompt = useCallback(
-    async (
-      tab: EndpointTab,
-      intent: ExampleKind
-    ): Promise<PromptPreview> => {
-      setPromptPreviewOpen(true);
-      setPromptPreviewLoading(true);
-      setPromptPreviewError(null);
-      try {
-        const preview = await invoke<PromptPreview>("preview_generation_prompt", {
-          endpoint: tab.endpoint,
-          intent
-        });
-        setPromptPreview(preview);
-        return preview;
-      } catch (error) {
-        const message = String(error);
-        setPromptPreviewError(message);
-        throw error;
-      } finally {
-        setPromptPreviewLoading(false);
-      }
-    },
-    []
-  );
-
   const handleApplyChaos = useCallback(
     async (defaultLatencyMs: number, errorRate: number) => {
       const result = await mockGateway.update({
@@ -628,52 +527,24 @@ function App() {
     [mockGateway, toasts]
   );
 
-  const handleGenerate = useCallback(
-    async (
-      tab: EndpointTab,
-      intent: ExampleKind,
-      persist: boolean
-    ): Promise<MockExample | null> => {
-      if (!isTauriRuntime) {
-        throw new Error("AI generation requires the Tauri runtime.");
-      }
-      try {
-        const example = await invoke<MockExample>("generate_mock_example", {
-          request: {
-            endpoint: tab.endpoint,
-            intent,
-            provider: providerDraft,
-            collection_id: tab.collectionId,
-            persist,
-            database_url: null,
-            api_key_override: apiKeyOverride || null
-          }
-        });
-        updateEndpointExample(tab.id, example);
-        if (persist) {
-          await refreshStoredCollections();
-        }
-        setStatusMessage(
-          `AI ${intent} example ready for ${tab.method} ${tab.path}.`
-        );
-        toasts.success(
-          `${intent} mock generated for ${tab.method} ${tab.path}.`
-        );
-        return example;
-      } catch (error) {
-        toasts.error(`Generation failed: ${String(error)}`);
-        throw error;
-      }
-    },
-    [
-      isTauriRuntime,
-      providerDraft,
-      apiKeyOverride,
-      refreshStoredCollections,
-      toasts,
-      updateEndpointExample
-    ]
-  );
+  const aiActions = useAiActions({
+    isTauriRuntime,
+    providerDraft,
+    apiKeyOverride,
+    toasts,
+    setStatusMessage,
+    refreshStoredCollections,
+    updateEndpointExample,
+    promptPreviewSetters: useMemo(
+      () => ({
+        setPreview: setPromptPreview,
+        setOpen: setPromptPreviewOpen,
+        setLoading: setPromptPreviewLoading,
+        setError: setPromptPreviewError
+      }),
+      []
+    )
+  });
 
   const workspaceName =
     activeTab?.collectionName ??
@@ -738,10 +609,10 @@ function App() {
                   connected={isTauriRuntime}
                   provider={providerDraft}
                   apiKeyOverride={apiKeyOverride}
-                  onGenerate={handleGenerate}
-                  onGenerateAll={handleGenerateAll}
-                  onPreviewPrompt={handlePreviewPrompt}
-                  onSaveExample={handleSaveExample}
+                  onGenerate={aiActions.generate}
+                  onGenerateAll={aiActions.generateAll}
+                  onPreviewPrompt={aiActions.previewPrompt}
+                  onSaveExample={aiActions.saveExample}
                 />
                 <TryItPanel
                   tab={activeTab}
@@ -820,6 +691,12 @@ function App() {
         onClose={() => {
           setPromptPreviewOpen(false);
         }}
+      />
+
+      <ShortcutsOverlay
+        open={shortcutsOpen}
+        bindings={shortcutBindings}
+        onClose={() => setShortcutsOpen(false)}
       />
 
       <ToastHost toasts={toasts.toasts} onDismiss={toasts.dismiss} />

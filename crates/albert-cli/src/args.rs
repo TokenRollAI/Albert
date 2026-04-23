@@ -14,6 +14,7 @@ pub enum Command {
     ExportAll,
     Delete,
     Rename,
+    Doctor,
     Help,
     Version,
 }
@@ -107,6 +108,7 @@ where
         "export-all" => Command::ExportAll,
         "delete" => Command::Delete,
         "rename" => Command::Rename,
+        "doctor" => Command::Doctor,
         "help" | "--help" | "-h" => Command::Help,
         "version" | "--version" | "-V" => Command::Version,
         other => return Err(CliError::UnknownCommand(other.to_string())),
@@ -239,6 +241,7 @@ pub fn help_text() -> String {
     s.push_str("    export-all Print all collections as a JSON array\n");
     s.push_str("    delete     Remove a collection from the database\n");
     s.push_str("    rename     Rename an existing collection\n");
+    s.push_str("    doctor     Run health checks (db, env, provider reachability)\n");
     s.push_str("    help       Print this help\n");
     s.push_str("    version    Print the crate version\n\n");
     s.push_str("SHARED OPTIONS:\n");
