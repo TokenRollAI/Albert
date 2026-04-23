@@ -73,8 +73,57 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
       .filter((value): value is SidebarCollection => value !== null);
   }, [collections, query]);
 
+  // Flat list of all currently-visible endpoint rows, used for arrow-key
+  // navigation. Only expanded collections contribute; collapsed ones are
+  // skipped so the keyboard follows what the user can actually see.
+  const visibleEndpoints = useMemo(() => {
+    const out: { collection: SidebarCollection; endpoint: CanonicalEndpoint }[] = [];
+    for (const collection of filtered) {
+      if (!(expanded[collection.id] ?? false)) continue;
+      for (const endpoint of collection.endpoints) {
+        out.push({ collection, endpoint });
+      }
+    }
+    return out;
+  }, [filtered, expanded]);
+
   function toggle(id: string) {
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  function handleSearchKey(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "ArrowDown" && event.key !== "Enter") return;
+    if (visibleEndpoints.length === 0) return;
+    event.preventDefault();
+    if (event.key === "Enter" && visibleEndpoints.length > 0) {
+      const first = visibleEndpoints[0];
+      onOpenEndpoint(first.collection, first.endpoint);
+      return;
+    }
+    // ArrowDown → focus the first endpoint button
+    const firstBtn = document.querySelector<HTMLButtonElement>(
+      ".sidebar__list .endpoint"
+    );
+    firstBtn?.focus();
+  }
+
+  function handleEndpointKey(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    index: number
+  ) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const next = event.key === "ArrowDown" ? index + 1 : index - 1;
+      if (next < 0) {
+        inputRef.current?.focus();
+        return;
+      }
+      const buttons = document.querySelectorAll<HTMLButtonElement>(
+        ".sidebar__list .endpoint"
+      );
+      const target = buttons.item(next);
+      target?.focus();
+    }
   }
 
   return (
@@ -111,6 +160,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
           type="text"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={handleSearchKey}
           placeholder="Search endpoints  (⌘K)"
           spellCheck={false}
         />
@@ -237,6 +287,12 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
                     {collection.endpoints.map((endpoint) => {
                       const tabId = `${collection.id}::${endpoint.method.toUpperCase()}:${endpoint.path}`;
                       const active = activeTabId === tabId;
+                      const flatIndex = visibleEndpoints.findIndex(
+                        (entry) =>
+                          entry.collection.id === collection.id &&
+                          entry.endpoint.method === endpoint.method &&
+                          entry.endpoint.path === endpoint.path
+                      );
                       return (
                         <li key={tabId}>
                           <button
@@ -248,6 +304,9 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
                             }
                             onClick={() =>
                               onOpenEndpoint(collection, endpoint)
+                            }
+                            onKeyDown={(event) =>
+                              handleEndpointKey(event, flatIndex)
                             }
                             title={endpoint.summary ?? endpoint.path}
                           >

@@ -81,6 +81,7 @@ interface MockServerPanelProps {
   ) => Promise<void>;
   onApplyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
   onToggleCaptureBodies: (enabled: boolean) => Promise<void>;
+  onReplayRequest?: (entry: RequestLogEntry) => void;
 }
 
 type TabKey = "runtime" | "routes" | "requests";
@@ -98,7 +99,8 @@ export function MockServerPanel({
   onStop,
   onApplyOverrides,
   onApplyChaos,
-  onToggleCaptureBodies
+  onToggleCaptureBodies,
+  onReplayRequest
 }: MockServerPanelProps) {
   const initialHost =
     savedPreferences?.host ?? status.config.host ?? "127.0.0.1";
@@ -550,7 +552,33 @@ export function MockServerPanel({
                   {requests.map((entry, idx) => (
                     <li
                       key={`${entry.at_epoch_ms}-${idx}-${entry.path}`}
-                      className="reqlog__item"
+                      className={
+                        onReplayRequest && entry.matched_route
+                          ? "reqlog__item reqlog__item--clickable"
+                          : "reqlog__item"
+                      }
+                      onClick={() => {
+                        if (onReplayRequest && entry.matched_route) {
+                          onReplayRequest(entry);
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          onReplayRequest &&
+                          entry.matched_route &&
+                          (event.key === "Enter" || event.key === " ")
+                        ) {
+                          event.preventDefault();
+                          onReplayRequest(entry);
+                        }
+                      }}
+                      role={onReplayRequest && entry.matched_route ? "button" : undefined}
+                      tabIndex={onReplayRequest && entry.matched_route ? 0 : undefined}
+                      title={
+                        onReplayRequest && entry.matched_route
+                          ? "Click to replay in Try-it"
+                          : undefined
+                      }
                     >
                       <span className="reqlog__time">
                         {formatTime(entry.at_epoch_ms)}

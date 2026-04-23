@@ -11,6 +11,15 @@ Registered globally via `useKeyboardShortcuts`. `Mod` = `Cmd` on macOS,
 | `Mod + .`       | Toggle the Mock Server drawer       |
 | `Mod + I`       | Open the Import dialog              |
 | `Mod + Shift+P` | Toggle the Providers drawer         |
+| `Mod + W`       | Close the active endpoint tab       |
+
+Within the sidebar:
+
+- `↓` from the search input focuses the first visible endpoint row.
+- `↑` / `↓` within the endpoint list walks through the currently-expanded
+  collections. Pressing `↑` on the first row jumps back to the search
+  input.
+- `Enter` on the search input opens the first visible endpoint.
 
 Shortcuts are suppressed while focus is inside an editable element unless
 a modifier key is held. Conventions live in
@@ -45,7 +54,10 @@ counts.
   row shows timestamp, method, path, status, latency, served-kind or
   source label. A "Capture request bodies" toggle arms the backend to
   store up to 4KB per request; when captured, rows expose a `<details>`
-  body preview.
+  body preview. Rows whose `matched_route` points at a known local
+  endpoint are clickable — selecting one opens the endpoint tab and
+  seeds the Try-it draft with the recorded query + body so the user
+  can tweak and replay.
 
 ## Try-it panel
 

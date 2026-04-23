@@ -2235,3 +2235,17 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
+
+/* ---------- Request log: clickable rows ---------- */
+.reqlog__item--clickable {
+  cursor: pointer;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.reqlog__item--clickable:hover {
+  background: var(--bg-hover);
+}
+.reqlog__item--clickable:focus-visible {
+  outline: none;
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}

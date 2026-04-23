@@ -28,6 +28,7 @@ import { useMockGateway } from "./hooks/useMockGateway";
 import { useProviderDraft } from "./hooks/useProviderDraft";
 import { useTheme } from "./hooks/useTheme";
 import { useToasts } from "./hooks/useToasts";
+import { seedTryItDraft } from "./hooks/useTryItDraft";
 import type {
   AppBootstrapSummary,
   CanonicalApiCollection,
@@ -37,6 +38,7 @@ import type {
   ImportResult,
   MockExample,
   MockExampleKind,
+  RequestLogEntry,
   SidebarCollection,
   StoredCollectionSummary
 } from "./types";
@@ -118,9 +120,16 @@ function App() {
           combo: "Mod+Shift+p",
           description: "Open providers panel",
           handler: () => setProvidersOpen((prev) => !prev)
+        },
+        {
+          combo: "Mod+w",
+          description: "Close active endpoint tab",
+          handler: () => {
+            if (activeId) closeTab(activeId);
+          }
         }
       ],
-      []
+      [activeId, closeTab]
     )
   );
 
@@ -570,6 +579,47 @@ function App() {
     [mockGateway, toasts]
   );
 
+  const handleReplayRequest = useCallback(
+    (entry: RequestLogEntry) => {
+      if (!entry.matched_route) return;
+      // matched_route format is "METHOD /path"
+      const [methodRaw, ...pathParts] = entry.matched_route.split(" ");
+      const path = pathParts.join(" ");
+      const method = methodRaw.toUpperCase();
+
+      // Find the collection + endpoint whose canonical route matches.
+      for (const collection of sidebarCollections) {
+        const match = collection.endpoints.find(
+          (e) =>
+            e.path === path && e.method.toUpperCase() === method
+        );
+        if (match) {
+          openTab(collection.id, collection.name, match);
+          // Seed the Try-it draft for this endpoint with the replayed
+          // request's query + body. Path params are inferred from the
+          // matched_route template by scanning the live path; we can't
+          // always recover them 100% (we'd need the original path from
+          // the request), so leave them blank for the user to fill.
+          const routeKey = `${method} ${path}`;
+          seedTryItDraft(routeKey, {
+            query: entry.query ?? "",
+            body: entry.request_body ?? "",
+            // keep existing params/headers
+            params: undefined,
+            headers: undefined
+          });
+          setMockPanelOpen(false);
+          toasts.info(`Loaded ${method} ${path} into Try-it.`);
+          return;
+        }
+      }
+      toasts.warn(
+        `Could not find a local definition for ${method} ${path}.`
+      );
+    },
+    [sidebarCollections, openTab, toasts]
+  );
+
   const handleToggleCaptureBodies = useCallback(
     async (enabled: boolean) => {
       await mockGateway.update({ captureBodies: enabled });
@@ -750,6 +800,7 @@ function App() {
         onApplyOverrides={handleApplyOverrides}
         onApplyChaos={handleApplyChaos}
         onToggleCaptureBodies={handleToggleCaptureBodies}
+        onReplayRequest={handleReplayRequest}
       />
 
       <ProvidersPanel

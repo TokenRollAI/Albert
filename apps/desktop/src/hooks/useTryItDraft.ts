@@ -55,6 +55,28 @@ function save(routeKey: string, draft: TryItDraft) {
   }
 }
 
+const SEED_EVENT = "albert:tryit:seed";
+
+export function seedTryItDraft(routeKey: string, draft: Partial<TryItDraft>) {
+  try {
+    const existing = load(routeKey);
+    const merged: TryItDraft = {
+      params: draft.params ?? existing.params,
+      query: draft.query ?? existing.query,
+      body: draft.body ?? existing.body,
+      headers: draft.headers ?? existing.headers
+    };
+    save(routeKey, merged);
+    // Dispatch an event so any live TryItPanel mounted on this route
+    // picks up the change without a remount round-trip.
+    window.dispatchEvent(
+      new CustomEvent(SEED_EVENT, { detail: { routeKey, draft: merged } })
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
 export function useTryItDraft(routeKey: string): {
   draft: TryItDraft;
   updateParams: (params: Record<string, string>) => void;
@@ -72,6 +94,22 @@ export function useTryItDraft(routeKey: string): {
   useEffect(() => {
     save(routeKey, draft);
   }, [routeKey, draft]);
+
+  useEffect(() => {
+    function onSeed(event: Event) {
+      const detail = (event as CustomEvent<{
+        routeKey: string;
+        draft: TryItDraft;
+      }>).detail;
+      if (detail.routeKey === routeKey) {
+        setDraft(detail.draft);
+      }
+    }
+    window.addEventListener(SEED_EVENT, onSeed as EventListener);
+    return () => {
+      window.removeEventListener(SEED_EVENT, onSeed as EventListener);
+    };
+  }, [routeKey]);
 
   const updateParams = useCallback(
     (params: Record<string, string>) => {
