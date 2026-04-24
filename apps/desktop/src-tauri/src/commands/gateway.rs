@@ -36,6 +36,8 @@ pub struct StartMockServerArgs {
     #[serde(default)]
     pub rate_limits: Option<BTreeMap<String, RateLimitRule>>,
     #[serde(default)]
+    pub status_overrides: Option<BTreeMap<String, u16>>,
+    #[serde(default)]
     pub database_url: Option<String>,
 }
 
@@ -77,6 +79,7 @@ pub async fn start_mock_server(
         response_headers: args.response_headers.unwrap_or_default(),
         required_headers: args.required_headers.unwrap_or_default(),
         rate_limits: args.rate_limits.unwrap_or_default(),
+        status_overrides: args.status_overrides.unwrap_or_default(),
     };
 
     services
@@ -174,6 +177,8 @@ pub struct UpdateMockServerArgs {
     #[serde(default)]
     pub rate_limits: Option<BTreeMap<String, RateLimitRule>>,
     #[serde(default)]
+    pub status_overrides: Option<BTreeMap<String, u16>>,
+    #[serde(default)]
     pub database_url: Option<String>,
 }
 
@@ -215,6 +220,7 @@ pub async fn update_mock_server(
     let response_headers = args.response_headers.unwrap_or(current.response_headers);
     let required_headers = args.required_headers.unwrap_or(current.required_headers);
     let rate_limits = args.rate_limits.unwrap_or(current.rate_limits);
+    let status_overrides = args.status_overrides.unwrap_or(current.status_overrides);
 
     services
         .gateway
@@ -228,6 +234,7 @@ pub async fn update_mock_server(
             response_headers,
             required_headers,
             rate_limits,
+            status_overrides,
         )
         .await
         .map_err(|error| error.to_string())

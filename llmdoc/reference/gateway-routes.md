@@ -49,6 +49,18 @@ Status code mapping:
 - `MockExampleKind::Empty` → 200
 - `MockExampleKind::Error` → 400
 
+## Status code overrides
+
+`GatewayConfig.status_overrides: Map<METHOD /path, u16>` lets the user
+pick the exact HTTP status emitted for a matched route instead of the
+default derived from the example kind (200 for success/empty, 400 for
+error). Out-of-range codes (outside 100–599) silently fall back to the
+kind default so a bad config never strands a route. When an override
+fires, the log entry's `source` becomes `status-override` so the UI can
+show why a non-standard code was returned. Common uses: `201 Created`
+for POST handlers, `204 No Content` for DELETE, `403 Forbidden` for a
+differentiated auth failure.
+
 ## Response headers
 
 Always emitted:

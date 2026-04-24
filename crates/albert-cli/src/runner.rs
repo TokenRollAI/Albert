@@ -630,6 +630,7 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
         response_headers: BTreeMap::new(),
         required_headers: BTreeMap::new(),
         rate_limits: BTreeMap::new(),
+        status_overrides: BTreeMap::new(),
     };
 
     // Dry-run: dump the resolved config as JSON so users can verify how

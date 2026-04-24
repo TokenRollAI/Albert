@@ -85,6 +85,7 @@ impl MockGateway {
 
         let response_headers = Arc::new(config.response_headers.clone());
         let required_headers = Arc::new(config.required_headers.clone());
+        let status_overrides = Arc::new(config.status_overrides.clone());
         let started_at = handlers::epoch_ms_now();
         let state = AppState::new(
             table_arc.clone(),
@@ -94,6 +95,7 @@ impl MockGateway {
             config.capture_bodies,
             response_headers,
             required_headers,
+            status_overrides,
             config.rate_limits.clone(),
             started_at,
         );
@@ -161,6 +163,7 @@ impl MockGateway {
             config.response_headers,
             config.required_headers,
             config.rate_limits,
+            config.status_overrides,
         )
         .await
     }
@@ -180,6 +183,7 @@ impl MockGateway {
         response_headers: BTreeMap<String, BTreeMap<String, String>>,
         required_headers: BTreeMap<String, Vec<RequiredHeader>>,
         rate_limits: BTreeMap<String, RateLimitRule>,
+        status_overrides: BTreeMap<String, u16>,
     ) -> Result<GatewayStatus, GatewayError> {
         let mut guard = self.inner.lock().await;
         let Some(running) = guard.as_mut() else {
@@ -204,6 +208,9 @@ impl MockGateway {
             .state
             .replace_required_headers(Arc::new(required_headers.clone()));
         running.state.replace_rate_limits(rate_limits.clone());
+        running
+            .state
+            .replace_status_overrides(Arc::new(status_overrides.clone()));
         running.config.example_overrides = overrides;
         running.config.default_latency_ms = default_latency_ms;
         running.config.latency_overrides = latency_overrides;
@@ -212,6 +219,7 @@ impl MockGateway {
         running.config.response_headers = response_headers;
         running.config.required_headers = required_headers;
         running.config.rate_limits = rate_limits;
+        running.config.status_overrides = status_overrides;
         running.route_summaries = summaries;
         Ok(running.to_status())
     }
@@ -1168,6 +1176,7 @@ mod tests {
                 BTreeMap::new(),
                 BTreeMap::new(),
                 same_rules,
+                BTreeMap::new(),
             )
             .await
             .expect("reconfigure");
@@ -1185,6 +1194,7 @@ mod tests {
                 BTreeMap::new(),
                 0.0,
                 false,
+                BTreeMap::new(),
                 BTreeMap::new(),
                 BTreeMap::new(),
                 BTreeMap::new(),
@@ -1258,6 +1268,7 @@ mod tests {
                 BTreeMap::new(),
                 api_key_rules,
                 BTreeMap::new(),
+                BTreeMap::new(),
             )
             .await
             .expect("reconfigure");
@@ -1325,6 +1336,54 @@ mod tests {
         let gateway = MockGateway::new();
         let err = gateway.clear_log().await.err();
         assert!(matches!(err, Some(GatewayError::NotRunning)));
+    }
+
+    #[tokio::test]
+    async fn status_overrides_beat_kind_default() {
+        // Default success→200; override to 201. Also verify a non-standard
+        // code like 418 is honored and an invalid one like 999 falls back.
+        let gateway = MockGateway::new();
+        let col = collection(
+            "stat",
+            vec![
+                endpoint(HttpMethod::Post, "/orders", json!({"id": "o-1"})),
+                endpoint(HttpMethod::Get, "/teapot", json!({"brew": true})),
+                endpoint(HttpMethod::Get, "/bogus", json!({})),
+            ],
+        );
+        let mut status_overrides = BTreeMap::new();
+        status_overrides.insert("POST /orders".to_string(), 201);
+        status_overrides.insert("GET /teapot".to_string(), 418);
+        // Out-of-range: the config applier clamps to 100–599, so 999
+        // silently falls back to the kind default.
+        status_overrides.insert("GET /bogus".to_string(), 999);
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    status_overrides,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        let resp = client.post(format!("{base}/orders")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 201);
+
+        let resp = client.get(format!("{base}/teapot")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 418);
+
+        let resp = client.get(format!("{base}/bogus")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+
+        let log = gateway.recent_requests(10).await;
+        assert!(log.iter().any(|e| e.source == "status-override"));
+
+        gateway.stop().await.expect("stop");
     }
 
     #[tokio::test]

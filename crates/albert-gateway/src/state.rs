@@ -36,6 +36,8 @@ pub(crate) type ResponseHeaderMap = BTreeMap<String, BTreeMap<String, String>>;
 
 pub(crate) type RequiredHeaderMap = BTreeMap<String, Vec<crate::config::RequiredHeader>>;
 
+pub(crate) type StatusOverrideMap = BTreeMap<String, u16>;
+
 /// Per-route sliding-window counters. Keyed by `METHOD /path`; stores
 /// `{rule, timestamps}` where `timestamps` are millisecond epochs of
 /// recent requests within the window.
@@ -175,6 +177,7 @@ pub(crate) struct AppState {
     pub(crate) capture_bodies: Arc<StdMutex<bool>>,
     pub(crate) response_headers: Arc<StdMutex<Arc<ResponseHeaderMap>>>,
     pub(crate) required_headers: Arc<StdMutex<Arc<RequiredHeaderMap>>>,
+    pub(crate) status_overrides: Arc<StdMutex<Arc<StatusOverrideMap>>>,
     pub(crate) rate_limits: Arc<StdMutex<RateLimitState>>,
     pub(crate) metrics: Arc<StdMutex<MetricsSnapshot>>,
     pub(crate) request_log: Arc<StdMutex<VecDeque<RequestLogEntry>>>,
@@ -211,6 +214,7 @@ impl AppState {
         capture_bodies: bool,
         response_headers: Arc<ResponseHeaderMap>,
         required_headers: Arc<RequiredHeaderMap>,
+        status_overrides: Arc<StatusOverrideMap>,
         rate_limits: BTreeMap<String, crate::config::RateLimitRule>,
         started_at_epoch_ms: i64,
     ) -> Self {
@@ -222,6 +226,7 @@ impl AppState {
             capture_bodies: Arc::new(StdMutex::new(capture_bodies)),
             response_headers: Arc::new(StdMutex::new(response_headers)),
             required_headers: Arc::new(StdMutex::new(required_headers)),
+            status_overrides: Arc::new(StdMutex::new(status_overrides)),
             rate_limits: Arc::new(StdMutex::new(RateLimitState {
                 rules: rate_limits,
                 history: BTreeMap::new(),
@@ -308,6 +313,21 @@ impl AppState {
             .required_headers
             .lock()
             .expect("required headers poisoned");
+        *slot = next;
+    }
+
+    pub(crate) fn snapshot_status_overrides(&self) -> Arc<StatusOverrideMap> {
+        self.status_overrides
+            .lock()
+            .expect("status overrides poisoned")
+            .clone()
+    }
+
+    pub(crate) fn replace_status_overrides(&self, next: Arc<StatusOverrideMap>) {
+        let mut slot = self
+            .status_overrides
+            .lock()
+            .expect("status overrides poisoned");
         *slot = next;
     }
 

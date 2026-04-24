@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { render, screen } from "@testing-library/react";
 import {
   TryItPanel,
+  formatBytes,
   placeholderForAuthHint
 } from "../TryItPanel";
 import type { CanonicalEndpoint, EndpointTab } from "../../types";
@@ -29,6 +30,27 @@ function makeTab(auth: CanonicalEndpoint["auth"]): EndpointTab {
 
 beforeEach(() => {
   window.localStorage.clear();
+});
+
+describe("formatBytes", () => {
+  test("under 1 kB stays in bytes", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(42)).toBe("42 B");
+    expect(formatBytes(1023)).toBe("1023 B");
+  });
+  test("under 1 MB uses kB with one decimal when < 10", () => {
+    expect(formatBytes(1024)).toBe("1.0 kB");
+    expect(formatBytes(2048)).toBe("2.0 kB");
+    expect(formatBytes(1024 * 15)).toBe("15 kB");
+  });
+  test(">= 1 MB uses MB", () => {
+    expect(formatBytes(1024 * 1024)).toBe("1.0 MB");
+    expect(formatBytes(1024 * 1024 * 8)).toBe("8.0 MB");
+  });
+  test("negative or non-finite input is safe", () => {
+    expect(formatBytes(-1)).toBe("0 B");
+    expect(formatBytes(Number.NaN)).toBe("0 B");
+  });
 });
 
 describe("placeholderForAuthHint", () => {

@@ -65,6 +65,13 @@
 - `lib/__tests__/jsonLint.test.ts` — the Try-it body lint helper:
   empty-ok, valid JSON scalars/objects/arrays, malformed input with
   line/column extraction, trailing-comma rejection.
+- `lib/__tests__/queryString.test.ts` — the key=value query builder
+  parse/serialize round-trip: leading `?` stripping, standalone keys,
+  `+` → space, percent-escape fidelity, blank-key rejection on
+  serialize.
+- `components/__tests__/TryItPanel.auth.test.tsx` now also covers the
+  `formatBytes` helper (byte / kB / MB thresholds + safety for
+  NaN/negatives).
 
 ## CI integration
 

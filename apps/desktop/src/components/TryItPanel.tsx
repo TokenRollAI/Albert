@@ -3,6 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { JsonView } from "./JsonView";
 import { lintJson } from "../lib/jsonLint";
+import {
+  parseQueryString,
+  serializeQueryString,
+  type QueryPair
+} from "../lib/queryString";
 import { useTryItDraft } from "../hooks/useTryItDraft";
 import { useTryItHistory } from "../hooks/useTryItHistory";
 import type { AuthRequirementHint, EndpointTab } from "../types";
@@ -39,6 +44,17 @@ interface ResponseState {
   headers: Record<string, string>;
   body: unknown;
   elapsedMs: number;
+  sizeBytes: number;
+}
+
+/** Format a byte count as a human-readable label (e.g. "1.2 kB"). */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb >= 10 ? 0 : 1)} kB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
 function extractPathParams(path: string): string[] {
@@ -94,6 +110,10 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<ResponseState | null>(null);
   const bodyLint = useMemo(() => lintJson(bodyDraft), [bodyDraft]);
+  const queryPairs: QueryPair[] = useMemo(
+    () => parseQueryString(query),
+    [query]
+  );
 
   // Seed the Authorization (or custom) header the first time we see an
   // auth hint for a fresh draft. Runs per `routeKey`, not per render, so
@@ -148,11 +168,21 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
       const resp = await fetch(url, init);
       const elapsedMs = Math.round(performance.now() - start);
       const contentType = resp.headers.get("content-type") ?? "";
+      // Read the raw bytes first so we can record size *before* JSON
+      // parsing (which otherwise obscures the wire body). The overhead is
+      // trivial for realistic mock payloads and keeps size accurate for
+      // non-JSON responses too.
+      const rawText = await resp.text();
+      const sizeBytes = new Blob([rawText]).size;
       let body: unknown;
       if (contentType.includes("application/json")) {
-        body = await resp.json().catch(() => "<invalid JSON>");
+        try {
+          body = rawText ? JSON.parse(rawText) : "";
+        } catch {
+          body = "<invalid JSON>";
+        }
       } else {
-        body = await resp.text();
+        body = rawText;
       }
       const headersOut: Record<string, string> = {};
       resp.headers.forEach((value, key) => {
@@ -162,7 +192,8 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
         status: resp.status,
         headers: headersOut,
         body,
-        elapsedMs
+        elapsedMs,
+        sizeBytes
       });
       history.record({
         status: resp.status,
@@ -225,16 +256,77 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
       ) : null}
 
       <div className="tryit__section">
-        <label className="tryit__field">
+        <div className="tryit__label tryit__label--row">
           <span>Query string</span>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => {
+              const next = [...queryPairs, { key: "", value: "" }];
+              setQuery(serializeQueryString(next));
+            }}
+          >
+            <Icon name="plus" size={12} />
+            <span>Add</span>
+          </button>
+        </div>
+        {queryPairs.length === 0 ? (
+          <div className="tryit__hint">No query parameters.</div>
+        ) : (
+          <div className="tryit__headers">
+            {queryPairs.map((pair, idx) => (
+              <div key={idx} className="tryit__header-row">
+                <input
+                  type="text"
+                  placeholder="key"
+                  value={pair.key}
+                  onChange={(event) => {
+                    const next = queryPairs.map((p, i) =>
+                      i === idx ? { ...p, key: event.target.value } : p
+                    );
+                    setQuery(serializeQueryString(next));
+                  }}
+                  spellCheck={false}
+                />
+                <input
+                  type="text"
+                  placeholder="value"
+                  value={pair.value}
+                  onChange={(event) => {
+                    const next = queryPairs.map((p, i) =>
+                      i === idx ? { ...p, value: event.target.value } : p
+                    );
+                    setQuery(serializeQueryString(next));
+                  }}
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="btn btn--icon"
+                  onClick={() => {
+                    const next = queryPairs.filter((_, i) => i !== idx);
+                    setQuery(serializeQueryString(next));
+                  }}
+                  title="Remove"
+                  aria-label={`Remove query param ${pair.key || "(blank)"}`}
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <details className="tryit__raw-query">
+          <summary>Raw ({query.length ? `${query.length} chars` : "empty"})</summary>
           <input
             type="text"
             placeholder="e.g. status=paid&limit=10"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             spellCheck={false}
+            aria-label="Raw query string"
           />
-        </label>
+        </details>
       </div>
 
       <div className="tryit__section">
@@ -375,8 +467,26 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
         </button>
         {response ? (
           <span className="tryit__meta">
-            {response.status} · {response.elapsedMs}ms
+            {response.status} · {response.elapsedMs}ms ·{" "}
+            {formatBytes(response.sizeBytes)}
           </span>
+        ) : null}
+        {response ? (
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => {
+              const body =
+                typeof response.body === "string"
+                  ? response.body
+                  : JSON.stringify(response.body, null, 2);
+              void navigator.clipboard?.writeText(body);
+            }}
+            title="Copy the response body to clipboard"
+          >
+            <Icon name="copy" size={12} />
+            <span>Copy body</span>
+          </button>
         ) : null}
       </div>
 

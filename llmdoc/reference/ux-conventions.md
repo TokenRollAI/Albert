@@ -133,7 +133,11 @@ currently running mock gateway's bind address and lets the user send a
 request with:
 
 - path-parameter inputs (auto-extracted from `{id}` tokens)
-- a query string
+- a structured query-string editor (key=value rows); every edit
+  round-trips through `lib/queryString.ts` so the raw form (collapsed
+  under a `<details>` summary) stays in sync. Pressing "Add" appends an
+  empty row; the trash icon removes one. Blank-keyed rows are dropped
+  on serialize so in-progress edits don't leak `&=value` into URLs.
 - repeatable `KEY: VALUE` custom headers (auth tokens, etc.)
 - a JSON body draft (shown only for non-GET/HEAD methods) with a live
   lint line beneath it — `✓ valid JSON`, `empty body`, or
@@ -151,10 +155,12 @@ Drafts are persisted in `localStorage` keyed by `METHOD /path` via
 `useTryItDraft`, so switching tabs or restarting the app preserves every
 field. A **Clear** button wipes the draft for the active route.
 
-The panel displays the response status, elapsed ms, select headers
-(`x-albert-*`, `content-type`), and body via `JsonView`. `Mod+Enter`
-anywhere inside the Try-it surface (including the body textarea) fires
-Send, matching the Postman / Insomnia muscle memory.
+The panel displays the response status, elapsed ms, body size (bytes /
+kB / MB), select headers (`x-albert-*`, `content-type`), and body via
+`JsonView`. A **Copy body** button next to the status line clipboards
+the full response — pretty-printed for JSON, raw text otherwise.
+`Mod+Enter` anywhere inside the Try-it surface (including the body
+textarea) fires Send, matching the Postman / Insomnia muscle memory.
 
 Every successful send is appended to `useTryItHistory`, a bounded
 last-5 history keyed by `METHOD /path` in `localStorage`. The

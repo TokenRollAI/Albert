@@ -52,6 +52,15 @@ pub struct GatewayConfig {
     /// `state::RateLimitConfig`.
     #[serde(default)]
     pub rate_limits: BTreeMap<String, RateLimitRule>,
+    /// Per-route response status code override keyed by `METHOD path`.
+    /// When set, the gateway emits this status for the selected example
+    /// instead of the default derived from the example's kind (200 for
+    /// success/empty, 400 for error). Clamped to the 1xx–5xx HTTP range
+    /// at apply time. Useful for modeling `201 Created`, `202 Accepted`,
+    /// `204 No Content`, or custom error codes like `403 Forbidden`
+    /// without having to add a new `MockExampleKind` variant.
+    #[serde(default)]
+    pub status_overrides: BTreeMap<String, u16>,
 }
 
 /// A single sliding-window rate cap: "at most `limit` requests per
@@ -91,6 +100,7 @@ impl Default for GatewayConfig {
             response_headers: BTreeMap::new(),
             required_headers: BTreeMap::new(),
             rate_limits: BTreeMap::new(),
+            status_overrides: BTreeMap::new(),
         }
     }
 }

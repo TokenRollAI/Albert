@@ -259,14 +259,23 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         sleep(Duration::from_millis(latency_ms)).await;
     }
 
-    let status_line_code: u16 = match example.kind {
+    let default_status: u16 = match example.kind {
         MockExampleKind::Success | MockExampleKind::Empty => 200,
         MockExampleKind::Error => 400,
     };
+    let status_overrides = state.snapshot_status_overrides();
+    let overridden_status = status_overrides
+        .get(&matched_key)
+        .copied()
+        .filter(|code| (100..=599).contains(code));
+    let status_applied_override = overridden_status.is_some();
+    let status_line_code: u16 = overridden_status.unwrap_or(default_status);
     let source = if query_selected {
         "query"
     } else if error_injected {
         "error-rate"
+    } else if status_applied_override {
+        "status-override"
     } else if override_kind.is_some() || fallback_override.is_some() {
         "override"
     } else {
@@ -295,7 +304,7 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         payload: templated_payload,
         ..example.clone()
     };
-    let (status, body) = render_example(&templated_example);
+    let (status, body) = render_example(&templated_example, overridden_status);
     let body = if strip_body { Body::empty() } else { body };
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -341,12 +350,14 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     (status, headers, body).into_response()
 }
 
-fn render_example(example: &MockExample) -> (StatusCode, Body) {
-    let status = match example.kind {
-        MockExampleKind::Success => StatusCode::OK,
-        MockExampleKind::Empty => StatusCode::OK,
+fn render_example(example: &MockExample, override_status: Option<u16>) -> (StatusCode, Body) {
+    let fallback = match example.kind {
+        MockExampleKind::Success | MockExampleKind::Empty => StatusCode::OK,
         MockExampleKind::Error => StatusCode::BAD_REQUEST,
     };
+    let status = override_status
+        .and_then(|code| StatusCode::from_u16(code).ok())
+        .unwrap_or(fallback);
     let body = serde_json::to_vec(&example.payload).unwrap_or_else(|_| b"{}".to_vec());
     (status, Body::from(body))
 }

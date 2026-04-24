@@ -43,6 +43,7 @@ interface StartArgs {
   responseHeaders?: Record<string, Record<string, string>>;
   requiredHeaders?: Record<string, RequiredHeader[]>;
   rateLimits?: Record<string, RateLimitRule>;
+  statusOverrides?: Record<string, number>;
   databaseUrl?: string;
 }
 
@@ -56,6 +57,7 @@ interface UpdateArgs {
   responseHeaders?: Record<string, Record<string, string>>;
   requiredHeaders?: Record<string, RequiredHeader[]>;
   rateLimits?: Record<string, RateLimitRule>;
+  statusOverrides?: Record<string, number>;
 }
 
 /**
@@ -79,7 +81,8 @@ async function persistConfig(
     capture_bodies: config.capture_bodies,
     response_headers: config.response_headers,
     required_headers: config.required_headers,
-    rate_limits: config.rate_limits
+    rate_limits: config.rate_limits,
+    status_overrides: config.status_overrides
   };
   await invoke("save_gateway_preferences", {
     payload,
@@ -99,6 +102,7 @@ export interface SavedGatewayPreferences {
   response_headers?: Record<string, Record<string, string>>;
   required_headers?: Record<string, RequiredHeader[]>;
   rate_limits?: Record<string, RateLimitRule>;
+  status_overrides?: Record<string, number>;
 }
 
 interface UseMockGatewayResult {
@@ -201,6 +205,7 @@ export function useMockGateway({
       responseHeaders,
       requiredHeaders,
       rateLimits,
+      statusOverrides,
       databaseUrl
     }: StartArgs) => {
       if (!enabled) {
@@ -224,6 +229,7 @@ export function useMockGateway({
             response_headers: responseHeaders ?? null,
             required_headers: requiredHeaders ?? null,
             rate_limits: rateLimits ?? null,
+            status_overrides: statusOverrides ?? null,
             database_url: databaseUrl ?? null
           }
         });
@@ -292,6 +298,7 @@ export function useMockGateway({
             response_headers: args.responseHeaders ?? null,
             required_headers: args.requiredHeaders ?? null,
             rate_limits: args.rateLimits ?? null,
+            status_overrides: args.statusOverrides ?? null,
             database_url: null
           }
         });

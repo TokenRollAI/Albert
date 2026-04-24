@@ -2244,6 +2244,26 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
+
+.tryit__raw-query {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.tryit__raw-query summary {
+  cursor: pointer;
+  padding: 2px 0;
+  user-select: none;
+}
+.tryit__raw-query summary:hover {
+  color: var(--text);
+}
+.tryit__raw-query input {
+  width: 100%;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
 .tryit__meta {
   font-size: 11px;
   color: var(--text-muted);

@@ -24,6 +24,7 @@ interface UseGatewayActionsArgs {
       responseHeaders?: Record<string, Record<string, string>>;
       requiredHeaders?: Record<string, RequiredHeader[]>;
       rateLimits?: Record<string, RateLimitRule>;
+      statusOverrides?: Record<string, number>;
       exampleOverrides?: Record<string, MockExampleKind>;
     }) => Promise<{ running: boolean; bind_address?: string | null } | null>;
     update: (args: {
@@ -42,6 +43,7 @@ interface UseGatewayActionsArgs {
       response_headers?: Record<string, Record<string, string>>;
       required_headers?: Record<string, RequiredHeader[]>;
       rate_limits?: Record<string, RateLimitRule>;
+      status_overrides?: Record<string, number>;
       example_overrides?: Record<string, MockExampleKind>;
     } | null;
     clearLog?: () => Promise<void>;
@@ -101,6 +103,7 @@ export function useGatewayActions({
         responseHeaders: saved?.response_headers,
         requiredHeaders: saved?.required_headers,
         rateLimits: saved?.rate_limits,
+        statusOverrides: saved?.status_overrides,
         exampleOverrides: saved?.example_overrides
       });
       if (result?.running && result.bind_address) {
