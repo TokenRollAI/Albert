@@ -25,6 +25,14 @@ Within the sidebar:
 - Tag chips below the search input filter endpoints by `tags[]`. Click
   a chip to toggle an exclusive "show only this tag" filter; click
   again or press the `✕` chip to clear.
+- Two-token search syntax: when the first whitespace-separated token is
+  an HTTP method (`get`, `post`, `put`, `patch`, `delete`, `options`,
+  `head`, `trace`) AND a second token is present, the method is matched
+  exactly and the second token filters path / summary / operation id.
+  So `get /users` narrows to GET endpoints mentioning `/users`, while
+  `get` alone still does a single-token method filter. Non-method first
+  tokens fall through to single-substring behavior (e.g. `foo bar`
+  looks for the literal "foo bar" in any field).
 
 Shortcuts are suppressed while focus is inside an editable element unless
 a modifier key is held. Conventions live in

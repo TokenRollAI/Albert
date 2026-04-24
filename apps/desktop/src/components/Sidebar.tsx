@@ -58,6 +58,60 @@ export function countMethods(
   return [...primary, ...extras];
 }
 
+const HTTP_METHODS = new Set([
+  "get",
+  "post",
+  "put",
+  "patch",
+  "delete",
+  "options",
+  "head",
+  "trace"
+]);
+
+/**
+ * Decide whether an endpoint should survive the sidebar's text filter.
+ *
+ * Single-token query (default): case-insensitive substring match
+ * against method, path, summary, or operation_id. Power-user path:
+ * when the first token is an HTTP method (`get`, `post`, etc.) AND a
+ * second token is present, the method is matched exactly and the
+ * second token must match the path / summary / operation id. So
+ * `get users` narrows to GET endpoints whose path/summary mentions
+ * "users" (instead of matching any endpoint containing either word).
+ * `get` alone still works as a single-token method filter.
+ */
+export function matchesEndpointQuery(
+  endpoint: Pick<
+    CanonicalEndpoint,
+    "method" | "path" | "summary" | "operation_id"
+  >,
+  rawQuery: string
+): boolean {
+  const query = rawQuery.trim().toLowerCase();
+  if (!query) return true;
+  const tokens = query.split(/\s+/).filter(Boolean);
+  const method = endpoint.method.toLowerCase();
+  const path = endpoint.path.toLowerCase();
+  const summary = (endpoint.summary ?? "").toLowerCase();
+  const opId = (endpoint.operation_id ?? "").toLowerCase();
+
+  if (tokens.length >= 2 && HTTP_METHODS.has(tokens[0])) {
+    if (method !== tokens[0]) return false;
+    const rest = tokens.slice(1).join(" ");
+    return (
+      path.includes(rest) || summary.includes(rest) || opId.includes(rest)
+    );
+  }
+
+  return (
+    path.includes(query) ||
+    method.includes(query) ||
+    summary.includes(query) ||
+    opId.includes(query)
+  );
+}
+
 function authTitle(hint: AuthRequirementHint): string {
   const base = (() => {
     switch (hint.scheme) {
@@ -198,13 +252,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
           if (tagActive && !(endpoint.tags ?? []).includes(activeTag)) {
             return false;
           }
-          if (!q) return true;
-          return (
-            endpoint.path.toLowerCase().includes(q) ||
-            endpoint.method.toLowerCase().includes(q) ||
-            (endpoint.summary ?? "").toLowerCase().includes(q) ||
-            (endpoint.operation_id ?? "").toLowerCase().includes(q)
-          );
+          return matchesEndpointQuery(endpoint, q);
         });
         if (matchCollection) {
           // Tag filter inactive and collection name matches — keep everything

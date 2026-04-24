@@ -97,6 +97,11 @@
   the collapsed-collection chip ordering: empty input, counts-per-
   method, canonical GET→DELETE order, alphabetical fallback for
   non-standard verbs, case-insensitive method names.
+- `components/__tests__/Sidebar.matchesEndpointQuery.test.ts` — the
+  sidebar text-filter matcher: empty-query passthrough,
+  case-insensitive substring on path/summary/op-id, single-token
+  method substring, two-token `<verb> <substring>` narrows by method +
+  field, non-method first token falls back to literal-substring.
 - `lib/__tests__/fuzzy.test.ts` — fuzzy matcher used by the command
   palette: in-order character matching, word-boundary + contiguity
   bonuses, stable sort on ties.
