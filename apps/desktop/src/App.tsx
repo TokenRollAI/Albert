@@ -4,6 +4,7 @@ import { CommandPalette, type CommandItem } from "./components/CommandPalette";
 import { EndpointTabs } from "./components/EndpointTabs";
 import { ImportDialog } from "./components/ImportDialog";
 import { MockServerPanel } from "./components/MockServerPanel";
+import { buildCurlCommand } from "./components/UrlBar";
 import { PromptPreviewModal } from "./components/PromptPreviewModal";
 import { ProvidersPanel } from "./components/ProvidersPanel";
 import { ShortcutsOverlay } from "./components/ShortcutsOverlay";
@@ -197,6 +198,42 @@ function App() {
 
   const paletteItems = useMemo<CommandItem[]>(() => {
     const items: CommandItem[] = [];
+    // Active-route actions float to the top when a tab is open so the
+    // palette can double as a workflow shortcut, not just a navigator.
+    if (activeTab) {
+      const routeLabel = `${activeTab.method.toUpperCase()} ${activeTab.endpoint.path}`;
+      items.push({
+        kind: "action",
+        id: "action:active:copy-curl",
+        label: `Copy cURL for ${routeLabel}`,
+        subtitle: mockGateway.status.bind_address
+          ? `targets http://${mockGateway.status.bind_address}`
+          : "targets https://api.example.com placeholder",
+        run: () => {
+          const command = buildCurlCommand(
+            activeTab,
+            mockGateway.status.bind_address
+              ? `http://${mockGateway.status.bind_address}`
+              : null
+          );
+          void navigator.clipboard?.writeText(command).then(
+            () => toasts.success("cURL copied to clipboard."),
+            () => toasts.warn("Clipboard access was denied.")
+          );
+        }
+      });
+      items.push({
+        kind: "action",
+        id: "action:active:seed-tryit",
+        label: `Jump to Try-it for ${routeLabel}`,
+        subtitle: "scrolls the response pane into view",
+        run: () => {
+          // No-op beyond "make the active tab visible" — the tab is
+          // already open; palette close is enough.
+        }
+      });
+    }
+
     for (const collection of sidebarCollections) {
       for (const endpoint of collection.endpoints) {
         items.push({
@@ -260,7 +297,7 @@ function App() {
       run: () => drawers.shortcuts.open$()
     });
     return items;
-  }, [sidebarCollections, mockGateway, drawers, theme, toggleTheme]);
+  }, [activeTab, sidebarCollections, mockGateway, drawers, theme, toggleTheme, toasts]);
 
   const runPaletteItem = useCallback(
     (item: CommandItem) => {

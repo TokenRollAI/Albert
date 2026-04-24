@@ -14,8 +14,11 @@ interface UrlBarProps {
  * Uses the running mock base URL when one is available so the command
  * actually works against the local gateway. Otherwise it falls back to
  * a `https://api.example.com` placeholder so users can see the shape.
+ *
+ * Exported so the command palette can reuse the same formatter for its
+ * "Copy cURL for active endpoint" action.
  */
-function buildCurlCommand(tab: EndpointTab, baseUrl: string | null): string {
+export function buildCurlCommand(tab: EndpointTab, baseUrl: string | null): string {
   const method = tab.method.toUpperCase();
   const resolvedBase = baseUrl ?? "https://api.example.com";
   const parts: string[] = [`curl -X ${method}`];

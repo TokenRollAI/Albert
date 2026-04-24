@@ -42,6 +42,10 @@
 - `components/__tests__/ResponseHeadersEditor.test.tsx` — flatten /
   unflatten round-trip semantics + add/replace/remove via the
   flattened-row UI.
+- `lib/__tests__/fetchErrors.test.ts` — covers `validateFetchUrl`
+  (blank / non-http / unparseable input) and `friendlyFetchError`
+  (rewrites of the invalid-URL / unsupported-scheme / network /
+  timeout / HTTP 4xx / oversized-payload variants).
 - `lib/__tests__/authHints.test.ts` — covers the hint→RequiredHeader
   conversion for bearer / basic / OAuth2 / apiKey-header schemes and
   the `seedRequiredHeadersFromEndpoints` batch helper.

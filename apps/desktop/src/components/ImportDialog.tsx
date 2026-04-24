@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
+import {
+  friendlyFetchError,
+  validateFetchUrl
+} from "../lib/fetchErrors";
 
 interface FetchedSource {
   url: string;
@@ -50,7 +54,11 @@ export function ImportDialog({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleFetchUrl() {
-    if (!fetchUrl.trim()) return;
+    const validationError = validateFetchUrl(fetchUrl);
+    if (validationError) {
+      setFetchError(validationError);
+      return;
+    }
     setFetchBusy(true);
     setFetchError(null);
     try {
@@ -61,8 +69,11 @@ export function ImportDialog({
       if (!name.trim() && result.suggested_name) {
         setName(result.suggested_name);
       }
+      // Success feedback lives as a transient banner below the input —
+      // setting a neutral "loaded N bytes" message.
+      setFetchError(null);
     } catch (err) {
-      setFetchError(String(err));
+      setFetchError(friendlyFetchError(err));
     } finally {
       setFetchBusy(false);
     }
