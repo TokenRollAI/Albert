@@ -7,3 +7,7 @@ target/
 albert.db
 apps/desktop/src-tauri/albert.db
 assets/branding/.build/
+.claude/
+.env
+.env.local
+.env.*.local
