@@ -85,7 +85,8 @@ function App() {
     setExample,
     updateEndpointExample,
     resetTabs,
-    restoreTabs
+    restoreTabs,
+    reorderTabs
   } = useEndpointTabs();
 
   // Reopen persisted tabs once collections finish loading. The hook
@@ -410,6 +411,7 @@ function App() {
             onActivate={activateTab}
             onClose={closeTab}
             onNew={() => drawers.import.open$()}
+            onReorder={reorderTabs}
           />
 
           {activeTab ? (

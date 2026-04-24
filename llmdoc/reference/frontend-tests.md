@@ -32,8 +32,9 @@
   cross-session rehydration, and `clear` semantics.
 - `hooks/__tests__/useEndpointTabs.test.tsx` — verifies tab persistence
   into `localStorage`, `restoreTabs` rehydrating persisted tabs, skipping
-  tabs whose endpoint disappeared, and idempotency when tabs already
-  exist.
+  tabs whose endpoint disappeared, idempotency when tabs already
+  exist, and `reorderTabs` (splice-in-place, no-op on equal ids,
+  graceful ignore of unknown ids).
 - `components/__tests__/RateLimitsEditor.test.tsx` — adds, removes, and
   applies rate-limit rules, verifying the draft-vs-value dirty gate and
   the exact payload shipped to `onApply`.

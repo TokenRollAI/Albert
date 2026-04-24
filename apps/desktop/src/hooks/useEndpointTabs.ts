@@ -88,6 +88,7 @@ export function useEndpointTabs(): {
   updateEndpointExample: (id: string, example: MockExample) => void;
   resetTabs: () => void;
   restoreTabs: (collections: CanonicalApiCollection[]) => void;
+  reorderTabs: (fromId: string, toId: string) => void;
 } {
   const [tabs, setTabs] = useState<EndpointTab[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -220,6 +221,25 @@ export function useEndpointTabs(): {
   }, []);
 
   /**
+   * Move the tab identified by `fromId` to the slot currently held by
+   * `toId`. No-op if either id is missing or if `fromId === toId`.
+   * Called from the EndpointTabs drag handler — the tab bar is pinned
+   * to native HTML5 drag events so no dependencies required.
+   */
+  const reorderTabs = useCallback((fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    setTabs((prev) => {
+      const fromIndex = prev.findIndex((tab) => tab.id === fromId);
+      const toIndex = prev.findIndex((tab) => tab.id === toId);
+      if (fromIndex === -1 || toIndex === -1) return prev;
+      const next = prev.slice();
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }, []);
+
+  /**
    * Walk the persisted tab set and reopen any tab whose collection +
    * endpoint still exist in the freshly-loaded `collections`. Safe to
    * call multiple times — it bails out when the live state already has
@@ -274,6 +294,7 @@ export function useEndpointTabs(): {
     setExample,
     updateEndpointExample,
     resetTabs,
-    restoreTabs
+    restoreTabs,
+    reorderTabs
   };
 }

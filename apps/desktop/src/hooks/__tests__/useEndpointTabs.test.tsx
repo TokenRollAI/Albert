@@ -99,4 +99,61 @@ describe("useEndpointTabs", () => {
     });
     expect(result.current.tabs).toBe(before);
   });
+
+  test("reorderTabs moves the dragged tab to the drop target's slot", () => {
+    const col = collection("c1", [
+      endpoint("/a"),
+      endpoint("/b"),
+      endpoint("/c")
+    ]);
+    const { result } = renderHook(() => useEndpointTabs());
+    act(() => {
+      result.current.openTab(col.id, col.name, col.endpoints[0]);
+      result.current.openTab(col.id, col.name, col.endpoints[1]);
+      result.current.openTab(col.id, col.name, col.endpoints[2]);
+    });
+    expect(result.current.tabs.map((t) => t.path)).toEqual([
+      "/a",
+      "/b",
+      "/c"
+    ]);
+    const fromId = result.current.tabs[2].id; // /c
+    const toId = result.current.tabs[0].id; // /a
+    act(() => {
+      result.current.reorderTabs(fromId, toId);
+    });
+    expect(result.current.tabs.map((t) => t.path)).toEqual([
+      "/c",
+      "/a",
+      "/b"
+    ]);
+  });
+
+  test("reorderTabs is a no-op when from and to are the same tab", () => {
+    const col = collection("c1", [endpoint("/a"), endpoint("/b")]);
+    const { result } = renderHook(() => useEndpointTabs());
+    act(() => {
+      result.current.openTab(col.id, col.name, col.endpoints[0]);
+      result.current.openTab(col.id, col.name, col.endpoints[1]);
+    });
+    const before = result.current.tabs;
+    act(() => {
+      result.current.reorderTabs(before[0].id, before[0].id);
+    });
+    expect(result.current.tabs).toBe(before);
+  });
+
+  test("reorderTabs ignores unknown ids", () => {
+    const col = collection("c1", [endpoint("/a"), endpoint("/b")]);
+    const { result } = renderHook(() => useEndpointTabs());
+    act(() => {
+      result.current.openTab(col.id, col.name, col.endpoints[0]);
+      result.current.openTab(col.id, col.name, col.endpoints[1]);
+    });
+    const before = result.current.tabs;
+    act(() => {
+      result.current.reorderTabs("made-up-id", before[0].id);
+    });
+    expect(result.current.tabs).toBe(before);
+  });
 });

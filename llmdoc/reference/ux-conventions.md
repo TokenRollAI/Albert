@@ -191,6 +191,20 @@ the status / timestamp / method+url / elapsed ms for each entry; a
 `Clear` button wipes the list. History survives across sessions so
 users can spot-check whether a change altered response times.
 
+## Tab drag-reorder
+
+Endpoint tabs can be rearranged by dragging them within the tab bar.
+Uses the native HTML5 drag API (no dependencies): `draggable` on each
+tab, `onDragStart` stamps the id, `onDragOver` marks the drop target
+with a left-edge accent rail (`.tab--drop-target`), `onDrop` swaps the
+positions via `reorderTabs(fromId, toId)` which splices the dragged
+tab into the target's slot. The dragged tab is dimmed mid-drag
+(`.tab--dragging`). Reorderings persist through the same
+localStorage serialization that powers tab restore, so the last-used
+arrangement survives restarts. Tests:
+`hooks/__tests__/useEndpointTabs.test.tsx` pins down the splice
+semantics, no-op for equal ids, and graceful ignore of unknown ids.
+
 ## Endpoint tab persistence
 
 `useEndpointTabs` mirrors the open-tab set into `localStorage` under
