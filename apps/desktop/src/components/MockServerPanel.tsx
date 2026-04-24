@@ -147,6 +147,18 @@ export function MockServerPanel({
             </span>
           </div>
           <div className="drawer__head-actions">
+            {baseUrl ? (
+              <a
+                className="btn btn--ghost btn--sm"
+                href={`${baseUrl}/__albert/docs`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open Swagger UI for the live spec in your browser"
+              >
+                <Icon name="link" size={12} />
+                <span>Docs</span>
+              </a>
+            ) : null}
             {onExportBundle ? (
               <button
                 type="button"

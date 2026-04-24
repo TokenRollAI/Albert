@@ -63,6 +63,50 @@ pub(crate) async fn openapi_handler(State(state): State<AppState>, req: Request)
     (StatusCode::OK, axum::Json(doc)).into_response()
 }
 
+/// `GET /__albert/docs` — serves a tiny HTML shell that renders
+/// Swagger UI against the sibling `/__albert/openapi.json` endpoint.
+/// The HTML is self-contained (Swagger UI ships via CDN) and fetches
+/// the live spec relative to its own path, so it automatically
+/// targets whatever gateway is serving it — no config needed.
+pub(crate) async fn docs_handler() -> Response {
+    let html = concat!(
+        "<!doctype html>\n",
+        "<html lang=\"en\">\n",
+        "<head>\n",
+        "  <meta charset=\"utf-8\" />\n",
+        "  <title>Albert mock gateway — API docs</title>\n",
+        "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n",
+        "  <link rel=\"stylesheet\" href=\"https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css\" />\n",
+        "  <style>\n",
+        "    html, body { margin: 0; background: #fafafa; }\n",
+        "    #swagger-ui { max-width: 1200px; margin: 0 auto; }\n",
+        "  </style>\n",
+        "</head>\n",
+        "<body>\n",
+        "  <div id=\"swagger-ui\"></div>\n",
+        "  <script src=\"https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js\" charset=\"utf-8\"></script>\n",
+        "  <script>\n",
+        "    window.addEventListener('load', function () {\n",
+        "      window.ui = SwaggerUIBundle({\n",
+        "        url: './openapi.json',\n",
+        "        dom_id: '#swagger-ui',\n",
+        "        deepLinking: true,\n",
+        "        presets: [SwaggerUIBundle.presets.apis],\n",
+        "        layout: 'BaseLayout'\n",
+        "      });\n",
+        "    });\n",
+        "  </script>\n",
+        "</body>\n",
+        "</html>\n",
+    );
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response()
+}
+
 fn urldecode(input: &str) -> Result<String, String> {
     // Tiny percent-decoder — the query string from the axum router is
     // already split on `&`, so we only need to handle `%NN` escapes.

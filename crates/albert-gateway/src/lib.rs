@@ -154,6 +154,10 @@ impl MockGateway {
                 axum::routing::get(handlers::openapi_handler),
             )
             .route(
+                "/__albert/docs",
+                axum::routing::get(handlers::docs_handler),
+            )
+            .route(
                 "/__albert/config/bundle",
                 axum::routing::get(handlers::bundle_export_handler)
                     .post(handlers::bundle_import_handler),
@@ -1798,6 +1802,48 @@ mod tests {
         assert_eq!(doc["openapi"], "3.0.3");
         assert!(doc["paths"]["/orders/{id}"]["get"].is_object());
         assert_eq!(doc["servers"][0]["url"], "http://mock.local");
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn docs_endpoint_serves_swagger_ui_html() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "intro",
+            vec![endpoint(HttpMethod::Get, "/users", json!({"ok": true}))],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("{base}/__albert/docs"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let ctype = resp
+            .headers()
+            .get("content-type")
+            .map(|v| v.to_str().unwrap_or(""))
+            .unwrap_or("");
+        assert!(
+            ctype.starts_with("text/html"),
+            "expected HTML content-type, got {ctype:?}"
+        );
+        let body = resp.text().await.unwrap();
+        // The loaded page should point at the sibling spec + embed swagger-ui.
+        assert!(body.contains("swagger-ui"));
+        assert!(body.contains("./openapi.json"));
+        assert!(body.contains("SwaggerUIBundle"));
         gateway.stop().await.expect("stop");
     }
 

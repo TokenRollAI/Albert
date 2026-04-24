@@ -197,6 +197,13 @@ always serves the error example.
 - `GET /__albert/routes` returns `{routes: [{method, path}, ...]}` — the
   compiled route table without payload data. Used by the CLI `verify`
   subcommand to enumerate what to probe.
+- `GET /__albert/docs` serves a tiny HTML shell that renders Swagger UI
+  (loaded from unpkg CDN) against the sibling `/__albert/openapi.json`
+  endpoint. The HTML references the spec with a relative path so the
+  docs page automatically targets whichever gateway is serving it.
+  Click the "Docs" button in the Mock Server drawer header to open it
+  in the system browser. Covered by `docs_endpoint_serves_swagger_ui_html`
+  in `crates/albert-gateway/src/lib.rs`.
 - `GET /__albert/openapi.json` returns the live collections translated
   into an OpenAPI 3.0 document (info / paths / responses / examples).
   Optional `?base=<url>` query puts a `servers` entry into the output so
