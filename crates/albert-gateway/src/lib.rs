@@ -153,6 +153,11 @@ impl MockGateway {
                 "/__albert/openapi.json",
                 axum::routing::get(handlers::openapi_handler),
             )
+            .route(
+                "/__albert/config/bundle",
+                axum::routing::get(handlers::bundle_export_handler)
+                    .post(handlers::bundle_import_handler),
+            )
             .fallback(any(handlers::mock_handler))
             .with_state(state);
         if config.cors_enabled {
@@ -1554,6 +1559,97 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status().as_u16(), 200);
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn bundle_endpoints_round_trip_over_http() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "h",
+            vec![endpoint(HttpMethod::Get, "/ping", json!({"ok": true}))],
+        );
+        let mut rate_limits = BTreeMap::new();
+        rate_limits.insert(
+            "GET /ping".to_string(),
+            config::RateLimitRule {
+                limit: 4,
+                window_ms: 500,
+            },
+        );
+        let status = gateway
+            .start(
+                vec![col.clone()],
+                GatewayConfig {
+                    port: 0,
+                    error_rate: 0.1,
+                    rate_limits,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        // GET → the bundle shape
+        let resp = client
+            .get(format!("{base}/__albert/config/bundle"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let bundle: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(bundle["bundle_version"], "1.0");
+        assert_eq!(bundle["collection_ids"][0], col.id);
+        assert_eq!(bundle["config"]["rate_limits"]["GET /ping"]["limit"], 4);
+
+        // Flip the server's state so we can see import put things back.
+        gateway
+            .reconfigure(ReconfigureOptions {
+                collections: vec![col.clone()],
+                ..Default::default()
+            })
+            .await
+            .expect("reconfigure");
+        let reset = gateway.status().await.config;
+        assert!(reset.rate_limits.is_empty());
+
+        // POST the bundle back with the inlined collection.
+        let payload = serde_json::json!({
+            "bundle": bundle,
+            "collections": [col],
+        });
+        let resp = client
+            .post(format!("{base}/__albert/config/bundle"))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 204);
+
+        // GET again to prove the rules came back
+        let bundle2: serde_json::Value = client
+            .get(format!("{base}/__albert/config/bundle"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(bundle2["config"]["rate_limits"]["GET /ping"]["limit"], 4);
+
+        // Bad body → 400 with a structured error
+        let bad = client
+            .post(format!("{base}/__albert/config/bundle"))
+            .json(&serde_json::json!({"nope": true}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(bad.status().as_u16(), 400);
+        let err: serde_json::Value = bad.json().await.unwrap();
+        assert_eq!(err["error"], "bundle_invalid");
+
         gateway.stop().await.expect("stop");
     }
 

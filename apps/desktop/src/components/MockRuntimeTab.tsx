@@ -18,6 +18,7 @@ interface MockRuntimeTabProps {
   onStart: (port: number, host: string, cors: boolean) => Promise<void>;
   onStop: () => Promise<void>;
   onApplyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
+  onToggleEnforceRequestBodies: (enabled: boolean) => Promise<void>;
   onApplyRateLimits: (rules: Record<string, RateLimitRule>) => Promise<void>;
   onApplyStatusOverrides: (rules: Record<string, number>) => Promise<void>;
   onApplyResponseHeaders: (
@@ -42,6 +43,7 @@ export function MockRuntimeTab({
   onStart,
   onStop,
   onApplyChaos,
+  onToggleEnforceRequestBodies,
   onApplyRateLimits,
   onApplyStatusOverrides,
   onApplyResponseHeaders,
@@ -243,6 +245,30 @@ export function MockRuntimeTab({
           Delay and error rate apply to all routes while the server runs.
           Per-route latency overrides can be added via the Tauri API
           directly.
+        </p>
+      </section>
+
+      <section className="panel">
+        <div className="panel__title panel__title--row">
+          <h3>Schema enforcement</h3>
+          <span className="panel__meta">reject mismatched request bodies</span>
+        </div>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={status.config.enforce_request_bodies ?? false}
+            onChange={(event) =>
+              void onToggleEnforceRequestBodies(event.target.checked)
+            }
+            disabled={!status.running}
+          />
+          <span>Validate POST / PUT / PATCH bodies against declared schemas</span>
+        </label>
+        <p className="hint">
+          When on, requests whose JSON body doesn't match the endpoint's
+          <code> request_body.schema</code> return <code>400
+          schema_mismatch</code> with a JSON-path pointing at the broken
+          field. Endpoints without a declared schema are unaffected.
         </p>
       </section>
 

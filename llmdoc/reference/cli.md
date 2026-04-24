@@ -20,6 +20,8 @@ running the mock server without the Tauri shell.
 | `inspect` | Print one collection's endpoints in detail (`--id`, `--json`) |
 | `config`  | Probe a running gateway's live GatewayConfig (`--url`)        |
 | `openapi` | Fetch live OpenAPI 3.0 spec from gateway (`--url`, `--output`) |
+| `bundle export` | Snapshot live gateway config to JSON (`--url`, `--output`) |
+| `bundle import` | Apply a saved bundle to a running gateway (`<file>`, `--url`, `--db`) |
 | `import`  | Parse an OpenAPI/cURL file (or a JSON bundle) and persist it |
 | `watch`   | Keep re-importing one or more files on every mtime change    |
 | `list`    | Print the collections stored in the database                 |

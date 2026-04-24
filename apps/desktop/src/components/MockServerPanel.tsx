@@ -29,6 +29,7 @@ interface MockServerPanelProps {
   ) => Promise<void>;
   onApplyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
   onToggleCaptureBodies: (enabled: boolean) => Promise<void>;
+  onToggleEnforceRequestBodies: (enabled: boolean) => Promise<void>;
   onApplyRateLimits: (rules: Record<string, RateLimitRule>) => Promise<void>;
   onApplyStatusOverrides: (rules: Record<string, number>) => Promise<void>;
   onApplyResponseHeaders: (
@@ -57,6 +58,7 @@ export function MockServerPanel({
   onApplyOverrides,
   onApplyChaos,
   onToggleCaptureBodies,
+  onToggleEnforceRequestBodies,
   onApplyRateLimits,
   onApplyStatusOverrides,
   onApplyResponseHeaders,
@@ -227,6 +229,7 @@ export function MockServerPanel({
               onStart={onStart}
               onStop={onStop}
               onApplyChaos={onApplyChaos}
+              onToggleEnforceRequestBodies={onToggleEnforceRequestBodies}
               onApplyRateLimits={onApplyRateLimits}
               onApplyStatusOverrides={onApplyStatusOverrides}
               onApplyResponseHeaders={onApplyResponseHeaders}

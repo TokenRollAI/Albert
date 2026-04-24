@@ -149,6 +149,29 @@ function formatTime(ms: number): string {
   return d.toLocaleTimeString(undefined, { hour12: false });
 }
 
+/**
+ * Return a prettified view of a captured request body if it parses as
+ * JSON, otherwise the raw string unchanged. Keeps the "<capture failed:
+ * …>" sentinel visible by short-circuiting on it so the failure reason
+ * isn't accidentally parsed away.
+ */
+export function prettifyRequestBody(raw: string): string {
+  if (!raw) return raw;
+  if (raw.startsWith("<capture failed:")) return raw;
+  // The gateway appends `…[truncated]` when a body crosses the 4KB cap.
+  // Don't try to parse that — strip it, parse the prefix, then re-append.
+  const sentinel = "…[truncated]";
+  const hasSentinel = raw.endsWith(sentinel);
+  const body = hasSentinel ? raw.slice(0, raw.length - sentinel.length) : raw;
+  try {
+    const parsed = JSON.parse(body);
+    const pretty = JSON.stringify(parsed, null, 2);
+    return hasSentinel ? `${pretty}\n${sentinel}` : pretty;
+  } catch {
+    return raw;
+  }
+}
+
 interface MockRequestsTabProps {
   status: GatewayStatus;
   requests: RequestLogEntry[];
@@ -475,7 +498,7 @@ export function MockRequestsTab({
                   <details className="reqlog__body">
                     <summary>body</summary>
                     <pre className="code-block code-block--wrap">
-                      {entry.request_body}
+                      {prettifyRequestBody(entry.request_body)}
                     </pre>
                   </details>
                 ) : null}

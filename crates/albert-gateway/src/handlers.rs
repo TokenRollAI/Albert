@@ -91,6 +91,139 @@ fn urldecode(input: &str) -> Result<String, String> {
     String::from_utf8(out).map_err(|e| e.to_string())
 }
 
+/// `GET /__albert/config/bundle` — return the full portable
+/// `GatewayConfigBundle` shape (same one `MockGateway::export_bundle`
+/// produces). Gives the CLI a shell-friendly path for snapshotting
+/// live configs without going through Tauri.
+pub(crate) async fn bundle_export_handler(State(state): State<AppState>) -> Response {
+    let collections = state.snapshot_collections();
+    let collection_ids: Vec<String> = collections.iter().map(|c| c.id.clone()).collect();
+    let overrides = state.snapshot_overrides();
+    let latency = state.snapshot_latency();
+    let response_headers = state.snapshot_response_headers();
+    let required_headers = state.snapshot_required_headers();
+    let status_overrides = state.snapshot_status_overrides();
+    let error_rate = state.snapshot_error_rate();
+    let capture_bodies = state.snapshot_capture_bodies();
+    let enforce_request_bodies = state.snapshot_enforce_request_bodies();
+    let rate_limits = state.snapshot_rate_limit_rules();
+    let table = state.snapshot_table();
+    // Rebuild a `GatewayConfig`-shaped JSON; host/port/cors_enabled
+    // aren't fully recoverable from runtime state (host is stored in
+    // the Listener address, not a mutex slot), so we default them —
+    // they're the Listener tab's responsibility and won't be part of
+    // what import replays. The bundle's config is only read for the
+    // enforcement knobs the gateway owns.
+    let payload = serde_json::json!({
+        "bundle_version": crate::config::GatewayConfigBundle::CURRENT_VERSION,
+        "config": {
+            "host": "127.0.0.1",
+            "port": 0,
+            "cors_enabled": true,
+            "example_overrides": &*overrides,
+            "default_latency_ms": latency.default_ms,
+            "latency_overrides": latency.per_route,
+            "latency_jitter_ms": latency.jitter_per_route,
+            "error_rate": error_rate,
+            "capture_bodies": capture_bodies,
+            "enforce_request_bodies": enforce_request_bodies,
+            "response_headers": &*response_headers,
+            "required_headers": &*required_headers,
+            "rate_limits": rate_limits,
+            "status_overrides": &*status_overrides,
+        },
+        "collection_ids": collection_ids,
+        "_route_count": table.len(),
+    });
+    (StatusCode::OK, axum::Json(payload)).into_response()
+}
+
+/// `POST /__albert/config/bundle` — body is
+/// `{bundle: GatewayConfigBundle, collections: CanonicalApiCollection[]}`.
+/// The gateway cannot read SQLite itself, so the caller (CLI) resolves
+/// collection IDs first and sends the full canonical collections
+/// inline. Returns `204 No Content` on success, `400` with a
+/// `{error, message}` JSON on malformed input or a bundle-version
+/// mismatch.
+pub(crate) async fn bundle_import_handler(
+    State(_state): State<AppState>,
+    axum::Json(payload): axum::Json<serde_json::Value>,
+) -> Response {
+    // We can't call `MockGateway::import_bundle` from inside a handler
+    // (the handler holds an AppState clone, not the owning gateway
+    // wrapper). So we unpack the payload here and apply via the same
+    // `replace_*` pairs the regular reconfigure uses, reusing the
+    // gateway's AppState slot-based swapping.
+    //
+    // (An earlier draft routed through `MockGateway::import_bundle` via
+    // a side channel; the indirection didn't pay for itself.)
+    let Some(obj) = payload.as_object() else {
+        return bundle_bad_request("payload must be an object");
+    };
+    let Some(bundle_val) = obj.get("bundle") else {
+        return bundle_bad_request("payload missing `bundle`");
+    };
+    let Some(collections_val) = obj.get("collections") else {
+        return bundle_bad_request("payload missing `collections`");
+    };
+    let bundle: crate::config::GatewayConfigBundle =
+        match serde_json::from_value(bundle_val.clone()) {
+            Ok(b) => b,
+            Err(err) => return bundle_bad_request(&format!("bundle parse: {err}")),
+        };
+    let collections: Vec<albert_core::CanonicalApiCollection> =
+        match serde_json::from_value(collections_val.clone()) {
+            Ok(c) => c,
+            Err(err) => return bundle_bad_request(&format!("collections parse: {err}")),
+        };
+    let expected_major = crate::config::GatewayConfigBundle::CURRENT_VERSION
+        .split('.')
+        .next()
+        .unwrap_or("0");
+    let major = bundle.bundle_version.split('.').next().unwrap_or("0");
+    if major != expected_major {
+        return bundle_bad_request(&format!(
+            "bundle version {} is not compatible with gateway {}",
+            bundle.bundle_version,
+            crate::config::GatewayConfigBundle::CURRENT_VERSION
+        ));
+    }
+    // Apply state slot swaps — same sequence as `MockGateway::reconfigure`
+    // minus the `running.config` mirror (handler has no access to that).
+    let table = std::sync::Arc::new(crate::routing::RouteTable::from_routes(
+        crate::route::build_routes(&collections),
+    ));
+    _state.replace_table(table);
+    _state.replace_overrides(std::sync::Arc::new(bundle.config.example_overrides.clone()));
+    _state.replace_latency(crate::state::LatencyConfig::new(
+        bundle.config.default_latency_ms,
+        bundle.config.latency_overrides.clone(),
+        bundle.config.latency_jitter_ms.clone(),
+    ));
+    _state.replace_error_rate(bundle.config.error_rate);
+    _state.replace_capture_bodies(bundle.config.capture_bodies);
+    _state.replace_enforce_request_bodies(bundle.config.enforce_request_bodies);
+    _state.replace_response_headers(std::sync::Arc::new(bundle.config.response_headers.clone()));
+    _state.replace_required_headers(std::sync::Arc::new(bundle.config.required_headers.clone()));
+    _state.replace_rate_limits(bundle.config.rate_limits.clone());
+    _state.replace_status_overrides(std::sync::Arc::new(bundle.config.status_overrides.clone()));
+    _state.replace_collections(std::sync::Arc::new(collections));
+    (StatusCode::NO_CONTENT, HeaderMap::new()).into_response()
+}
+
+fn bundle_bad_request(message: &str) -> Response {
+    let payload = serde_json::json!({
+        "error": "bundle_invalid",
+        "message": message,
+    });
+    (
+        StatusCode::BAD_REQUEST,
+        [(header::CONTENT_TYPE, "application/json")],
+        axum::Json(payload),
+    )
+        .into_response()
+}
+
 pub(crate) async fn config_handler(State(state): State<AppState>) -> Response {
     let table = state.snapshot_table();
     let overrides = state.snapshot_overrides();

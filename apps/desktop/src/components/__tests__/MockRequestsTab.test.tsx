@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { computeMetrics, filterRequests } from "../MockRequestsTab";
+import {
+  computeMetrics,
+  filterRequests,
+  prettifyRequestBody
+} from "../MockRequestsTab";
 import type { RequestLogEntry } from "../../types";
 
 function entry(overrides: Partial<RequestLogEntry> = {}): RequestLogEntry {
@@ -190,5 +194,36 @@ describe("filterRequests", () => {
     );
     expect(out).toHaveLength(1);
     expect(out[0].path).toBe("/b");
+  });
+});
+
+describe("prettifyRequestBody", () => {
+  test("valid compact JSON becomes 2-space indented", () => {
+    const out = prettifyRequestBody('{"a":1,"b":[2,3]}');
+    expect(out).toBe('{\n  "a": 1,\n  "b": [\n    2,\n    3\n  ]\n}');
+  });
+
+  test("non-JSON text passes through unchanged", () => {
+    expect(prettifyRequestBody("plain text body")).toBe("plain text body");
+  });
+
+  test("preserves the truncation sentinel on oversized bodies", () => {
+    const out = prettifyRequestBody('{"a":1}…[truncated]');
+    expect(out).toBe('{\n  "a": 1\n}\n…[truncated]');
+  });
+
+  test("passes the capture-failed sentinel through unchanged", () => {
+    expect(
+      prettifyRequestBody("<capture failed: some io error>")
+    ).toBe("<capture failed: some io error>");
+  });
+
+  test("empty input returns empty string", () => {
+    expect(prettifyRequestBody("")).toBe("");
+  });
+
+  test("malformed JSON that starts with { still falls back cleanly", () => {
+    const raw = '{"bad: true';
+    expect(prettifyRequestBody(raw)).toBe(raw);
   });
 });

@@ -14,6 +14,8 @@ pub enum Command {
     Inspect,
     Config,
     Openapi,
+    BundleExport,
+    BundleImport,
     Export,
     ExportAll,
     Delete,
@@ -127,6 +129,26 @@ where
         "inspect" => Command::Inspect,
         "config" => Command::Config,
         "openapi" => Command::Openapi,
+        "bundle" => {
+            // `bundle export` / `bundle import` are two-word subcommands
+            // to mirror the noun-then-verb cadence users see in git / npm.
+            // Single hyphen-joined forms are also accepted for scripts.
+            if argv.is_empty() {
+                return Err(CliError::UnknownCommand(
+                    "bundle (need 'export' or 'import')".to_string(),
+                ));
+            }
+            let sub = argv.remove(0);
+            match sub.as_str() {
+                "export" => Command::BundleExport,
+                "import" => Command::BundleImport,
+                other => {
+                    return Err(CliError::UnknownCommand(format!("bundle {other}")));
+                }
+            }
+        }
+        "bundle-export" => Command::BundleExport,
+        "bundle-import" => Command::BundleImport,
         "export" => Command::Export,
         "export-all" => Command::ExportAll,
         "delete" => Command::Delete,
@@ -149,7 +171,7 @@ where
             }
         } else {
             match out.command {
-                Command::Import | Command::Watch => {
+                Command::Import | Command::Watch | Command::BundleImport => {
                     out.import_paths.push(PathBuf::from(arg));
                     i += 1;
                     continue;
@@ -277,6 +299,7 @@ pub fn help_text() -> String {
     s.push_str(
         "    openapi    Fetch /__albert/openapi.json from a running gateway (--url, --output)\n",
     );
+    s.push_str("    bundle     export|import a gateway config snapshot (--url, --output, --db)\n");
     s.push_str("    export     Print a collection snapshot as JSON\n");
     s.push_str("    export-all Print all collections as a JSON array\n");
     s.push_str("    delete     Remove a collection from the database\n");

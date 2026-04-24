@@ -22,6 +22,7 @@ interface UseGatewayActionsArgs {
       latencyOverrides?: Record<string, number>;
       errorRate?: number;
       captureBodies?: boolean;
+      enforceRequestBodies?: boolean;
       responseHeaders?: Record<string, Record<string, string>>;
       requiredHeaders?: Record<string, RequiredHeader[]>;
       rateLimits?: Record<string, RateLimitRule>;
@@ -33,6 +34,7 @@ interface UseGatewayActionsArgs {
       defaultLatencyMs?: number | null;
       errorRate?: number;
       captureBodies?: boolean;
+      enforceRequestBodies?: boolean;
       rateLimits?: Record<string, RateLimitRule>;
       requiredHeaders?: Record<string, RequiredHeader[]>;
       responseHeaders?: Record<string, Record<string, string>>;
@@ -43,6 +45,7 @@ interface UseGatewayActionsArgs {
       latency_overrides?: Record<string, number>;
       error_rate?: number;
       capture_bodies?: boolean;
+      enforce_request_bodies?: boolean;
       response_headers?: Record<string, Record<string, string>>;
       required_headers?: Record<string, RequiredHeader[]>;
       rate_limits?: Record<string, RateLimitRule>;
@@ -70,6 +73,7 @@ export interface GatewayActions {
   ) => Promise<void>;
   applyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
   toggleCaptureBodies: (enabled: boolean) => Promise<void>;
+  toggleEnforceRequestBodies: (enabled: boolean) => Promise<void>;
   applyRateLimits: (
     rules: Record<string, RateLimitRule>
   ) => Promise<void>;
@@ -111,6 +115,7 @@ export function useGatewayActions({
         latencyOverrides: saved?.latency_overrides,
         errorRate: saved?.error_rate,
         captureBodies: saved?.capture_bodies,
+        enforceRequestBodies: saved?.enforce_request_bodies,
         responseHeaders: saved?.response_headers,
         requiredHeaders: saved?.required_headers,
         rateLimits: saved?.rate_limits,
@@ -162,6 +167,20 @@ export function useGatewayActions({
       await mockGateway.update({ captureBodies: enabled });
       toasts.info(
         enabled ? "Request body capture on." : "Request body capture off."
+      );
+    },
+    [mockGateway, toasts]
+  );
+
+  const toggleEnforceRequestBodies = useCallback<
+    GatewayActions["toggleEnforceRequestBodies"]
+  >(
+    async (enabled) => {
+      await mockGateway.update({ enforceRequestBodies: enabled });
+      toasts.info(
+        enabled
+          ? "Request-body schema enforcement on — 400 on mismatches."
+          : "Request-body schema enforcement off."
       );
     },
     [mockGateway, toasts]
@@ -313,6 +332,7 @@ export function useGatewayActions({
     applyOverrides,
     applyChaos,
     toggleCaptureBodies,
+    toggleEnforceRequestBodies,
     applyRateLimits,
     applyStatusOverrides,
     applyResponseHeaders,

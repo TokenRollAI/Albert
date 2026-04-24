@@ -354,6 +354,143 @@ async fn ping_reports_running_gateway() {
 }
 
 #[tokio::test]
+async fn bundle_export_and_import_round_trip() {
+    let temp = TempDir::new().unwrap();
+    let db_path = temp.path().join("albert.db");
+    let openapi_path = temp.path().join("spec.json");
+    fs::write(&openapi_path, OPENAPI).unwrap();
+
+    // Seed SQLite so bundle import can resolve collection_ids.
+    let import_args = parse_args([
+        "import".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        openapi_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    run_with_args(import_args).await.expect("import");
+
+    // Start a gateway on an ephemeral port that serves the imported collection.
+    let store = albert_storage::SqliteStore::new(db_path.to_string_lossy().to_string());
+    store.migrate().unwrap();
+    let collections = store.load_all_collections().unwrap();
+    let gateway = albert_gateway::MockGateway::new();
+    gateway
+        .start(
+            collections,
+            albert_gateway::GatewayConfig {
+                port: 0,
+                error_rate: 0.42,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let bind = gateway.status().await.bind_address.unwrap();
+
+    // `albert bundle export --output <path>` writes a valid bundle.
+    let bundle_path = temp.path().join("bundle.json");
+    let export_args = parse_args([
+        "bundle".to_string(),
+        "export".to_string(),
+        "--url".to_string(),
+        format!("http://{bind}"),
+        "--output".to_string(),
+        bundle_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    assert_eq!(export_args.command, Command::BundleExport);
+    let out = run_with_args(export_args).await.unwrap();
+    match out {
+        RunOutcome::Message(m) => assert!(m.contains("wrote")),
+        other => panic!("unexpected: {other:?}"),
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&bundle_path).unwrap()).unwrap();
+    assert_eq!(parsed["bundle_version"], "1.0");
+    assert!((parsed["config"]["error_rate"].as_f64().unwrap() - 0.42).abs() < 1e-5);
+
+    // Flip the running server's state so we can see import restore it.
+    gateway
+        .reconfigure(albert_gateway::ReconfigureOptions {
+            collections: store.load_all_collections().unwrap(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let reset = gateway.status().await.config;
+    assert_eq!(reset.error_rate, 0.0);
+
+    // `albert bundle import <path>` applies the bundle back.
+    let import_args = parse_args([
+        "bundle".to_string(),
+        "import".to_string(),
+        bundle_path.to_string_lossy().to_string(),
+        "--url".to_string(),
+        format!("http://{bind}"),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    assert_eq!(import_args.command, Command::BundleImport);
+    let out = run_with_args(import_args).await.unwrap();
+    match out {
+        RunOutcome::Message(m) => assert!(m.contains("applied bundle")),
+        other => panic!("unexpected: {other:?}"),
+    }
+    // Verify via the HTTP config endpoint since bundle_import_handler
+    // updates state slots (which /__albert/config reads from) but not
+    // the `running.config` mirror that `gateway.status()` returns.
+    let http_client = reqwest::Client::new();
+    let live: serde_json::Value = http_client
+        .get(format!("http://{bind}/__albert/config"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let restored_err_rate = live["error_rate"].as_f64().unwrap();
+    assert!(
+        (restored_err_rate - 0.42).abs() < 1e-5,
+        "got {restored_err_rate}"
+    );
+
+    gateway.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn bundle_import_errors_when_collection_missing() {
+    let temp = TempDir::new().unwrap();
+    let db_path = temp.path().join("albert.db");
+    // Write a bundle referencing a collection id that doesn't exist in the
+    // (empty) local store. Gateway URL unused because we fail early.
+    let bundle_path = temp.path().join("bundle.json");
+    fs::write(
+        &bundle_path,
+        serde_json::to_string(&serde_json::json!({
+            "bundle_version": "1.0",
+            "config": { "host": "127.0.0.1", "port": 0, "cors_enabled": true },
+            "collection_ids": ["ghost-collection"],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let args = parse_args([
+        "bundle".to_string(),
+        "import".to_string(),
+        bundle_path.to_string_lossy().to_string(),
+        "--url".to_string(),
+        "http://127.0.0.1:1".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    let err = run_with_args(args).await.unwrap_err();
+    assert!(err.contains("ghost-collection"));
+}
+
+#[tokio::test]
 async fn openapi_subcommand_fetches_spec() {
     let gateway = albert_gateway::MockGateway::new();
     let status = gateway

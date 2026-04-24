@@ -85,6 +85,12 @@ counts.
      them in one shot. Only seedable schemes (HTTP bearer / basic,
      OAuth2, header-placed API keys) emit rules; unsupported schemes
      surface as descriptive notes on the endpoint card.
+  5. **Schema enforcement** — single toggle that arms
+     `GatewayConfig.enforce_request_bodies`. When on, POST/PUT/PATCH
+     bodies whose endpoint declares a `request_body.schema` are
+     validated against it; mismatches respond `400 schema_mismatch`
+     with a structured body instead of serving the mock payload. Off
+     by default so inspection-only workflows are unaffected.
 - **Routes tab** — one row per registered route, with a dropdown to pick
   the served example kind. Changes collect as a draft; `Apply (N)` sends
   them to `update_mock_server`.
@@ -213,8 +219,9 @@ and `update_mock_server` the current `status.config` is written back via
 
 - `host`, `port`, `cors_enabled`
 - `example_overrides`, `default_latency_ms`, `latency_overrides`
-- `error_rate`, `capture_bodies`
+- `error_rate`, `capture_bodies`, `enforce_request_bodies`
 - `response_headers`, `required_headers`, `rate_limits`
+- `status_overrides`, `latency_jitter_ms`
 
 `useGatewayActions.start` reads the saved payload and replays all
 enforcement fields on the next start, so restarting the server feels

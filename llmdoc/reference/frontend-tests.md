@@ -59,8 +59,15 @@
   draft header.
 - `components/__tests__/MockRequestsTab.test.tsx` — pins down the
   pure-function `computeMetrics`: status-class buckets, average/max
-  latency, busiest-route detection, empty-log safety, and the
-  `METHOD path` fallback when `matched_route` is null.
+  latency, busiest-route detection, empty-log safety, the
+  `METHOD path` fallback when `matched_route` is null, the per-route
+  breakdown (hit count + p50/p95 capped at 5 with lexicographic
+  tie-breaking), `filterRequests` (status + method + free-text search
+  including `request_id` with case-insensitive trimmed matching), and
+  `prettifyRequestBody` (compact JSON → 2-space indented, non-JSON and
+  capture-failed sentinels pass through untouched, truncation sentinel
+  `…[truncated]` stripped before parsing then re-appended, malformed
+  JSON falls back cleanly).
 - `hooks/__tests__/useAppDrawers.test.tsx` — covers the drawer-state
   hook: independent slots, open/close/toggle/set semantics.
 - `hooks/__tests__/useDraftMap.test.tsx` — shared per-route-editor

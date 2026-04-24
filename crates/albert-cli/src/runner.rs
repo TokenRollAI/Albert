@@ -33,6 +33,8 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::Inspect => run_inspect(args),
         Command::Config => run_config(args).await,
         Command::Openapi => run_openapi(args).await,
+        Command::BundleExport => run_bundle_export(args).await,
+        Command::BundleImport => run_bundle_import(args).await,
         Command::Export => run_export(args),
         Command::ExportAll => run_export_all(args),
         Command::Delete => run_delete(args),
@@ -212,6 +214,132 @@ async fn run_openapi(args: CliArgs) -> Result<RunOutcome, String> {
         }
         None => Ok(RunOutcome::Message(rendered)),
     }
+}
+
+/// GET /__albert/config/bundle from a running gateway and pretty-print
+/// (or write with --output) the returned snapshot. The bundle is a
+/// superset of /__albert/config's payload — it also carries the
+/// `bundle_version` and the `collection_ids` needed to apply the same
+/// rules back elsewhere via `albert bundle import`.
+async fn run_bundle_export(args: CliArgs) -> Result<RunOutcome, String> {
+    let base = args
+        .ping_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+    let url = format!("{base}/__albert/config/bundle");
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("bundle request to {url} failed: {e}"))?;
+    let status = resp.status();
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("bundle body parse: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("bundle endpoint returned {status}: {body}"));
+    }
+    let rendered = serde_json::to_string_pretty(&body).map_err(|e| format!("serialize: {e}"))?;
+    match args.export_output {
+        Some(path) => {
+            write_file(&path, &rendered)?;
+            Ok(RunOutcome::Message(format!(
+                "wrote {} bytes to {}",
+                rendered.len(),
+                path.display()
+            )))
+        }
+        None => Ok(RunOutcome::Message(rendered)),
+    }
+}
+
+/// Apply a bundle from disk to a running gateway. The CLI reads the
+/// file, resolves `collection_ids` against the local SQLite store (same
+/// convention as `albert serve --collection`), and POSTs the combined
+/// `{bundle, collections}` payload. Missing IDs fail loudly rather than
+/// being silently dropped.
+async fn run_bundle_import(args: CliArgs) -> Result<RunOutcome, String> {
+    let bundle_path = args
+        .import_paths
+        .first()
+        .ok_or("bundle import needs a path argument")?
+        .clone();
+    let bundle_text = fs::read_to_string(&bundle_path)
+        .map_err(|e| format!("read {}: {e}", bundle_path.display()))?;
+    let bundle: serde_json::Value = serde_json::from_str(&bundle_text)
+        .map_err(|e| format!("parse {}: {e}", bundle_path.display()))?;
+    let collection_ids: Vec<String> = bundle
+        .get("collection_ids")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let store = prepare_store(&args.database_url)?;
+    let mut collections = Vec::with_capacity(collection_ids.len());
+    let mut missing: Vec<String> = Vec::new();
+    for id in &collection_ids {
+        match store.load_collection(id).map_err(|e| e.to_string())? {
+            Some(c) => collections.push(c),
+            None => missing.push(id.clone()),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "bundle references unknown collections: {} — run `albert import` first",
+            missing.join(", ")
+        ));
+    }
+
+    let base = args
+        .ping_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+    let url = format!("{base}/__albert/config/bundle");
+    let payload = serde_json::json!({
+        "bundle": bundle,
+        "collections": collections,
+    });
+    let resp = client
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("bundle import to {url} failed: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let err_body: serde_json::Value = resp
+            .json()
+            .await
+            .unwrap_or_else(|_| serde_json::json!({"error": "unreadable"}));
+        return Err(format!(
+            "gateway rejected bundle ({status}): {}",
+            err_body
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&err_body.to_string())
+        ));
+    }
+    Ok(RunOutcome::Message(format!(
+        "applied bundle from {} to {base}",
+        bundle_path.display()
+    )))
 }
 
 /// GET /__albert/config from a running gateway and pretty-print the

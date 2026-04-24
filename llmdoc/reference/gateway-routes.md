@@ -223,6 +223,22 @@ always serves the error example.
   Tauri exposes both as `export_gateway_config` / `import_gateway_config`;
   the Mock Server drawer now has Export / Import buttons in its header
   that round-trip through a local JSON file.
+- `GET /__albert/config/bundle` returns the same bundle shape over HTTP:
+  `{bundle: {version, collection_ids, config}}` where `config` is the
+  trimmed GatewayConfig payload. Stable across reconfigurations, safe to
+  scrape.
+- `POST /__albert/config/bundle` accepts `{bundle, collections}` — the
+  bundle as exported above, plus an inline array of canonical
+  `{id, name, endpoints}` collections to bind. The handler does **not**
+  touch any database: it unpacks the payload and applies it via the
+  same state-slot mutations the Tauri `reconfigure` path uses. The CLI
+  (`albert bundle import`) resolves `collection_ids` against the local
+  SQLite store before posting, so the gateway stays pure. Malformed
+  payloads (missing fields, bundle/collection ID mismatch, invalid
+  version) return `400 bundle_invalid` with a structured body
+  `{error, message, request_id}`. Round-trip covered by
+  `bundle_endpoints_round_trip_over_http` in `crates/albert-gateway/src/lib.rs`
+  and the CLI smoke suite's `bundle_export_and_import_round_trip`.
 - `GET /__albert/config` returns the full live gateway config as JSON
   — `{route_count, overrides, default_latency_ms, latency_overrides,
   latency_jitter_ms, error_rate, capture_bodies, response_headers,

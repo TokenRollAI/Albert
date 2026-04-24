@@ -40,6 +40,7 @@ interface StartArgs {
   latencyOverrides?: Record<string, number>;
   errorRate?: number;
   captureBodies?: boolean;
+  enforceRequestBodies?: boolean;
   responseHeaders?: Record<string, Record<string, string>>;
   requiredHeaders?: Record<string, RequiredHeader[]>;
   rateLimits?: Record<string, RateLimitRule>;
@@ -54,6 +55,7 @@ interface UpdateArgs {
   latencyOverrides?: Record<string, number>;
   errorRate?: number;
   captureBodies?: boolean;
+  enforceRequestBodies?: boolean;
   responseHeaders?: Record<string, Record<string, string>>;
   requiredHeaders?: Record<string, RequiredHeader[]>;
   rateLimits?: Record<string, RateLimitRule>;
@@ -79,6 +81,7 @@ async function persistConfig(
     latency_overrides: config.latency_overrides,
     error_rate: config.error_rate,
     capture_bodies: config.capture_bodies,
+    enforce_request_bodies: config.enforce_request_bodies,
     response_headers: config.response_headers,
     required_headers: config.required_headers,
     rate_limits: config.rate_limits,
@@ -99,6 +102,7 @@ export interface SavedGatewayPreferences {
   latency_overrides?: Record<string, number>;
   error_rate?: number;
   capture_bodies?: boolean;
+  enforce_request_bodies?: boolean;
   response_headers?: Record<string, Record<string, string>>;
   required_headers?: Record<string, RequiredHeader[]>;
   rate_limits?: Record<string, RateLimitRule>;
@@ -204,6 +208,7 @@ export function useMockGateway({
       latencyOverrides,
       errorRate,
       captureBodies,
+      enforceRequestBodies,
       responseHeaders,
       requiredHeaders,
       rateLimits,
@@ -228,6 +233,7 @@ export function useMockGateway({
             latency_overrides: latencyOverrides ?? null,
             error_rate: errorRate ?? null,
             capture_bodies: captureBodies ?? null,
+            enforce_request_bodies: enforceRequestBodies ?? null,
             response_headers: responseHeaders ?? null,
             required_headers: requiredHeaders ?? null,
             rate_limits: rateLimits ?? null,
@@ -297,6 +303,7 @@ export function useMockGateway({
             latency_overrides: args.latencyOverrides ?? null,
             error_rate: args.errorRate ?? null,
             capture_bodies: args.captureBodies ?? null,
+            enforce_request_bodies: args.enforceRequestBodies ?? null,
             response_headers: args.responseHeaders ?? null,
             required_headers: args.requiredHeaders ?? null,
             rate_limits: args.rateLimits ?? null,

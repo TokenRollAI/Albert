@@ -190,6 +190,7 @@ export interface GatewayConfig {
   latency_jitter_ms?: Record<string, number>;
   error_rate?: number;
   capture_bodies?: boolean;
+  enforce_request_bodies?: boolean;
   response_headers?: Record<string, Record<string, string>>;
   required_headers?: Record<string, RequiredHeader[]>;
   rate_limits?: Record<string, RateLimitRule>;

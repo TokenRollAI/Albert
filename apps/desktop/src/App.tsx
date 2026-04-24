@@ -499,6 +499,7 @@ function App() {
         onApplyOverrides={gatewayActions.applyOverrides}
         onApplyChaos={gatewayActions.applyChaos}
         onToggleCaptureBodies={gatewayActions.toggleCaptureBodies}
+        onToggleEnforceRequestBodies={gatewayActions.toggleEnforceRequestBodies}
         onApplyRateLimits={gatewayActions.applyRateLimits}
         onApplyStatusOverrides={gatewayActions.applyStatusOverrides}
         onApplyResponseHeaders={gatewayActions.applyResponseHeaders}
