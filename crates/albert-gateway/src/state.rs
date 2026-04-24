@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use albert_core::MockExampleKind;
+use albert_core::{CanonicalApiCollection, MockExampleKind};
 use serde::{Deserialize, Serialize};
 
 use crate::routing::RouteTable;
@@ -181,6 +181,10 @@ pub(crate) struct AppState {
     pub(crate) rate_limits: Arc<StdMutex<RateLimitState>>,
     pub(crate) metrics: Arc<StdMutex<MetricsSnapshot>>,
     pub(crate) request_log: Arc<StdMutex<VecDeque<RequestLogEntry>>>,
+    /// Full canonical collections kept around solely so `/__albert/openapi.json`
+    /// can translate them into an OpenAPI 3.0 document on demand. Reconfigure
+    /// swaps the whole Vec atomically via the Arc.
+    pub(crate) collections: Arc<StdMutex<Arc<Vec<CanonicalApiCollection>>>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -229,6 +233,7 @@ impl AppState {
         required_headers: Arc<RequiredHeaderMap>,
         status_overrides: Arc<StatusOverrideMap>,
         rate_limits: BTreeMap<String, crate::config::RateLimitRule>,
+        collections: Arc<Vec<CanonicalApiCollection>>,
         started_at_epoch_ms: i64,
     ) -> Self {
         Self {
@@ -240,6 +245,7 @@ impl AppState {
             response_headers: Arc::new(StdMutex::new(response_headers)),
             required_headers: Arc::new(StdMutex::new(required_headers)),
             status_overrides: Arc::new(StdMutex::new(status_overrides)),
+            collections: Arc::new(StdMutex::new(collections)),
             rate_limits: Arc::new(StdMutex::new(RateLimitState {
                 rules: rate_limits,
                 history: BTreeMap::new(),
@@ -326,6 +332,18 @@ impl AppState {
             .required_headers
             .lock()
             .expect("required headers poisoned");
+        *slot = next;
+    }
+
+    pub(crate) fn snapshot_collections(&self) -> Arc<Vec<CanonicalApiCollection>> {
+        self.collections
+            .lock()
+            .expect("collections poisoned")
+            .clone()
+    }
+
+    pub(crate) fn replace_collections(&self, next: Arc<Vec<CanonicalApiCollection>>) {
+        let mut slot = self.collections.lock().expect("collections poisoned");
         *slot = next;
     }
 

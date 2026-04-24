@@ -197,6 +197,15 @@ always serves the error example.
 - `GET /__albert/routes` returns `{routes: [{method, path}, ...]}` — the
   compiled route table without payload data. Used by the CLI `verify`
   subcommand to enumerate what to probe.
+- `GET /__albert/openapi.json` returns the live collections translated
+  into an OpenAPI 3.0 document (info / paths / responses / examples).
+  Optional `?base=<url>` query puts a `servers` entry into the output so
+  downstream clients can point at the running mock. The `CanonicalSchemaNode`
+  → OpenAPI-schema translation covers object/array/primitive/null shapes;
+  `one_of` / `any_of` / `all_of` isn't modeled in the canonical shape so
+  the output is unavoidably lossy there — the recorded success / error
+  example is still surfaced via `content.{type}.example` for fidelity.
+  CLI mirror: `albert openapi --url …` wraps this endpoint.
 - `GET /__albert/config` returns the full live gateway config as JSON
   — `{route_count, overrides, default_latency_ms, latency_overrides,
   latency_jitter_ms, error_rate, capture_bodies, response_headers,

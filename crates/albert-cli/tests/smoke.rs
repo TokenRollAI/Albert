@@ -354,6 +354,62 @@ async fn ping_reports_running_gateway() {
 }
 
 #[tokio::test]
+async fn openapi_subcommand_fetches_spec() {
+    let gateway = albert_gateway::MockGateway::new();
+    let status = gateway
+        .start(
+            Vec::new(),
+            albert_gateway::GatewayConfig {
+                port: 0,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let bind = status.bind_address.clone().unwrap();
+
+    // Stdout form.
+    let stdout_args = parse_args([
+        "openapi".to_string(),
+        "--url".to_string(),
+        format!("http://{bind}"),
+    ])
+    .unwrap();
+    assert_eq!(stdout_args.command, Command::Openapi);
+    let outcome = run_with_args(stdout_args).await.expect("openapi");
+    let message = match outcome {
+        RunOutcome::Message(m) => m,
+        other => panic!("unexpected: {other:?}"),
+    };
+    let doc: serde_json::Value = serde_json::from_str(&message).unwrap();
+    assert_eq!(doc["openapi"], "3.0.3");
+
+    // --output form writes bytes to disk.
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("spec.json");
+    let output_args = parse_args([
+        "openapi".to_string(),
+        "--url".to_string(),
+        format!("http://{bind}"),
+        "--output".to_string(),
+        path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    let outcome = run_with_args(output_args).await.expect("openapi -o");
+    let message = match outcome {
+        RunOutcome::Message(m) => m,
+        other => panic!("unexpected: {other:?}"),
+    };
+    assert!(message.contains("wrote"));
+    assert!(message.contains(&path.display().to_string()));
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(on_disk["openapi"], "3.0.3");
+
+    gateway.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn config_reports_running_gateway_rules() {
     // Stand up a gateway with a non-default error_rate so we can see the
     // CLI surface it.

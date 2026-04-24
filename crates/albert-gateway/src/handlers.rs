@@ -47,6 +47,50 @@ pub(crate) async fn routes_handler(State(state): State<AppState>) -> Response {
 /// thin wrapper around this endpoint. Consumers: UI, CLI, shell
 /// scripts. Stays outside the `/__albert/routes` flow so automation
 /// can filter routes vs. config independently.
+/// Emit the live collections as an OpenAPI 3.0 document. The running
+/// bind address is not known at handler time (axum doesn't expose it
+/// cheaply), so the caller can pass `?base=<url>` to override what
+/// appears in the `servers` array. When absent, `servers` is omitted —
+/// downstream tools then fall back to the URL the user typed in.
+pub(crate) async fn openapi_handler(State(state): State<AppState>, req: Request) -> Response {
+    let collections = state.snapshot_collections();
+    let base = req
+        .uri()
+        .query()
+        .and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("base=")))
+        .and_then(|raw| urldecode(raw).ok());
+    let doc = crate::openapi::to_openapi_document(&collections, base.as_deref());
+    (StatusCode::OK, axum::Json(doc)).into_response()
+}
+
+fn urldecode(input: &str) -> Result<String, String> {
+    // Tiny percent-decoder — the query string from the axum router is
+    // already split on `&`, so we only need to handle `%NN` escapes.
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3])
+                    .map_err(|_| "invalid percent escape")?;
+                let byte = u8::from_str_radix(hex, 16).map_err(|_| "bad hex")?;
+                out.push(byte);
+                i += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            other => {
+                out.push(other);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).map_err(|e| e.to_string())
+}
+
 pub(crate) async fn config_handler(State(state): State<AppState>) -> Response {
     let table = state.snapshot_table();
     let overrides = state.snapshot_overrides();

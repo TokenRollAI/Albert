@@ -67,6 +67,9 @@
   state machine: initial value, dirty flip, reset restores clean
   state, apply flips busy around the promise, value-based dirty
   comparison.
+- `hooks/__tests__/useDirtyRoutes.test.tsx` — covers `hasDraftContent`
+  (empty vs. meaningful vs. all-blank) and `useDirtyRoutes` (initial
+  scan, seed-event reactivity, ignoring untracked routes).
 - `lib/__tests__/fuzzy.test.ts` — fuzzy matcher used by the command
   palette: in-order character matching, word-boundary + contiguity
   bonuses, stable sort on ties.

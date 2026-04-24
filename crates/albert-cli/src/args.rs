@@ -13,6 +13,7 @@ pub enum Command {
     Routes,
     Inspect,
     Config,
+    Openapi,
     Export,
     ExportAll,
     Delete,
@@ -125,6 +126,7 @@ where
         "routes" => Command::Routes,
         "inspect" => Command::Inspect,
         "config" => Command::Config,
+        "openapi" => Command::Openapi,
         "export" => Command::Export,
         "export-all" => Command::ExportAll,
         "delete" => Command::Delete,
@@ -272,6 +274,9 @@ pub fn help_text() -> String {
     s.push_str("    routes     Print every registered route (METHOD\\tpath\\tcollection)\n");
     s.push_str("    inspect    Print one collection's endpoints in detail (--id, --json)\n");
     s.push_str("    config     Probe a running gateway's live GatewayConfig (--url)\n");
+    s.push_str(
+        "    openapi    Fetch /__albert/openapi.json from a running gateway (--url, --output)\n",
+    );
     s.push_str("    export     Print a collection snapshot as JSON\n");
     s.push_str("    export-all Print all collections as a JSON array\n");
     s.push_str("    delete     Remove a collection from the database\n");

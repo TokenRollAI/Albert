@@ -32,6 +32,7 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::Routes => run_routes(args),
         Command::Inspect => run_inspect(args),
         Command::Config => run_config(args).await,
+        Command::Openapi => run_openapi(args).await,
         Command::Export => run_export(args),
         Command::ExportAll => run_export_all(args),
         Command::Delete => run_delete(args),
@@ -165,6 +166,51 @@ async fn run_verify(args: CliArgs) -> Result<RunOutcome, String> {
             failures.len(),
             failures.join("\n- ")
         ))
+    }
+}
+
+/// GET /__albert/openapi.json from a running gateway and pretty-print
+/// (or write with --output) the returned spec. The server address is
+/// passed through as the `?base=` query so the resulting document has a
+/// ready-to-use `servers` entry.
+async fn run_openapi(args: CliArgs) -> Result<RunOutcome, String> {
+    let base = args
+        .ping_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+    // URL-encode just the `:` and `/` in the base so a proxy doesn't mis-split.
+    let encoded_base = base.replace(':', "%3A").replace('/', "%2F");
+    let url = format!("{base}/__albert/openapi.json?base={encoded_base}");
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("openapi request to {url} failed: {e}"))?;
+    let status = resp.status();
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("openapi body parse: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("openapi endpoint returned {status}: {body}"));
+    }
+    let rendered = serde_json::to_string_pretty(&body).map_err(|e| format!("serialize: {e}"))?;
+    match args.export_output {
+        Some(path) => {
+            write_file(&path, &rendered)?;
+            Ok(RunOutcome::Message(format!(
+                "wrote {} bytes to {}",
+                rendered.len(),
+                path.display()
+            )))
+        }
+        None => Ok(RunOutcome::Message(rendered)),
     }
 }
 

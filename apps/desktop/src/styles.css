@@ -588,6 +588,16 @@ body[data-theme="light"] .btn--primary {
   font-size: 0.78rem;
 }
 
+.tab__dirty {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--warning);
+  font-size: 0.9rem;
+  line-height: 1;
+  /* Visual nudge to remind the user they have an unsaved draft without
+     blocking any interaction — the tab still closes / activates as normal. */
+}
+
 .tab__close {
   width: 18px;
   height: 18px;

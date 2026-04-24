@@ -18,6 +18,7 @@ use tower_http::cors::CorsLayer;
 pub mod config;
 pub mod error;
 pub mod handlers;
+pub mod openapi;
 pub mod route;
 pub mod routing;
 pub mod state;
@@ -112,6 +113,7 @@ impl MockGateway {
         let required_headers = Arc::new(config.required_headers.clone());
         let status_overrides = Arc::new(config.status_overrides.clone());
         let started_at = handlers::epoch_ms_now();
+        let collections_arc = Arc::new(collections.clone());
         let state = AppState::new(
             table_arc.clone(),
             overrides_arc.clone(),
@@ -122,6 +124,7 @@ impl MockGateway {
             required_headers,
             status_overrides,
             config.rate_limits.clone(),
+            collections_arc,
             started_at,
         );
         let state_for_runtime = state.clone();
@@ -142,6 +145,10 @@ impl MockGateway {
             .route(
                 "/__albert/config",
                 axum::routing::get(handlers::config_handler),
+            )
+            .route(
+                "/__albert/openapi.json",
+                axum::routing::get(handlers::openapi_handler),
             )
             .fallback(any(handlers::mock_handler))
             .with_state(state);
@@ -248,6 +255,9 @@ impl MockGateway {
         running
             .state
             .replace_status_overrides(Arc::new(status_overrides.clone()));
+        running
+            .state
+            .replace_collections(Arc::new(collections.clone()));
         running.config.example_overrides = overrides;
         running.config.default_latency_ms = default_latency_ms;
         running.config.latency_overrides = latency_overrides;
@@ -1352,6 +1362,44 @@ mod tests {
         let gateway = MockGateway::new();
         let err = gateway.clear_log().await.err();
         assert!(matches!(err, Some(GatewayError::NotRunning)));
+    }
+
+    #[tokio::test]
+    async fn openapi_endpoint_serves_live_collection_as_spec() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "orders",
+            vec![endpoint(
+                HttpMethod::Get,
+                "/orders/{id}",
+                json!({"id": "o-1"}),
+            )],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!(
+                "{base}/__albert/openapi.json?base=http://mock.local"
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let doc: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(doc["openapi"], "3.0.3");
+        assert!(doc["paths"]["/orders/{id}"]["get"].is_object());
+        assert_eq!(doc["servers"][0]["url"], "http://mock.local");
+        gateway.stop().await.expect("stop");
     }
 
     #[tokio::test]

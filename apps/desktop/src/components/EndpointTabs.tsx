@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { Icon } from "./Icon";
+import { useDirtyRoutes } from "../hooks/useTryItDraft";
 import type { EndpointTab } from "../types";
 
 interface EndpointTabsProps {
@@ -9,6 +11,10 @@ interface EndpointTabsProps {
   onNew: () => void;
 }
 
+function routeKeyOf(tab: EndpointTab): string {
+  return `${tab.method.toUpperCase()} ${tab.endpoint.path}`;
+}
+
 export function EndpointTabs({
   tabs,
   activeId,
@@ -16,6 +22,8 @@ export function EndpointTabs({
   onClose,
   onNew
 }: EndpointTabsProps) {
+  const routeKeys = useMemo(() => tabs.map(routeKeyOf), [tabs]);
+  const dirtyRoutes = useDirtyRoutes(routeKeys);
   if (tabs.length === 0) {
     return null;
   }
@@ -24,6 +32,7 @@ export function EndpointTabs({
       <div className="tabs__scroll">
         {tabs.map((tab) => {
           const active = tab.id === activeId;
+          const dirty = dirtyRoutes.has(routeKeyOf(tab));
           return (
             <div
               key={tab.id}
@@ -35,7 +44,11 @@ export function EndpointTabs({
                 type="button"
                 className="tab__body"
                 onClick={() => onActivate(tab.id)}
-                title={`${tab.method} ${tab.path}`}
+                title={
+                  dirty
+                    ? `${tab.method} ${tab.path} — unsaved Try-it draft`
+                    : `${tab.method} ${tab.path}`
+                }
               >
                 <span
                   className={`method method--${tab.method.toLowerCase()}`}
@@ -43,6 +56,11 @@ export function EndpointTabs({
                   {tab.method}
                 </span>
                 <span className="tab__path">{tab.path}</span>
+                {dirty ? (
+                  <span className="tab__dirty" aria-label="Unsaved draft">
+                    •
+                  </span>
+                ) : null}
               </button>
               <button
                 type="button"
