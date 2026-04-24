@@ -26,6 +26,8 @@ pub struct StartMockServerArgs {
     #[serde(default)]
     pub latency_overrides: Option<BTreeMap<String, u64>>,
     #[serde(default)]
+    pub latency_jitter_ms: Option<BTreeMap<String, u64>>,
+    #[serde(default)]
     pub error_rate: Option<f32>,
     #[serde(default)]
     pub capture_bodies: Option<bool>,
@@ -74,6 +76,7 @@ pub async fn start_mock_server(
         example_overrides: args.example_overrides.unwrap_or_default(),
         default_latency_ms: args.default_latency_ms,
         latency_overrides: args.latency_overrides.unwrap_or_default(),
+        latency_jitter_ms: args.latency_jitter_ms.unwrap_or_default(),
         error_rate: args.error_rate.unwrap_or(0.0),
         capture_bodies: args.capture_bodies.unwrap_or(false),
         response_headers: args.response_headers.unwrap_or_default(),
@@ -167,6 +170,8 @@ pub struct UpdateMockServerArgs {
     #[serde(default)]
     pub latency_overrides: Option<BTreeMap<String, u64>>,
     #[serde(default)]
+    pub latency_jitter_ms: Option<BTreeMap<String, u64>>,
+    #[serde(default)]
     pub error_rate: Option<f32>,
     #[serde(default)]
     pub capture_bodies: Option<bool>,
@@ -215,6 +220,7 @@ pub async fn update_mock_server(
         Some(n) => Some(n),
     };
     let latency_overrides = args.latency_overrides.unwrap_or(current.latency_overrides);
+    let latency_jitter_ms = args.latency_jitter_ms.unwrap_or(current.latency_jitter_ms);
     let error_rate = args.error_rate.unwrap_or(current.error_rate);
     let capture_bodies = args.capture_bodies.unwrap_or(current.capture_bodies);
     let response_headers = args.response_headers.unwrap_or(current.response_headers);
@@ -229,6 +235,7 @@ pub async fn update_mock_server(
             args.example_overrides.unwrap_or_default(),
             default_latency_ms,
             latency_overrides,
+            latency_jitter_ms,
             error_rate,
             capture_bodies,
             response_headers,

@@ -254,7 +254,12 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         );
     };
 
-    let latency_ms = latency.resolve(&matched_key);
+    let base_latency = latency.resolve(&matched_key);
+    let jitter = latency.jitter_for(&matched_key);
+    // Draw uniform ±jitter around the base. The existing thread-local LCG
+    // is reused (via roll_jitter below) to avoid pulling in a second RNG.
+    let jitter_delta = roll_jitter(jitter);
+    let latency_ms = (base_latency as i64 + jitter_delta).max(0) as u64;
     if latency_ms > 0 {
         sleep(Duration::from_millis(latency_ms)).await;
     }
@@ -563,6 +568,31 @@ fn roll_probability(threshold: f32) -> bool {
         slot.set(x);
         let scaled = ((x >> 33) as f32) / ((1u64 << 31) as f32);
         scaled < clamped
+    })
+}
+
+/// Draw a uniform integer delta in `[-bound, +bound]` for latency jitter,
+/// using the same LCG thread-local stream as `roll_probability`. Returns
+/// 0 when `bound` is 0, which is the hot path for routes without jitter.
+fn roll_jitter(bound: u64) -> i64 {
+    use std::cell::Cell;
+    if bound == 0 {
+        return 0;
+    }
+    thread_local! {
+        static STATE: Cell<u64> = Cell::new(seed());
+    }
+    STATE.with(|slot| {
+        let mut x = slot.get();
+        if x == 0 {
+            x = seed();
+        }
+        x = x.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        slot.set(x);
+        let span = bound.saturating_mul(2).saturating_add(1);
+        // (x >> 32) gives 32 uniform bits, plenty of range for sane bounds.
+        let pick = ((x >> 32) % span) as i64;
+        pick - bound as i64
     })
 }
 

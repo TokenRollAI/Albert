@@ -187,6 +187,7 @@ export interface GatewayConfig {
   example_overrides: Record<string, MockExampleKind>;
   default_latency_ms?: number | null;
   latency_overrides?: Record<string, number>;
+  latency_jitter_ms?: Record<string, number>;
   error_rate?: number;
   capture_bodies?: boolean;
   response_headers?: Record<string, Record<string, string>>;

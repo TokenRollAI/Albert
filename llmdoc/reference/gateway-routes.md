@@ -93,6 +93,13 @@ example selection but before returning the response body. The total
 effective delay is echoed in the `x-albert-mock-latency-ms` header and
 the request log's `latency_ms` field.
 
+`GatewayConfig.latency_jitter_ms` (also `METHOD /path → u64`) adds a
+uniform ± bound to the resolved latency on every request. For a route
+with `base=50ms` and `jitter=20ms`, each hit sleeps in `[30ms, 70ms]`.
+Saturates at zero so the overall sleep never goes negative, regardless
+of the sampled delta. Zero-valued entries and missing keys are no-ops
+on the hot path — routes without jitter bypass the RNG entirely.
+
 ## Response templating
 
 Mock payloads can embed `{{ }}` tokens that the gateway expands on every

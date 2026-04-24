@@ -24,6 +24,14 @@ pub struct GatewayConfig {
     /// Applied on top of `default_latency_ms`.
     #[serde(default)]
     pub latency_overrides: BTreeMap<String, u64>,
+    /// Per-route latency jitter keyed by `METHOD path`. Each value is
+    /// the ± bound in milliseconds applied to the resolved latency on
+    /// every request (uniform distribution). A route with base=100ms
+    /// and jitter=30ms will sleep somewhere in [70, 130]ms per hit —
+    /// useful for making mocks feel more like real APIs that never
+    /// respond with exactly the same latency twice. Zero = no jitter.
+    #[serde(default)]
+    pub latency_jitter_ms: BTreeMap<String, u64>,
     /// Probability (0.0–1.0) of serving the error example instead of the
     /// selected one, for chaos-style testing of consumer error paths.
     #[serde(default)]
@@ -95,6 +103,7 @@ impl Default for GatewayConfig {
             example_overrides: BTreeMap::new(),
             default_latency_ms: None,
             latency_overrides: BTreeMap::new(),
+            latency_jitter_ms: BTreeMap::new(),
             error_rate: 0.0,
             capture_bodies: false,
             response_headers: BTreeMap::new(),

@@ -187,13 +187,19 @@ pub(crate) struct AppState {
 pub(crate) struct LatencyConfig {
     pub default_ms: Option<u64>,
     pub per_route: BTreeMap<String, u64>,
+    pub jitter_per_route: BTreeMap<String, u64>,
 }
 
 impl LatencyConfig {
-    pub fn new(default_ms: Option<u64>, per_route: BTreeMap<String, u64>) -> Self {
+    pub fn new(
+        default_ms: Option<u64>,
+        per_route: BTreeMap<String, u64>,
+        jitter_per_route: BTreeMap<String, u64>,
+    ) -> Self {
         Self {
             default_ms,
             per_route,
+            jitter_per_route,
         }
     }
 
@@ -201,6 +207,13 @@ impl LatencyConfig {
         let base = self.default_ms.unwrap_or(0);
         let per = self.per_route.get(route_key).copied().unwrap_or(0);
         base.saturating_add(per)
+    }
+
+    /// Jitter bound for the route (0 when unset). The handler draws a
+    /// uniform sample in `[-bound, +bound]` and adds it to `resolve()`
+    /// on each request, saturating at zero so we never sleep negative.
+    pub fn jitter_for(&self, route_key: &str) -> u64 {
+        self.jitter_per_route.get(route_key).copied().unwrap_or(0)
     }
 }
 

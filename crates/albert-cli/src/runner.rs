@@ -696,6 +696,7 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
         example_overrides: BTreeMap::new(),
         default_latency_ms: args.default_latency_ms,
         latency_overrides: BTreeMap::new(),
+        latency_jitter_ms: BTreeMap::new(),
         error_rate: args.error_rate,
         capture_bodies: args.capture_bodies,
         response_headers: BTreeMap::new(),

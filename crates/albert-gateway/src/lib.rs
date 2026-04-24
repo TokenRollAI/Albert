@@ -80,8 +80,11 @@ impl MockGateway {
         );
         let table_arc = Arc::new(RouteTable::from_routes(routes));
         let overrides_arc = Arc::new(config.example_overrides.clone());
-        let latency =
-            LatencyConfig::new(config.default_latency_ms, config.latency_overrides.clone());
+        let latency = LatencyConfig::new(
+            config.default_latency_ms,
+            config.latency_overrides.clone(),
+            config.latency_jitter_ms.clone(),
+        );
 
         let response_headers = Arc::new(config.response_headers.clone());
         let required_headers = Arc::new(config.required_headers.clone());
@@ -158,6 +161,7 @@ impl MockGateway {
             overrides,
             config.default_latency_ms,
             config.latency_overrides,
+            config.latency_jitter_ms,
             config.error_rate,
             config.capture_bodies,
             config.response_headers,
@@ -178,6 +182,7 @@ impl MockGateway {
         overrides: BTreeMap<String, MockExampleKind>,
         default_latency_ms: Option<u64>,
         latency_overrides: BTreeMap<String, u64>,
+        latency_jitter_ms: BTreeMap<String, u64>,
         error_rate: f32,
         capture_bodies: bool,
         response_headers: BTreeMap<String, BTreeMap<String, String>>,
@@ -198,6 +203,7 @@ impl MockGateway {
         running.state.replace_latency(LatencyConfig::new(
             default_latency_ms,
             latency_overrides.clone(),
+            latency_jitter_ms.clone(),
         ));
         running.state.replace_error_rate(clamped_rate);
         running.state.replace_capture_bodies(capture_bodies);
@@ -214,6 +220,7 @@ impl MockGateway {
         running.config.example_overrides = overrides;
         running.config.default_latency_ms = default_latency_ms;
         running.config.latency_overrides = latency_overrides;
+        running.config.latency_jitter_ms = latency_jitter_ms;
         running.config.error_rate = clamped_rate;
         running.config.capture_bodies = capture_bodies;
         running.config.response_headers = response_headers;
@@ -1171,6 +1178,7 @@ mod tests {
                 BTreeMap::new(),
                 None,
                 BTreeMap::new(),
+                BTreeMap::new(),
                 0.0,
                 false,
                 BTreeMap::new(),
@@ -1191,6 +1199,7 @@ mod tests {
                 vec![col],
                 BTreeMap::new(),
                 None,
+                BTreeMap::new(),
                 BTreeMap::new(),
                 0.0,
                 false,
@@ -1262,6 +1271,7 @@ mod tests {
                 vec![col],
                 BTreeMap::new(),
                 None,
+                BTreeMap::new(),
                 BTreeMap::new(),
                 0.0,
                 false,
@@ -1336,6 +1346,62 @@ mod tests {
         let gateway = MockGateway::new();
         let err = gateway.clear_log().await.err();
         assert!(matches!(err, Some(GatewayError::NotRunning)));
+    }
+
+    #[tokio::test]
+    async fn latency_jitter_stays_within_bounds() {
+        // Base 50ms + jitter 20ms → every hit sleeps in [30, 70]ms.
+        // Runs 20 hits to exercise both tails; with a 20ms bound the
+        // worst-case observed should never fall below 30ms.
+        let gateway = MockGateway::new();
+        let col = collection(
+            "jit",
+            vec![endpoint(HttpMethod::Get, "/bounce", json!({"ok": true}))],
+        );
+        let mut latency_overrides = BTreeMap::new();
+        latency_overrides.insert("GET /bounce".to_string(), 50);
+        let mut latency_jitter_ms = BTreeMap::new();
+        latency_jitter_ms.insert("GET /bounce".to_string(), 20);
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    latency_overrides,
+                    latency_jitter_ms,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        let mut latencies = Vec::new();
+        for _ in 0..6 {
+            let resp = client.get(format!("{base}/bounce")).send().await.unwrap();
+            let logged = resp
+                .headers()
+                .get("x-albert-mock-latency-ms")
+                .and_then(|v| v.to_str().ok())
+                .unwrap()
+                .parse::<u64>()
+                .unwrap();
+            latencies.push(logged);
+        }
+        // Every observed latency must stay within [30, 70].
+        for ms in &latencies {
+            assert!(*ms >= 30 && *ms <= 70, "latency out of range: {ms}");
+        }
+        // And at least one draw should differ from the base (otherwise the
+        // jitter isn't actually firing).
+        assert!(
+            latencies.iter().any(|ms| *ms != 50),
+            "no jitter observed across {} hits",
+            latencies.len()
+        );
+
+        gateway.stop().await.expect("stop");
     }
 
     #[tokio::test]
