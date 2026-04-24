@@ -436,6 +436,83 @@ async fn help_and_version_return_messages() {
 }
 
 #[tokio::test]
+async fn inspect_prints_collection_detail() {
+    let temp = TempDir::new().unwrap();
+    let db_path = temp.path().join("albert.db");
+    let openapi_path = temp.path().join("spec.json");
+    fs::write(&openapi_path, OPENAPI).unwrap();
+
+    // Import the fixture first.
+    let import_args = parse_args([
+        "import".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        openapi_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    run_with_args(import_args).await.expect("import");
+
+    // Discover the collection id via the storage API.
+    let store = albert_storage::SqliteStore::new(db_path.to_string_lossy().to_string());
+    store.migrate().unwrap();
+    let summary = &store.list_collections().unwrap()[0];
+    let collection_id = summary.id.clone();
+
+    // Text form: METHOD / PATH / AUTH / SUMMARY header.
+    let text_args = parse_args([
+        "inspect".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        "--id".to_string(),
+        collection_id.clone(),
+    ])
+    .unwrap();
+    assert_eq!(text_args.command, Command::Inspect);
+    let text = match run_with_args(text_args).await.unwrap() {
+        RunOutcome::Message(m) => m,
+        other => panic!("expected Message, got {other:?}"),
+    };
+    assert!(text.contains("METHOD"));
+    assert!(text.contains("GET"));
+    assert!(text.contains("/ping"));
+
+    // JSON form parses as a CanonicalApiCollection.
+    let json_args = parse_args([
+        "inspect".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        "--id".to_string(),
+        collection_id,
+        "--json".to_string(),
+    ])
+    .unwrap();
+    let json = match run_with_args(json_args).await.unwrap() {
+        RunOutcome::Message(m) => m,
+        other => panic!("expected Message, got {other:?}"),
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(parsed["id"].as_str().is_some());
+    assert!(parsed["endpoints"].as_array().is_some());
+}
+
+#[tokio::test]
+async fn inspect_errors_on_unknown_collection_id() {
+    let temp = TempDir::new().unwrap();
+    let db_path = temp.path().join("albert.db");
+    // Don't import anything — load_collection will return None.
+    let args = parse_args([
+        "inspect".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        "--id".to_string(),
+        "does-not-exist".to_string(),
+    ])
+    .unwrap();
+    let err = run_with_args(args).await.err().unwrap();
+    assert!(err.contains("does-not-exist"));
+}
+
+#[tokio::test]
 async fn routes_emits_tsv_and_json_rows() {
     let temp = TempDir::new().unwrap();
     let db_path = temp.path().join("albert.db");

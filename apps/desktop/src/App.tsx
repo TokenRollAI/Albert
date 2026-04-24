@@ -463,6 +463,8 @@ function App() {
         onApplyChaos={gatewayActions.applyChaos}
         onToggleCaptureBodies={gatewayActions.toggleCaptureBodies}
         onApplyRateLimits={gatewayActions.applyRateLimits}
+        onApplyStatusOverrides={gatewayActions.applyStatusOverrides}
+        onApplyResponseHeaders={gatewayActions.applyResponseHeaders}
         onSeedRequiredHeadersFromHints={gatewayActions.seedRequiredHeadersFromHints}
         onClearLog={gatewayActions.clearLog}
         onReplayRequest={gatewayActions.replayRequest}

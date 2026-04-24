@@ -30,6 +30,7 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::Import => run_import(args),
         Command::List => run_list(args),
         Command::Routes => run_routes(args),
+        Command::Inspect => run_inspect(args),
         Command::Export => run_export(args),
         Command::ExportAll => run_export_all(args),
         Command::Delete => run_delete(args),
@@ -516,6 +517,76 @@ fn run_list(args: CliArgs) -> Result<RunOutcome, String> {
         lines.push(format!(
             "{:<30}  {:<8}  {:>3} endpoints    id={}",
             summary.name, summary.source_kind, summary.endpoint_count, summary.id
+        ));
+    }
+    Ok(RunOutcome::Message(lines.join("\n")))
+}
+
+fn run_inspect(args: CliArgs) -> Result<RunOutcome, String> {
+    let store = prepare_store(&args.database_url)?;
+    let id = args
+        .export_collection_id
+        .as_ref()
+        .ok_or("--id <collection_id> is required for inspect")?;
+    let collection = store
+        .load_collection(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("collection '{id}' not found"))?;
+
+    if args.emit_json {
+        let rendered =
+            serde_json::to_string_pretty(&collection).map_err(|e| format!("serialize: {e}"))?;
+        return Ok(RunOutcome::Message(rendered));
+    }
+
+    // Human-friendly table. Keep the header + every row aligned on a
+    // single space separator so users can pipe the output into `less -S`
+    // without losing readability.
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "# {} ({})  id={}",
+        collection.name,
+        collection.source.as_str(),
+        collection.id
+    ));
+    if let Some(description) = &collection.description
+        && !description.is_empty()
+    {
+        lines.push(format!("  {description}"));
+    }
+    lines.push(format!("  {} endpoint(s):", collection.endpoints.len()));
+    lines.push(String::new());
+    lines.push(format!(
+        "{:<7} {:<40} {:<6} {:<30}",
+        "METHOD", "PATH", "AUTH", "SUMMARY"
+    ));
+    lines.push(format!(
+        "{:<7} {:<40} {:<6} {:<30}",
+        "------", "----", "----", "-------"
+    ));
+    for endpoint in &collection.endpoints {
+        let auth = match &endpoint.auth {
+            Some(hint) => match hint.scheme {
+                albert_core::AuthScheme::HttpBearer => "bearer",
+                albert_core::AuthScheme::HttpBasic => "basic",
+                albert_core::AuthScheme::ApiKeyHeader => "apiKey",
+                albert_core::AuthScheme::OAuth2 => "oauth2",
+                albert_core::AuthScheme::Other => "other",
+            },
+            None => "-",
+        };
+        let summary = endpoint.summary.as_deref().unwrap_or("").to_string();
+        let summary_trunc = if summary.len() > 30 {
+            format!("{}…", &summary[..29])
+        } else {
+            summary
+        };
+        lines.push(format!(
+            "{:<7} {:<40} {:<6} {:<30}",
+            endpoint.method.as_str(),
+            endpoint.path,
+            auth,
+            summary_trunc
         ));
     }
     Ok(RunOutcome::Message(lines.join("\n")))

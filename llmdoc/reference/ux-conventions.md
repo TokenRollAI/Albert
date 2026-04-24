@@ -66,18 +66,25 @@ counts.
 
 - **Runtime tab** — host / port / CORS + start/stop + Chaos controls
   (default latency in ms, error rate in %). Reset button restores both to
-  zero. Below Chaos lives the **Rate limits** editor
-  (`components/RateLimitsEditor.tsx`): pick a route from the registered
-  list, set `limit` + `window (ms)`, "Add / replace rule", and "Apply"
-  ships the full map via `update_mock_server`. Limit 0 models a
-  maintenance window (backend returns 429 for every request).
-  Further down, the **Auth gates** section offers a single
-  "Seed from OpenAPI security" button — it walks every imported
-  endpoint, converts the captured `auth` hint into a `required_headers`
-  rule (`lib/authHints.ts`), and applies them in one shot. Only seedable
-  schemes (HTTP bearer / basic, OAuth2, header-placed API keys) emit
-  rules; unsupported schemes surface as descriptive notes on the
-  endpoint card.
+  zero. Below Chaos the Runtime tab stacks four per-route editors (all
+  follow the same draft-then-Apply pattern and ship via
+  `update_mock_server`):
+  1. **Rate limits** (`components/RateLimitsEditor.tsx`) — `METHOD /path →
+     {limit, window_ms}`. Limit 0 models a maintenance window (429 for
+     every request).
+  2. **Status overrides** (`components/StatusOverridesEditor.tsx`) —
+     `METHOD /path → u16`. Replaces the kind-default HTTP status. Clamped
+     100–599 at the UI layer with a visible hint.
+  3. **Response headers** (`components/ResponseHeadersEditor.tsx`) —
+     `METHOD /path → {header: value}`. Flattens the two-level map into
+     row-edits; re-adding an existing (route, name) replaces the value
+     instead of duplicating.
+  4. **Auth gates** — single "Seed from OpenAPI security" button that
+     walks every imported endpoint, converts the captured `auth` hint
+     into a `required_headers` rule (`lib/authHints.ts`), and applies
+     them in one shot. Only seedable schemes (HTTP bearer / basic,
+     OAuth2, header-placed API keys) emit rules; unsupported schemes
+     surface as descriptive notes on the endpoint card.
 - **Routes tab** — one row per registered route, with a dropdown to pick
   the served example kind. Changes collect as a draft; `Apply (N)` sends
   them to `update_mock_server`.

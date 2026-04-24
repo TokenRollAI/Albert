@@ -2115,6 +2115,25 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   border: 1px solid var(--border);
   border-radius: 6px;
 }
+.rl-list__row--two {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
+}
+.rl-list__row--headers {
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1.4fr) auto;
+}
+.rl-list__row--headers input {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.rl-list__field input[aria-invalid="true"] {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+}
 .rl-list__key {
   overflow: hidden;
   text-overflow: ellipsis;

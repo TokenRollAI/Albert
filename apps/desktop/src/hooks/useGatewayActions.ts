@@ -34,6 +34,8 @@ interface UseGatewayActionsArgs {
       captureBodies?: boolean;
       rateLimits?: Record<string, RateLimitRule>;
       requiredHeaders?: Record<string, RequiredHeader[]>;
+      responseHeaders?: Record<string, Record<string, string>>;
+      statusOverrides?: Record<string, number>;
     }) => Promise<unknown>;
     savedPreferences?: {
       default_latency_ms?: number | null;
@@ -67,6 +69,10 @@ export interface GatewayActions {
   toggleCaptureBodies: (enabled: boolean) => Promise<void>;
   applyRateLimits: (
     rules: Record<string, RateLimitRule>
+  ) => Promise<void>;
+  applyStatusOverrides: (rules: Record<string, number>) => Promise<void>;
+  applyResponseHeaders: (
+    rules: Record<string, Record<string, string>>
   ) => Promise<void>;
   seedRequiredHeadersFromHints: () => Promise<void>;
   clearLog: () => Promise<void>;
@@ -170,6 +176,38 @@ export function useGatewayActions({
     [mockGateway, toasts]
   );
 
+  const applyStatusOverrides = useCallback<
+    GatewayActions["applyStatusOverrides"]
+  >(
+    async (rules) => {
+      const result = await mockGateway.update({ statusOverrides: rules });
+      if (!result) return;
+      const count = Object.keys(rules).length;
+      toasts.info(
+        count === 0
+          ? "Status overrides cleared."
+          : `Status overrides applied to ${count} route${count === 1 ? "" : "s"}.`
+      );
+    },
+    [mockGateway, toasts]
+  );
+
+  const applyResponseHeaders = useCallback<
+    GatewayActions["applyResponseHeaders"]
+  >(
+    async (rules) => {
+      const result = await mockGateway.update({ responseHeaders: rules });
+      if (!result) return;
+      const count = Object.keys(rules).length;
+      toasts.info(
+        count === 0
+          ? "Response headers cleared."
+          : `Response headers applied to ${count} route${count === 1 ? "" : "s"}.`
+      );
+    },
+    [mockGateway, toasts]
+  );
+
   const seedRequiredHeadersFromHints = useCallback<
     GatewayActions["seedRequiredHeadersFromHints"]
   >(async () => {
@@ -236,6 +274,8 @@ export function useGatewayActions({
     applyChaos,
     toggleCaptureBodies,
     applyRateLimits,
+    applyStatusOverrides,
+    applyResponseHeaders,
     seedRequiredHeadersFromHints,
     clearLog,
     replayRequest

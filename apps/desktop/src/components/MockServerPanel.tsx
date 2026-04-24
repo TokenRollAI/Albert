@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { Icon } from "./Icon";
 import { MockRequestsTab } from "./MockRequestsTab";
 import { RateLimitsEditor } from "./RateLimitsEditor";
+import { ResponseHeadersEditor } from "./ResponseHeadersEditor";
+import { StatusOverridesEditor } from "./StatusOverridesEditor";
 import type {
   GatewayStatus,
   MockExampleKind,
@@ -30,6 +32,10 @@ interface MockServerPanelProps {
   onApplyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
   onToggleCaptureBodies: (enabled: boolean) => Promise<void>;
   onApplyRateLimits: (rules: Record<string, RateLimitRule>) => Promise<void>;
+  onApplyStatusOverrides: (rules: Record<string, number>) => Promise<void>;
+  onApplyResponseHeaders: (
+    rules: Record<string, Record<string, string>>
+  ) => Promise<void>;
   onSeedRequiredHeadersFromHints: () => Promise<void>;
   onClearLog?: () => Promise<void>;
   onReplayRequest?: (entry: RequestLogEntry) => void;
@@ -52,6 +58,8 @@ export function MockServerPanel({
   onApplyChaos,
   onToggleCaptureBodies,
   onApplyRateLimits,
+  onApplyStatusOverrides,
+  onApplyResponseHeaders,
   onSeedRequiredHeadersFromHints,
   onClearLog,
   onReplayRequest
@@ -339,6 +347,24 @@ export function MockServerPanel({
               routes={status.routes}
               value={status.config.rate_limits ?? {}}
               onApply={onApplyRateLimits}
+            />
+          ) : null}
+
+          {tab === "runtime" ? (
+            <StatusOverridesEditor
+              running={status.running}
+              routes={status.routes}
+              value={status.config.status_overrides ?? {}}
+              onApply={onApplyStatusOverrides}
+            />
+          ) : null}
+
+          {tab === "runtime" ? (
+            <ResponseHeadersEditor
+              running={status.running}
+              routes={status.routes}
+              value={status.config.response_headers ?? {}}
+              onApply={onApplyResponseHeaders}
             />
           ) : null}
 
