@@ -31,6 +31,7 @@ interface MockServerPanelProps {
   onToggleCaptureBodies: (enabled: boolean) => Promise<void>;
   onApplyRateLimits: (rules: Record<string, RateLimitRule>) => Promise<void>;
   onSeedRequiredHeadersFromHints: () => Promise<void>;
+  onClearLog?: () => Promise<void>;
   onReplayRequest?: (entry: RequestLogEntry) => void;
 }
 
@@ -52,6 +53,7 @@ export function MockServerPanel({
   onToggleCaptureBodies,
   onApplyRateLimits,
   onSeedRequiredHeadersFromHints,
+  onClearLog,
   onReplayRequest
 }: MockServerPanelProps) {
   const initialHost =
@@ -477,6 +479,7 @@ export function MockServerPanel({
               requests={requests}
               baseUrl={baseUrl}
               onToggleCaptureBodies={onToggleCaptureBodies}
+              onClearLog={onClearLog}
               onReplayRequest={onReplayRequest}
             />
           ) : null}

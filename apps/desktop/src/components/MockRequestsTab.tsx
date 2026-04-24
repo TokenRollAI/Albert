@@ -35,10 +35,31 @@ interface LogMetrics {
   busiestRoute: { route: string; count: number } | null;
   averageLatencyMs: number;
   maxLatencyMs: number;
+  /// Per-route breakdown (top-5 by hit count) with p50/p95 over the log.
+  routeBreakdown: RouteBreakdownRow[];
+}
+
+export interface RouteBreakdownRow {
+  route: string;
+  count: number;
+  p50: number;
+  p95: number;
+  max: number;
+}
+
+/**
+ * Nearest-rank percentile over a pre-sorted array. Returns 0 for empty
+ * arrays. `pct` is the percentile (1..=100).
+ */
+function percentile(sorted: number[], pct: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.max(0, Math.ceil((pct / 100) * sorted.length) - 1);
+  return sorted[Math.min(idx, sorted.length - 1)];
 }
 
 export function computeMetrics(log: RequestLogEntry[]): LogMetrics {
   const routeCounts = new Map<string, number>();
+  const routeLatencies = new Map<string, number[]>();
   const kindCounts: Record<string, number> = {};
   let total = 0;
   let status2xx = 0;
@@ -58,9 +79,13 @@ export function computeMetrics(log: RequestLogEntry[]): LogMetrics {
     const routeKey = entry.matched_route ?? `${entry.method} ${entry.path}`;
     routeCounts.set(routeKey, (routeCounts.get(routeKey) ?? 0) + 1);
 
-    latencySum += entry.latency_ms ?? 0;
-    if ((entry.latency_ms ?? 0) > latencyMax) {
-      latencyMax = entry.latency_ms ?? 0;
+    const ms = entry.latency_ms ?? 0;
+    if (!routeLatencies.has(routeKey)) routeLatencies.set(routeKey, []);
+    routeLatencies.get(routeKey)!.push(ms);
+
+    latencySum += ms;
+    if (ms > latencyMax) {
+      latencyMax = ms;
     }
   }
   let busiestRoute: { route: string; count: number } | null = null;
@@ -69,6 +94,25 @@ export function computeMetrics(log: RequestLogEntry[]): LogMetrics {
       busiestRoute = { route, count };
     }
   }
+  // Top-5 routes by hit count. Ties broken lexicographically so the list
+  // is deterministic across reloads.
+  const routeBreakdown: RouteBreakdownRow[] = Array.from(routeCounts.entries())
+    .sort(
+      ([a, ca], [b, cb]) => cb - ca || (a < b ? -1 : a > b ? 1 : 0)
+    )
+    .slice(0, 5)
+    .map(([route, count]) => {
+      const samples = (routeLatencies.get(route) ?? []).slice().sort(
+        (x, y) => x - y
+      );
+      return {
+        route,
+        count,
+        p50: percentile(samples, 50),
+        p95: percentile(samples, 95),
+        max: samples.length === 0 ? 0 : samples[samples.length - 1]
+      };
+    });
   return {
     total,
     status2xx,
@@ -77,7 +121,8 @@ export function computeMetrics(log: RequestLogEntry[]): LogMetrics {
     kindCounts,
     busiestRoute,
     averageLatencyMs: total === 0 ? 0 : Math.round(latencySum / total),
-    maxLatencyMs: latencyMax
+    maxLatencyMs: latencyMax,
+    routeBreakdown
   };
 }
 
@@ -91,6 +136,7 @@ interface MockRequestsTabProps {
   requests: RequestLogEntry[];
   baseUrl: string | null;
   onToggleCaptureBodies: (enabled: boolean) => Promise<void>;
+  onClearLog?: () => Promise<void>;
   onReplayRequest?: (entry: RequestLogEntry) => void;
 }
 
@@ -104,6 +150,7 @@ export function MockRequestsTab({
   requests,
   baseUrl,
   onToggleCaptureBodies,
+  onClearLog,
   onReplayRequest
 }: MockRequestsTabProps) {
   // Metrics always reflect the full log so the user keeps a global picture
@@ -163,6 +210,32 @@ export function MockRequestsTab({
             </span>
           </div>
         ) : null}
+        {metrics.routeBreakdown.length > 1 ? (
+          <table className="route-breakdown">
+            <thead>
+              <tr>
+                <th>Route</th>
+                <th className="route-breakdown__num">hits</th>
+                <th className="route-breakdown__num">p50</th>
+                <th className="route-breakdown__num">p95</th>
+                <th className="route-breakdown__num">max</th>
+              </tr>
+            </thead>
+            <tbody>
+              {metrics.routeBreakdown.map((row) => (
+                <tr key={row.route}>
+                  <td>
+                    <code>{row.route}</code>
+                  </td>
+                  <td className="route-breakdown__num">{row.count}</td>
+                  <td className="route-breakdown__num">{row.p50}ms</td>
+                  <td className="route-breakdown__num">{row.p95}ms</td>
+                  <td className="route-breakdown__num">{row.max}ms</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -198,6 +271,24 @@ export function MockRequestsTab({
           >
             Export JSON
           </button>
+          {onClearLog ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => {
+                if (requests.length === 0) return;
+                void onClearLog();
+              }}
+              disabled={requests.length === 0 || !status.running}
+              title={
+                requests.length === 0
+                  ? "Log is already empty"
+                  : "Wipe the log + reset cumulative metrics"
+              }
+            >
+              Clear
+            </button>
+          ) : null}
           <span className="panel__meta">
             {filterActive
               ? `showing ${filtered.length} of ${requests.length}`
@@ -338,6 +429,19 @@ export function MockRequestsTab({
                     {entry.source}
                   </span>
                 )}
+                {entry.request_id ? (
+                  <button
+                    type="button"
+                    className="reqlog__reqid"
+                    title="Copy request id"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void navigator.clipboard?.writeText(entry.request_id ?? "");
+                    }}
+                  >
+                    id:{(entry.request_id ?? "").slice(0, 8)}
+                  </button>
+                ) : null}
                 {entry.request_body ? (
                   <details className="reqlog__body">
                     <summary>body</summary>

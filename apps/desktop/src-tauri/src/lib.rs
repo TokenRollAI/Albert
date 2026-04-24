@@ -29,6 +29,7 @@ pub fn run() {
             commands::gateway::mock_server_status,
             commands::gateway::mock_server_requests,
             commands::gateway::mock_server_metrics,
+            commands::gateway::mock_server_clear_log,
             commands::gateway::load_gateway_preferences,
             commands::gateway::save_gateway_preferences,
             commands::gateway::update_mock_server,

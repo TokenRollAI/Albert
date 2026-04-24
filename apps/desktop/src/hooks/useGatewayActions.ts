@@ -44,6 +44,7 @@ interface UseGatewayActionsArgs {
       rate_limits?: Record<string, RateLimitRule>;
       example_overrides?: Record<string, MockExampleKind>;
     } | null;
+    clearLog?: () => Promise<void>;
   };
   sidebarCollections: SidebarCollection[];
   openTab: (
@@ -66,6 +67,7 @@ export interface GatewayActions {
     rules: Record<string, RateLimitRule>
   ) => Promise<void>;
   seedRequiredHeadersFromHints: () => Promise<void>;
+  clearLog: () => Promise<void>;
   replayRequest: (entry: RequestLogEntry) => void;
 }
 
@@ -219,6 +221,12 @@ export function useGatewayActions({
     [openTab, setMockPanelOpen, sidebarCollections, toasts]
   );
 
+  const clearLog = useCallback<GatewayActions["clearLog"]>(async () => {
+    if (!mockGateway.clearLog) return;
+    await mockGateway.clearLog();
+    toasts.info("Request log cleared.");
+  }, [mockGateway, toasts]);
+
   return {
     start,
     applyOverrides,
@@ -226,6 +234,7 @@ export function useGatewayActions({
     toggleCaptureBodies,
     applyRateLimits,
     seedRequiredHeadersFromHints,
+    clearLog,
     replayRequest
   };
 }

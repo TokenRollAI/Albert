@@ -111,6 +111,7 @@ interface UseMockGatewayResult {
   stop: () => Promise<void>;
   refresh: () => Promise<void>;
   update: (args: UpdateArgs) => Promise<GatewayStatus | null>;
+  clearLog: () => Promise<void>;
 }
 
 export function useMockGateway({
@@ -315,6 +316,20 @@ export function useMockGateway({
     [enabled]
   );
 
+  const clearLog = useCallback(async () => {
+    if (!enabled) return;
+    try {
+      await invoke("mock_server_clear_log");
+      if (mounted.current) {
+        setRequests([]);
+      }
+    } catch (err) {
+      if (mounted.current) {
+        setError(String(err));
+      }
+    }
+  }, [enabled]);
+
   return {
     status,
     busy,
@@ -324,6 +339,7 @@ export function useMockGateway({
     start,
     stop,
     refresh,
-    update
+    update,
+    clearLog
   };
 }

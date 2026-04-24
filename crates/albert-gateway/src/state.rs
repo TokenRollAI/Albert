@@ -23,6 +23,11 @@ pub struct RequestLogEntry {
     /// Truncated request body (UTF-8 best-effort) when capture was enabled.
     #[serde(default)]
     pub request_body: Option<String>,
+    /// Correlation id set on the response `x-request-id` header. Honored
+    /// from the client when provided; otherwise generated server-side so
+    /// every entry can be cross-referenced with a single lookup.
+    #[serde(default)]
+    pub request_id: Option<String>,
 }
 
 pub(crate) const DEFAULT_REQUEST_LOG_CAPACITY: usize = 100;
@@ -92,6 +97,65 @@ pub struct MetricsSnapshot {
     pub total_latency_ms: u64,
     pub max_latency_ms: u64,
     pub started_at_epoch_ms: i64,
+    /// Per-route rollups keyed by `METHOD /path`. Absent for requests
+    /// that did not match a registered route (404 / unsupported method).
+    #[serde(default)]
+    pub by_route: BTreeMap<String, RouteMetrics>,
+}
+
+/// Per-route rollup returned from `/__albert/metrics`. Latencies are
+/// approximate percentiles over a bounded reservoir (200 samples) so the
+/// snapshot stays cheap to compute and the memory footprint is
+/// constant per route. `p50_ms` and `p95_ms` collapse to `last_latency_ms`
+/// when fewer than two samples have been seen.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RouteMetrics {
+    pub count: u64,
+    pub total_latency_ms: u64,
+    pub max_latency_ms: u64,
+    pub p50_ms: u64,
+    pub p95_ms: u64,
+    /// Raw latency samples retained for percentile computation. Bounded
+    /// at `ROUTE_LATENCY_RESERVOIR` entries to keep per-route memory
+    /// bounded even under sustained traffic.
+    #[serde(skip)]
+    pub(crate) samples: VecDeque<u64>,
+}
+
+pub(crate) const ROUTE_LATENCY_RESERVOIR: usize = 200;
+
+impl RouteMetrics {
+    pub fn average_latency_ms(&self) -> u64 {
+        self.total_latency_ms.checked_div(self.count).unwrap_or(0)
+    }
+
+    pub(crate) fn record(&mut self, latency_ms: u64) {
+        self.count = self.count.saturating_add(1);
+        self.total_latency_ms = self.total_latency_ms.saturating_add(latency_ms);
+        if latency_ms > self.max_latency_ms {
+            self.max_latency_ms = latency_ms;
+        }
+        if self.samples.len() >= ROUTE_LATENCY_RESERVOIR {
+            self.samples.pop_front();
+        }
+        self.samples.push_back(latency_ms);
+        let mut sorted: Vec<u64> = self.samples.iter().copied().collect();
+        sorted.sort_unstable();
+        self.p50_ms = percentile(&sorted, 50);
+        self.p95_ms = percentile(&sorted, 95);
+    }
+}
+
+/// Nearest-rank percentile over a pre-sorted slice. Returns 0 for an
+/// empty slice. `pct` is the percentile (1..=100).
+fn percentile(sorted: &[u64], pct: u8) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let pct = pct.clamp(1, 100) as usize;
+    // Nearest-rank: index = ceil(pct/100 * N) - 1.
+    let idx = (pct * sorted.len()).div_ceil(100) - 1;
+    sorted[idx.min(sorted.len() - 1)]
 }
 
 impl MetricsSnapshot {
@@ -286,6 +350,13 @@ impl AppState {
             if entry.latency_ms > metrics.max_latency_ms {
                 metrics.max_latency_ms = entry.latency_ms;
             }
+            // Per-route rollup. Only matched routes contribute — for 404 /
+            // unsupported rows we leave the by_route map alone so it
+            // stays a faithful picture of registered-route traffic.
+            if let Some(key) = &entry.matched_route {
+                let route_metrics = metrics.by_route.entry(key.clone()).or_default();
+                route_metrics.record(entry.latency_ms);
+            }
         }
         let mut log = self.request_log.lock().expect("log poisoned");
         if log.len() >= DEFAULT_REQUEST_LOG_CAPACITY {
@@ -296,5 +367,65 @@ impl AppState {
 
     pub(crate) fn snapshot_metrics(&self) -> MetricsSnapshot {
         self.metrics.lock().expect("metrics poisoned").clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percentile_of_empty_slice_is_zero() {
+        assert_eq!(percentile(&[], 50), 0);
+        assert_eq!(percentile(&[], 95), 0);
+    }
+
+    #[test]
+    fn percentile_picks_nearest_rank() {
+        // [10, 20, 30, 40, 50] — p50 = 30 (3rd), p95 = 50 (5th).
+        let samples = [10u64, 20, 30, 40, 50];
+        assert_eq!(percentile(&samples, 50), 30);
+        assert_eq!(percentile(&samples, 95), 50);
+        assert_eq!(percentile(&samples, 100), 50);
+        assert_eq!(percentile(&samples, 20), 10);
+    }
+
+    #[test]
+    fn percentile_handles_single_sample() {
+        assert_eq!(percentile(&[42], 50), 42);
+        assert_eq!(percentile(&[42], 95), 42);
+    }
+
+    #[test]
+    fn route_metrics_tracks_count_and_percentiles() {
+        let mut rm = RouteMetrics::default();
+        for ms in [10u64, 30, 50, 20, 40] {
+            rm.record(ms);
+        }
+        assert_eq!(rm.count, 5);
+        assert_eq!(rm.total_latency_ms, 150);
+        assert_eq!(rm.average_latency_ms(), 30);
+        assert_eq!(rm.max_latency_ms, 50);
+        // Sorted [10, 20, 30, 40, 50] → p50=30, p95=50.
+        assert_eq!(rm.p50_ms, 30);
+        assert_eq!(rm.p95_ms, 50);
+    }
+
+    #[test]
+    fn route_metrics_samples_are_bounded() {
+        let mut rm = RouteMetrics::default();
+        // Record 2x the reservoir to prove we don't grow without bound.
+        for i in 0..(ROUTE_LATENCY_RESERVOIR * 2) as u64 {
+            rm.record(i);
+        }
+        assert_eq!(rm.count, (ROUTE_LATENCY_RESERVOIR * 2) as u64);
+        assert_eq!(rm.samples.len(), ROUTE_LATENCY_RESERVOIR);
+        // The oldest half should have aged out; the samples we still hold
+        // should all come from the second half of the stream.
+        let smallest = rm.samples.iter().copied().min().unwrap();
+        assert!(
+            smallest >= ROUTE_LATENCY_RESERVOIR as u64,
+            "oldest samples not evicted: min={smallest}"
+        );
     }
 }

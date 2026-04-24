@@ -215,6 +215,9 @@ export interface RequestLogEntry {
   source: string;
   latency_ms: number;
   request_body?: string | null;
+  /// Correlation id emitted on the response `x-request-id` header.
+  /// Honored from the client when supplied, otherwise generated.
+  request_id?: string | null;
 }
 
 export interface ProviderConfigDraft {

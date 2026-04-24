@@ -54,6 +54,13 @@ Status code mapping:
 Always emitted:
 
 - `content-type: application/json`
+- `x-request-id: <id>` on every response (including 401/429/404 error
+  paths). Honored from the client's `x-request-id` header when present,
+  otherwise generated server-side as a v4-shaped lowercase UUID. The id
+  is also recorded on the `RequestLogEntry` so UI rows, log exports, and
+  external traces share one correlation key. Client-supplied ids are
+  trimmed and clamped to 128 characters so a malicious header can't
+  grow the log unboundedly.
 - `x-albert-mock-kind: success | empty | error`
 - `x-albert-mock-route: METHOD /path`
 - `x-albert-mock-source: query` when a query override was honored
@@ -173,8 +180,15 @@ always serves the error example.
   subcommand to enumerate what to probe.
 - `GET /__albert/metrics` returns a `MetricsSnapshot`:
   `{total_requests, by_method, by_status_class, average_latency_ms,
-    max_latency_ms, started_at_epoch_ms, uptime_ms}`. Incremented
-  on every mock_handler call (not on hits to `/__albert/*` itself).
+    max_latency_ms, started_at_epoch_ms, uptime_ms, by_route}`.
+  Incremented on every mock_handler call (not on hits to `/__albert/*`
+  itself). The `by_route` map is keyed on `METHOD /path` and contains
+  `{count, total_latency_ms, average_latency_ms, max_latency_ms,
+    p50_ms, p95_ms}` per route. Percentiles are nearest-rank over a
+  bounded reservoir of the 200 most recent samples, so a hot route
+  can't make the snapshot grow unbounded. Requests that don't match a
+  registered route (404 / unsupported method) don't appear in
+  `by_route` — it stays a faithful picture of declared-route traffic.
   Also exposed from the desktop host via the `mock_server_metrics`
   Tauri command.
 - `404` responses are JSON: `{error: "mock_not_found", message}`.

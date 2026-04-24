@@ -464,6 +464,7 @@ function App() {
         onToggleCaptureBodies={gatewayActions.toggleCaptureBodies}
         onApplyRateLimits={gatewayActions.applyRateLimits}
         onSeedRequiredHeadersFromHints={gatewayActions.seedRequiredHeadersFromHints}
+        onClearLog={gatewayActions.clearLog}
         onReplayRequest={gatewayActions.replayRequest}
       />
 

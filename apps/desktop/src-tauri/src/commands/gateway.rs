@@ -116,6 +116,15 @@ pub async fn mock_server_metrics(
     Ok(services.gateway.metrics().await)
 }
 
+#[tauri::command]
+pub async fn mock_server_clear_log(services: State<'_, AppServices>) -> Result<(), String> {
+    services
+        .gateway
+        .clear_log()
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Load the last-saved gateway preferences. Returns `null` when the user
 /// has never started the mock server before.
 #[tauri::command]

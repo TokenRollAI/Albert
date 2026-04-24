@@ -194,7 +194,7 @@ fn epoch_ms_now() -> u128 {
         .unwrap_or(0)
 }
 
-fn fake_uuid_v4() -> String {
+pub(crate) fn fake_uuid_v4() -> String {
     // Not a cryptographic UUID — we just want a shape that looks correct
     // so mock consumers that validate the format (via regex) accept it.
     let a = next_random_int(0xFFFFFFFF);

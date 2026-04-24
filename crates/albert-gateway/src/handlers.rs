@@ -43,6 +43,23 @@ pub(crate) async fn routes_handler(State(state): State<AppState>) -> Response {
 
 pub(crate) async fn metrics_handler(State(state): State<AppState>) -> Response {
     let metrics = state.snapshot_metrics();
+    let by_route: serde_json::Map<String, serde_json::Value> = metrics
+        .by_route
+        .iter()
+        .map(|(key, rm)| {
+            (
+                key.clone(),
+                serde_json::json!({
+                    "count": rm.count,
+                    "total_latency_ms": rm.total_latency_ms,
+                    "average_latency_ms": rm.average_latency_ms(),
+                    "max_latency_ms": rm.max_latency_ms,
+                    "p50_ms": rm.p50_ms,
+                    "p95_ms": rm.p95_ms,
+                }),
+            )
+        })
+        .collect();
     let payload = serde_json::json!({
         "total_requests": metrics.total_requests,
         "by_method": metrics.by_method,
@@ -51,6 +68,7 @@ pub(crate) async fn metrics_handler(State(state): State<AppState>) -> Response {
         "max_latency_ms": metrics.max_latency_ms,
         "started_at_epoch_ms": metrics.started_at_epoch_ms,
         "uptime_ms": epoch_ms_now().saturating_sub(metrics.started_at_epoch_ms),
+        "by_route": by_route,
     });
     (StatusCode::OK, axum::Json(payload)).into_response()
 }
@@ -73,6 +91,7 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
                 .map(|v| (name.as_str().to_ascii_lowercase(), v.to_string()))
         })
         .collect();
+    let request_id = resolve_request_id(&request_headers);
     let captured_body = if capture_bodies && method != Method::GET && method != Method::HEAD {
         capture_request_body(request).await
     } else {
@@ -93,8 +112,9 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
             source: "unsupported",
             latency_ms: 0,
             request_body: captured_string.clone(),
+            request_id: Some(request_id.clone()),
         });
-        return not_found(format!("unsupported method {method}"));
+        return not_found(format!("unsupported method {method}"), Some(&request_id));
     };
     let table = state.snapshot_table();
     let overrides = state.snapshot_overrides();
@@ -120,12 +140,12 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
                     source: "unmatched",
                     latency_ms: 0,
                     request_body: captured_string.clone(),
+                    request_id: Some(request_id.clone()),
                 });
-                return not_found(format!(
-                    "no mock registered for {} {}",
-                    method.as_str(),
-                    path
-                ));
+                return not_found(
+                    format!("no mock registered for {} {}", method.as_str(), path),
+                    Some(&request_id),
+                );
             }
         },
         None => {
@@ -141,12 +161,12 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
                 source: "unmatched",
                 latency_ms: 0,
                 request_body: captured_string.clone(),
+                request_id: Some(request_id.clone()),
             });
-            return not_found(format!(
-                "no mock registered for {} {}",
-                method.as_str(),
-                path
-            ));
+            return not_found(
+                format!("no mock registered for {} {}", method.as_str(), path),
+                Some(&request_id),
+            );
         }
     };
     let route = matched.route;
@@ -172,8 +192,9 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
             source: "auth-required",
             latency_ms: 0,
             request_body: captured_string.clone(),
+            request_id: Some(request_id.clone()),
         });
-        return unauthorized(err);
+        return unauthorized(err, &request_id);
     }
 
     // Rate-limit gate: runs after auth but before example selection so a
@@ -197,8 +218,9 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
             source: "rate-limited",
             latency_ms: 0,
             request_body: captured_string.clone(),
+            request_id: Some(request_id.clone()),
         });
-        return too_many_requests(limit, window_ms, retry_after_ms);
+        return too_many_requests(limit, window_ms, retry_after_ms, &request_id);
     }
 
     let (override_kind, query_selected) = parse_query_override(query.as_deref());
@@ -224,12 +246,12 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
             source: "no-example",
             latency_ms: 0,
             request_body: captured_string.clone(),
+            request_id: Some(request_id.clone()),
         });
-        return not_found(format!(
-            "no example configured for {} {}",
-            method.as_str(),
-            path
-        ));
+        return not_found(
+            format!("no example configured for {} {}", method.as_str(), path),
+            Some(&request_id),
+        );
     };
 
     let latency_ms = latency.resolve(&matched_key);
@@ -262,6 +284,7 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         source,
         latency_ms,
         request_body: captured_string,
+        request_id: Some(request_id.clone()),
     });
 
     // Apply response templating (e.g. {{now}}, {{path.id}}) before we
@@ -279,6 +302,11 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
+    if let Ok(name) = HeaderName::from_bytes(b"x-request-id")
+        && let Ok(value) = HeaderValue::from_str(&request_id)
+    {
+        headers.insert(name, value);
+    }
     if let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-kind")
         && let Ok(value) = HeaderValue::from_str(example.kind.as_str())
     {
@@ -390,20 +418,53 @@ fn evaluate_required_headers(
     None
 }
 
-fn unauthorized(reason: String) -> Response {
+/// Honor the client's `x-request-id` when provided; otherwise fabricate
+/// a UUIDish id server-side. The returned string is always non-empty and
+/// is what the log entry, response header, and chaos paths all use as a
+/// single correlation id for the request.
+fn resolve_request_id(request_headers: &[(String, String)]) -> String {
+    for (name, value) in request_headers {
+        if name == "x-request-id" {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                // Keep the value length bounded so a malicious client
+                // can't blow up the log.
+                const MAX_ID_LEN: usize = 128;
+                if trimmed.len() > MAX_ID_LEN {
+                    return trimmed.chars().take(MAX_ID_LEN).collect();
+                }
+                return trimmed.to_string();
+            }
+        }
+    }
+    crate::templating::fake_uuid_v4()
+}
+
+fn unauthorized(reason: String, request_id: &str) -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    if let Ok(name) = HeaderName::from_bytes(b"x-request-id")
+        && let Ok(value) = HeaderValue::from_str(request_id)
+    {
+        headers.insert(name, value);
+    }
     let payload = serde_json::json!({
         "error": "unauthorized",
         "message": reason,
+        "request_id": request_id,
     });
-    (
-        StatusCode::UNAUTHORIZED,
-        [(header::CONTENT_TYPE, "application/json")],
-        axum::Json(payload),
-    )
-        .into_response()
+    (StatusCode::UNAUTHORIZED, headers, axum::Json(payload)).into_response()
 }
 
-fn too_many_requests(limit: u32, window_ms: u64, retry_after_ms: u64) -> Response {
+fn too_many_requests(
+    limit: u32,
+    window_ms: u64,
+    retry_after_ms: u64,
+    request_id: &str,
+) -> Response {
     // Retry-After is specified in whole seconds. Round up so clients never
     // poll before the rolling window actually opens.
     let retry_after_secs = retry_after_ms.div_ceil(1000).max(1);
@@ -414,6 +475,11 @@ fn too_many_requests(limit: u32, window_ms: u64, retry_after_ms: u64) -> Respons
     );
     if let Ok(value) = HeaderValue::from_str(&retry_after_secs.to_string()) {
         headers.insert(header::RETRY_AFTER, value);
+    }
+    if let Ok(name) = HeaderName::from_bytes(b"x-request-id")
+        && let Ok(value) = HeaderValue::from_str(request_id)
+    {
+        headers.insert(name, value);
     }
     if let Ok(name) = HeaderName::from_bytes(b"x-albert-rate-limit")
         && let Ok(value) = HeaderValue::from_str(&limit.to_string())
@@ -430,21 +496,29 @@ fn too_many_requests(limit: u32, window_ms: u64, retry_after_ms: u64) -> Respons
         "limit": limit,
         "window_ms": window_ms,
         "retry_after_ms": retry_after_ms,
+        "request_id": request_id,
     });
     (StatusCode::TOO_MANY_REQUESTS, headers, axum::Json(payload)).into_response()
 }
 
-pub(crate) fn not_found(message: String) -> Response {
+pub(crate) fn not_found(message: String, request_id: Option<&str>) -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    if let Some(id) = request_id
+        && let Ok(name) = HeaderName::from_bytes(b"x-request-id")
+        && let Ok(value) = HeaderValue::from_str(id)
+    {
+        headers.insert(name, value);
+    }
     let payload = serde_json::json!({
         "error": "mock_not_found",
         "message": message,
+        "request_id": request_id,
     });
-    (
-        StatusCode::NOT_FOUND,
-        [(header::CONTENT_TYPE, "application/json")],
-        axum::Json(payload),
-    )
-        .into_response()
+    (StatusCode::NOT_FOUND, headers, axum::Json(payload)).into_response()
 }
 
 pub(crate) fn epoch_ms_now() -> i64 {

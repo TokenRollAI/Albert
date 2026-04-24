@@ -82,14 +82,20 @@ counts.
   the served example kind. Changes collect as a draft; `Apply (N)` sends
   them to `update_mock_server`.
 - **Requests tab** — a metrics summary (total, 2xx/4xx/5xx counts, avg
-  and max latency, busiest route) followed by the scrolling log. Each
-  row shows timestamp, method, path, status, latency, served-kind or
-  source label. A "Capture request bodies" toggle arms the backend to
-  store up to 4KB per request; when captured, rows expose a `<details>`
-  body preview. Rows whose `matched_route` points at a known local
-  endpoint are clickable — selecting one opens the endpoint tab and
-  seeds the Try-it draft with the recorded query + body so the user
-  can tweak and replay.
+  and max latency, busiest route, top-5 route breakdown with p50/p95),
+  a 2xx/4xx/5xx filter chip row + method dropdown, followed by the
+  scrolling log. Each row shows timestamp, method, path, status,
+  latency, served-kind or source label, and a small `id:<prefix>`
+  pill for the `x-request-id`; clicking that pill copies the full id.
+  A "Capture request bodies" toggle arms the backend to store up to
+  4KB per request; when captured, rows expose a `<details>` body
+  preview. **Export JSON** streams the current log as a timestamped
+  download; **Clear** wipes both the log and the cumulative metrics
+  (via `mock_server_clear_log`) so users can iterate on a scenario
+  without restarting the server. Rows whose `matched_route` points at
+  a known local endpoint are clickable — selecting one opens the
+  endpoint tab and seeds the Try-it draft with the recorded query +
+  body so the user can tweak and replay.
 
 ## URL bar
 

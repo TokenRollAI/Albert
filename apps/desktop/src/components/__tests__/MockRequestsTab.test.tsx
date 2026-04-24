@@ -70,6 +70,44 @@ describe("computeMetrics", () => {
     ]);
     expect(metrics.busiestRoute).toEqual({ route: "POST /lost", count: 2 });
   });
+
+  test("routeBreakdown carries per-route hit count + p50/p95", () => {
+    const metrics = computeMetrics([
+      entry({ matched_route: "GET /a", latency_ms: 10 }),
+      entry({ matched_route: "GET /a", latency_ms: 30 }),
+      entry({ matched_route: "GET /a", latency_ms: 50 }),
+      entry({ matched_route: "GET /a", latency_ms: 20 }),
+      entry({ matched_route: "GET /a", latency_ms: 40 }),
+      entry({ matched_route: "POST /b", latency_ms: 5 })
+    ]);
+    expect(metrics.routeBreakdown.map((r) => r.route)).toEqual([
+      "GET /a",
+      "POST /b"
+    ]);
+    const a = metrics.routeBreakdown[0];
+    expect(a.count).toBe(5);
+    // Sorted [10, 20, 30, 40, 50] → p50=30, p95=50.
+    expect(a.p50).toBe(30);
+    expect(a.p95).toBe(50);
+    expect(a.max).toBe(50);
+  });
+
+  test("routeBreakdown caps at 5 entries with ties broken lexicographically", () => {
+    const log = [];
+    // 6 distinct routes, all 1 hit each. Sorted by name: a, b, c, d, e, f.
+    // The breakdown should drop "f" (alphabetically last).
+    for (const name of ["f", "d", "c", "b", "e", "a"]) {
+      log.push(entry({ matched_route: `GET /${name}` }));
+    }
+    const metrics = computeMetrics(log);
+    expect(metrics.routeBreakdown.map((r) => r.route)).toEqual([
+      "GET /a",
+      "GET /b",
+      "GET /c",
+      "GET /d",
+      "GET /e"
+    ]);
+  });
 });
 
 describe("filterRequests", () => {

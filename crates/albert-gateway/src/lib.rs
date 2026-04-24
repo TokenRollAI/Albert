@@ -30,7 +30,7 @@ pub use config::{
 pub use error::GatewayError;
 pub use route::{MatchedRoute, MockRoute, build_routes, route_key};
 pub use routing::{CompiledRoute, RouteTable};
-pub use state::{MetricsSnapshot, RequestLogEntry};
+pub use state::{MetricsSnapshot, RequestLogEntry, RouteMetrics};
 
 use state::{AppState, LatencyConfig};
 
@@ -232,6 +232,31 @@ impl MockGateway {
         let log = running.state.request_log.lock().expect("log poisoned");
         let take = limit.min(log.len());
         log.iter().rev().take(take).cloned().collect()
+    }
+
+    /// Drop every entry from the request log and reset the cumulative
+    /// metrics snapshot. Useful when the user wants a clean slate for a
+    /// new scenario without restarting the server (ports, config, routes
+    /// all stay put). `started_at_epoch_ms` also rewinds so the
+    /// `uptime_ms` in subsequent metrics reflects the new clean period.
+    pub async fn clear_log(&self) -> Result<(), GatewayError> {
+        let guard = self.inner.lock().await;
+        let Some(running) = guard.as_ref() else {
+            return Err(GatewayError::NotRunning);
+        };
+        {
+            let mut log = running.state.request_log.lock().expect("log poisoned");
+            log.clear();
+        }
+        {
+            let mut metrics = running.state.metrics.lock().expect("metrics poisoned");
+            let now = handlers::epoch_ms_now();
+            *metrics = MetricsSnapshot {
+                started_at_epoch_ms: now,
+                ..Default::default()
+            };
+        }
+        Ok(())
     }
 
     pub async fn stop(&self) -> Result<(), GatewayError> {
@@ -833,6 +858,16 @@ mod tests {
         // uptime should be > 0 (gateway has been running)
         let uptime = body["uptime_ms"].as_i64().unwrap();
         assert!(uptime >= 0);
+        // by_route rollup: /m got 2 matched hits (success + error),
+        // /not-there is unmatched and must NOT appear in by_route.
+        let by_route = body["by_route"].as_object().unwrap();
+        let m_route = by_route
+            .get("GET /m")
+            .expect("matched /m route should appear in by_route");
+        assert_eq!(m_route["count"], 2);
+        assert!(m_route["p50_ms"].as_u64().is_some());
+        assert!(m_route["p95_ms"].as_u64().is_some());
+        assert!(!by_route.contains_key("GET /not-there"));
         gateway.stop().await.expect("stop");
     }
 
@@ -1242,6 +1277,128 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status().as_u16(), 200);
+
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn clear_log_resets_requests_and_metrics() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "clear",
+            vec![endpoint(HttpMethod::Get, "/x", json!({"ok": true}))],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        for _ in 0..3 {
+            client.get(format!("{base}/x")).send().await.unwrap();
+        }
+        assert_eq!(gateway.recent_requests(10).await.len(), 3);
+        let before = gateway.metrics().await;
+        assert_eq!(before.total_requests, 3);
+
+        gateway.clear_log().await.expect("clear");
+        assert!(gateway.recent_requests(10).await.is_empty());
+        let after = gateway.metrics().await;
+        assert_eq!(after.total_requests, 0);
+        assert!(after.by_route.is_empty());
+
+        // Server still running — fresh hits get logged again.
+        client.get(format!("{base}/x")).send().await.unwrap();
+        assert_eq!(gateway.recent_requests(10).await.len(), 1);
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn clear_log_errors_when_not_running() {
+        let gateway = MockGateway::new();
+        let err = gateway.clear_log().await.err();
+        assert!(matches!(err, Some(GatewayError::NotRunning)));
+    }
+
+    #[tokio::test]
+    async fn request_id_header_honored_or_generated() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "trace",
+            vec![endpoint(HttpMethod::Get, "/ping", json!({"ok": true}))],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        // Client-supplied id is echoed back verbatim on success.
+        let resp = client
+            .get(format!("{base}/ping"))
+            .header("x-request-id", "trace-abc-123")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(
+            resp.headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok()),
+            Some("trace-abc-123")
+        );
+
+        // No header supplied → gateway fabricates a UUID-ish id.
+        let resp = client.get(format!("{base}/ping")).send().await.unwrap();
+        let generated = resp
+            .headers()
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap()
+            .to_string();
+        assert_eq!(generated.split('-').count(), 5);
+
+        // 404 responses also carry a request id + echo it in the JSON body.
+        let resp = client
+            .get(format!("{base}/missing"))
+            .header("x-request-id", "missing-id-xyz")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 404);
+        assert_eq!(
+            resp.headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok()),
+            Some("missing-id-xyz")
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["request_id"], "missing-id-xyz");
+
+        // Log entries carry the id so the UI can correlate responses.
+        let log = gateway.recent_requests(10).await;
+        assert!(
+            log.iter()
+                .any(|e| e.request_id.as_deref() == Some("trace-abc-123"))
+        );
+        assert!(
+            log.iter()
+                .any(|e| e.request_id.as_deref() == Some("missing-id-xyz"))
+        );
 
         gateway.stop().await.expect("stop");
     }
