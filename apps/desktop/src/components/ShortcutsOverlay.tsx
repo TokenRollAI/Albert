@@ -27,6 +27,10 @@ function prettifyCombo(combo: string): string {
       if (lower === "ctrl") return "Ctrl";
       if (lower === "meta" || lower === "cmd") return "⌘";
       if (lower === "/") return "/";
+      if (lower === "arrowright") return "→";
+      if (lower === "arrowleft") return "←";
+      if (lower === "arrowup") return "↑";
+      if (lower === "arrowdown") return "↓";
       return token.length === 1 ? token.toUpperCase() : token;
     })
     .join(" ");

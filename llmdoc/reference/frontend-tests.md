@@ -86,6 +86,11 @@
   per-bucket 5xx count, window cap).
 - `hooks/__tests__/useAppDrawers.test.tsx` — covers the drawer-state
   hook: independent slots, open/close/toggle/set semantics.
+- `hooks/__tests__/useKeyboardShortcuts.test.tsx` — matcher semantics:
+  basic `Mod+K` fire, INPUT target suppression (when combo has no
+  modifier), `Mod+Alt+Arrow` combo gating (missing alt = no-fire),
+  digit-key matching for `Mod+1`, exact shift-modifier matching so
+  `Mod+P` and `Mod+Shift+P` stay distinct.
 - `hooks/__tests__/useDraftMap.test.tsx` — shared per-route-editor
   state machine: initial value, dirty flip, reset restores clean
   state, apply flips busy around the promise, value-based dirty

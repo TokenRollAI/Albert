@@ -14,6 +14,9 @@ Registered globally via `useKeyboardShortcuts`. `Mod` = `Cmd` on macOS,
 | `Mod + Shift+P` | Toggle the Providers drawer         |
 | `Mod + W`       | Close the active endpoint tab       |
 | `Mod + /`       | Show keyboard shortcuts overlay     |
+| `Mod + Alt + →` | Next endpoint tab (wraps)           |
+| `Mod + Alt + ←` | Previous endpoint tab (wraps)       |
+| `Mod + 1..9`    | Jump to tab N (1-indexed)           |
 
 Within the sidebar:
 

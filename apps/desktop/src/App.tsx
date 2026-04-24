@@ -147,12 +147,43 @@ function App() {
         combo: "Mod+/",
         description: "Show keyboard shortcuts",
         handler: () => drawers.shortcuts.toggle()
-      }
+      },
+      {
+        // Mod+Tab isn't capturable in browsers (reserved for window
+        // switching), so we use Mod+Alt+Right/Left to cycle tabs. On Mac
+        // this is Cmd+Opt+Arrow, which matches Safari/Chrome tab cycling.
+        combo: "Mod+alt+arrowright",
+        description: "Next endpoint tab",
+        handler: () => {
+          if (tabs.length <= 1 || !activeId) return;
+          const idx = tabs.findIndex((t) => t.id === activeId);
+          if (idx === -1) return;
+          activateTab(tabs[(idx + 1) % tabs.length].id);
+        }
+      },
+      {
+        combo: "Mod+alt+arrowleft",
+        description: "Previous endpoint tab",
+        handler: () => {
+          if (tabs.length <= 1 || !activeId) return;
+          const idx = tabs.findIndex((t) => t.id === activeId);
+          if (idx === -1) return;
+          activateTab(tabs[(idx - 1 + tabs.length) % tabs.length].id);
+        }
+      },
+      ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map<ShortcutBinding>((n) => ({
+        combo: `Mod+${n}`,
+        description: `Jump to tab ${n}`,
+        handler: () => {
+          const target = tabs[n - 1];
+          if (target) activateTab(target.id);
+        }
+      }))
     ],
     // drawers, sidebarRef identities are stable across renders, so tracking
     // them isn't necessary — only activeId / closeTab actually change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeId, closeTab]
+    [activeId, closeTab, tabs, activateTab]
   );
 
   useKeyboardShortcuts(shortcutBindings);
