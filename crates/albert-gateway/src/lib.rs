@@ -57,6 +57,7 @@ pub struct ReconfigureOptions {
     pub required_headers: BTreeMap<String, Vec<RequiredHeader>>,
     pub rate_limits: BTreeMap<String, RateLimitRule>,
     pub status_overrides: BTreeMap<String, u16>,
+    pub proxy_upstream: Option<String>,
 }
 
 /// A running or idle mock gateway.
@@ -130,6 +131,7 @@ impl MockGateway {
             collections_arc,
             started_at,
         );
+        state.replace_proxy_upstream(config.proxy_upstream.clone());
         let state_for_runtime = state.clone();
 
         let mut router = Router::new()
@@ -153,10 +155,7 @@ impl MockGateway {
                 "/__albert/openapi.json",
                 axum::routing::get(handlers::openapi_handler),
             )
-            .route(
-                "/__albert/docs",
-                axum::routing::get(handlers::docs_handler),
-            )
+            .route("/__albert/docs", axum::routing::get(handlers::docs_handler))
             .route(
                 "/__albert/config/bundle",
                 axum::routing::get(handlers::bundle_export_handler)
@@ -214,6 +213,7 @@ impl MockGateway {
             required_headers: config.required_headers,
             rate_limits: config.rate_limits,
             status_overrides: config.status_overrides,
+            proxy_upstream: config.proxy_upstream,
         })
         .await
     }
@@ -241,6 +241,7 @@ impl MockGateway {
             required_headers,
             rate_limits,
             status_overrides,
+            proxy_upstream,
         } = opts;
         let mut guard = self.inner.lock().await;
         let Some(running) = guard.as_mut() else {
@@ -286,6 +287,8 @@ impl MockGateway {
         running.config.required_headers = required_headers;
         running.config.rate_limits = rate_limits;
         running.config.status_overrides = status_overrides;
+        running.state.replace_proxy_upstream(proxy_upstream.clone());
+        running.config.proxy_upstream = proxy_upstream;
         running.route_summaries = summaries;
         Ok(running.to_status())
     }
@@ -351,6 +354,7 @@ impl MockGateway {
             rate_limits,
             status_overrides,
             example_overrides,
+            proxy_upstream,
             ..
         } = bundle.config;
         self.reconfigure(ReconfigureOptions {
@@ -366,6 +370,7 @@ impl MockGateway {
             required_headers,
             rate_limits,
             status_overrides,
+            proxy_upstream,
         })
         .await
     }
@@ -1894,6 +1899,134 @@ mod tests {
         assert_eq!(body["capture_bodies"], false);
         assert_eq!(body["rate_limits"]["GET /users"]["limit"], 3);
         assert_eq!(body["status_overrides"]["GET /users"], 418);
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn proxy_upstream_forwards_unmatched_requests() {
+        // Spin up an "upstream" gateway that serves /users/{id}. Point a
+        // second "front" gateway's `proxy_upstream` at it. Hit the front
+        // with a path the front doesn't know — it should forward and
+        // echo the upstream body back.
+        let upstream = MockGateway::new();
+        let up_col = collection(
+            "up",
+            vec![endpoint(
+                HttpMethod::Get,
+                "/users/{id}",
+                json!({"from": "upstream"}),
+            )],
+        );
+        let up_status = upstream
+            .start(
+                vec![up_col],
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("upstream start");
+        let upstream_base = format!("http://{}", up_status.bind_address.clone().unwrap());
+
+        let front = MockGateway::new();
+        let front_col = collection(
+            "front",
+            vec![endpoint(HttpMethod::Get, "/ping", json!({"pong": true}))],
+        );
+        let front_status = front
+            .start(
+                vec![front_col],
+                GatewayConfig {
+                    port: 0,
+                    proxy_upstream: Some(upstream_base.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("front start");
+        let front_base = format!("http://{}", front_status.bind_address.clone().unwrap());
+
+        let client = reqwest::Client::new();
+
+        // Sanity: /ping is registered locally — must NOT be proxied.
+        let local = client
+            .get(format!("{front_base}/ping"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(local.status().as_u16(), 200);
+        let local_src = local
+            .headers()
+            .get("x-albert-mock-source")
+            .map(|v| v.to_str().unwrap_or(""))
+            .unwrap_or("");
+        assert_ne!(local_src, "proxy");
+
+        // /users/42 isn't registered on the front — should be proxied.
+        let resp = client
+            .get(format!("{front_base}/users/42"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(
+            resp.headers()
+                .get("x-albert-mock-source")
+                .map(|v| v.to_str().unwrap_or(""))
+                .unwrap_or(""),
+            "proxy"
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["from"], "upstream");
+
+        // The proxy source label should show up in the front's log too.
+        let log = front.recent_requests(5).await;
+        assert!(
+            log.iter().any(|e| e.source == "proxy" && e.status == 200),
+            "expected a proxy log entry, got {log:?}"
+        );
+
+        front.stop().await.expect("front stop");
+        upstream.stop().await.expect("upstream stop");
+    }
+
+    #[tokio::test]
+    async fn proxy_upstream_returns_502_when_unreachable() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "front",
+            vec![endpoint(HttpMethod::Get, "/known", json!({"ok": true}))],
+        );
+        // Point at a port that's almost certainly closed.
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    proxy_upstream: Some("http://127.0.0.1:1".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("{base}/unknown/path"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 502);
+        assert_eq!(
+            resp.headers()
+                .get("x-albert-mock-source")
+                .map(|v| v.to_str().unwrap_or(""))
+                .unwrap_or(""),
+            "proxy-error"
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "proxy_error");
         gateway.stop().await.expect("stop");
     }
 

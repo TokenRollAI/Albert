@@ -30,6 +30,7 @@ interface MockRuntimeTabProps {
     rules: Record<string, Record<string, string>>
   ) => Promise<void>;
   onSeedRequiredHeadersFromHints: () => Promise<void>;
+  onApplyProxyUpstream?: (upstream: string | null) => Promise<void>;
   scenarios?: {
     list: () => Promise<StoredScenarioSummary[]>;
     save: (name: string) => Promise<void>;
@@ -60,6 +61,7 @@ export function MockRuntimeTab({
   onApplyStatusOverrides,
   onApplyResponseHeaders,
   onSeedRequiredHeadersFromHints,
+  onApplyProxyUpstream,
   scenarios
 }: MockRuntimeTabProps) {
   const initialHost =
@@ -285,6 +287,14 @@ export function MockRuntimeTab({
         </p>
       </section>
 
+      {onApplyProxyUpstream ? (
+        <ProxyUpstreamEditor
+          running={status.running}
+          value={status.config.proxy_upstream ?? null}
+          onApply={onApplyProxyUpstream}
+        />
+      ) : null}
+
       {scenarios ? (
         <ScenariosPanel
           running={status.running}
@@ -346,5 +356,106 @@ export function MockRuntimeTab({
         </div>
       </section>
     </>
+  );
+}
+
+interface ProxyUpstreamEditorProps {
+  running: boolean;
+  value: string | null;
+  onApply: (upstream: string | null) => Promise<void>;
+}
+
+/**
+ * Tiny editor for the `proxy_upstream` field: one text input, an Apply
+ * button, and a Disable button. Mirrors the draft/apply pattern used by
+ * the rate-limit + status-override editors so the UX stays consistent.
+ */
+function ProxyUpstreamEditor({
+  running,
+  value,
+  onApply
+}: ProxyUpstreamEditorProps) {
+  const [draft, setDraft] = useState(value ?? "");
+  const [busy, setBusy] = useState(false);
+
+  // If the gateway pushes a new value (scenario load, restart), sync the
+  // draft so the input reflects live state instead of stale typing.
+  useMemo(() => {
+    setDraft(value ?? "");
+    return null;
+  }, [value]);
+
+  const trimmed = draft.trim();
+  const current = value ?? "";
+  const dirty = trimmed !== current;
+
+  async function apply() {
+    setBusy(true);
+    try {
+      await onApply(trimmed.length > 0 ? trimmed : null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disable() {
+    setBusy(true);
+    try {
+      await onApply(null);
+      setDraft("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel">
+      <div className="panel__title panel__title--row">
+        <h3>Proxy upstream</h3>
+        <span className="panel__meta">
+          {current ? "active" : "off"}
+        </span>
+      </div>
+      <p className="hint">
+        When set, any request path that doesn't match a registered
+        route is forwarded to this base URL. Mock the subset you care
+        about locally, let the rest hit a real staging / partner API.
+        Request bodies above 4KB are truncated before proxying.
+      </p>
+      <div className="formgrid">
+        <label className="field field--wide">
+          <span className="field__label">Upstream base URL</span>
+          <input
+            type="text"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder="https://staging.api.example.com"
+            spellCheck={false}
+            disabled={!running || busy}
+          />
+        </label>
+      </div>
+      <div className="row-actions">
+        <button
+          type="button"
+          className="btn btn--primary btn--sm"
+          onClick={() => void apply()}
+          disabled={!running || busy || !dirty}
+        >
+          <Icon name="zap" size={12} />
+          <span>{busy ? "Applying…" : "Apply"}</span>
+        </button>
+        {current ? (
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => void disable()}
+            disabled={!running || busy}
+          >
+            Disable
+          </button>
+        ) : null}
+      </div>
+    </section>
   );
 }

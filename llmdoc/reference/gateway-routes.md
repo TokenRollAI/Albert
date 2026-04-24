@@ -287,7 +287,21 @@ always serves the error example.
   `timeseries_buckets_are_bounded` in `state.rs`.
   Also exposed from the desktop host via the `mock_server_metrics`
   Tauri command.
-- `404` responses are JSON: `{error: "mock_not_found", message}`.
+- Proxy passthrough: `GatewayConfig.proxy_upstream: Option<String>`.
+  When set, any request path that fails to match a registered route is
+  forwarded to `{proxy_upstream}{request.path}` (preserving query +
+  JSON body + non-hop headers) instead of returning 404. The upstream
+  response is passed through with its body intact, `x-albert-mock-source:
+  proxy` stamped on, and `x-request-id` preserved so the log stays
+  correlated. Request body is capped at 4KB (the same cap as request
+  body capture); larger bodies are truncated before being proxied.
+  Upstream transport errors surface as `502 proxy_error` with a
+  `{error, message, request_id}` body and `x-albert-mock-source:
+  proxy-error`. Log entries tag these with `source: "proxy"`. Covered
+  by `proxy_upstream_forwards_unmatched_requests` and
+  `proxy_upstream_returns_502_when_unreachable` in the gateway tests.
+- `404` responses are JSON: `{error: "mock_not_found", message}` (only
+  when `proxy_upstream` is unset; otherwise the proxy path fires first).
 - `HEAD` requests fall back to matching the `GET` route with the same
   path; the body is then suppressed so the response stays well-formed.
   This lets health-check probes succeed without having to declare HEAD

@@ -28,6 +28,7 @@ interface UseGatewayActionsArgs {
       requiredHeaders?: Record<string, RequiredHeader[]>;
       rateLimits?: Record<string, RateLimitRule>;
       statusOverrides?: Record<string, number>;
+      proxyUpstream?: string | null;
       exampleOverrides?: Record<string, MockExampleKind>;
     }) => Promise<{ running: boolean; bind_address?: string | null } | null>;
     update: (args: {
@@ -40,6 +41,7 @@ interface UseGatewayActionsArgs {
       requiredHeaders?: Record<string, RequiredHeader[]>;
       responseHeaders?: Record<string, Record<string, string>>;
       statusOverrides?: Record<string, number>;
+      proxyUpstream?: string | null;
     }) => Promise<unknown>;
     savedPreferences?: {
       default_latency_ms?: number | null;
@@ -51,6 +53,7 @@ interface UseGatewayActionsArgs {
       required_headers?: Record<string, RequiredHeader[]>;
       rate_limits?: Record<string, RateLimitRule>;
       status_overrides?: Record<string, number>;
+      proxy_upstream?: string | null;
       example_overrides?: Record<string, MockExampleKind>;
     } | null;
     clearLog?: () => Promise<void>;
@@ -88,6 +91,7 @@ export interface GatewayActions {
     rules: Record<string, Record<string, string>>
   ) => Promise<void>;
   seedRequiredHeadersFromHints: () => Promise<void>;
+  applyProxyUpstream: (upstream: string | null) => Promise<void>;
   clearLog: () => Promise<void>;
   exportBundle: () => Promise<void>;
   importBundle: (bundleJson: string) => Promise<void>;
@@ -131,6 +135,7 @@ export function useGatewayActions({
         requiredHeaders: saved?.required_headers,
         rateLimits: saved?.rate_limits,
         statusOverrides: saved?.status_overrides,
+        proxyUpstream: saved?.proxy_upstream ?? null,
         exampleOverrides: saved?.example_overrides
       });
       if (result?.running && result.bind_address) {
@@ -238,6 +243,21 @@ export function useGatewayActions({
         count === 0
           ? "Response headers cleared."
           : `Response headers applied to ${count} route${count === 1 ? "" : "s"}.`
+      );
+    },
+    [mockGateway, toasts]
+  );
+
+  const applyProxyUpstream = useCallback<
+    GatewayActions["applyProxyUpstream"]
+  >(
+    async (upstream) => {
+      const result = await mockGateway.update({ proxyUpstream: upstream });
+      if (!result) return;
+      toasts.info(
+        upstream
+          ? `Proxy upstream set to ${upstream}`
+          : "Proxy upstream disabled."
       );
     },
     [mockGateway, toasts]
@@ -405,6 +425,7 @@ export function useGatewayActions({
     applyStatusOverrides,
     applyResponseHeaders,
     seedRequiredHeadersFromHints,
+    applyProxyUpstream,
     clearLog,
     exportBundle,
     importBundle,

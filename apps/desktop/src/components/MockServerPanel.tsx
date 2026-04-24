@@ -37,6 +37,7 @@ interface MockServerPanelProps {
     rules: Record<string, Record<string, string>>
   ) => Promise<void>;
   onSeedRequiredHeadersFromHints: () => Promise<void>;
+  onApplyProxyUpstream?: (upstream: string | null) => Promise<void>;
   onClearLog?: () => Promise<void>;
   onExportBundle?: () => Promise<void>;
   onImportBundle?: (bundleJson: string) => Promise<void>;
@@ -71,6 +72,7 @@ export function MockServerPanel({
   onApplyStatusOverrides,
   onApplyResponseHeaders,
   onSeedRequiredHeadersFromHints,
+  onApplyProxyUpstream,
   onClearLog,
   onExportBundle,
   onImportBundle,
@@ -255,6 +257,7 @@ export function MockServerPanel({
               onApplyStatusOverrides={onApplyStatusOverrides}
               onApplyResponseHeaders={onApplyResponseHeaders}
               onSeedRequiredHeadersFromHints={onSeedRequiredHeadersFromHints}
+              onApplyProxyUpstream={onApplyProxyUpstream}
               scenarios={scenarios}
             />
           ) : null}

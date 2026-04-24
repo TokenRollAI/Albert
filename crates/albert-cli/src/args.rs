@@ -69,6 +69,11 @@ pub struct CliArgs {
     /// Old name for `scenario rename` (the renamed collection command
     /// reuses `--id`; scenarios are keyed by name instead).
     pub scenario_old_name: Option<String>,
+    /// `serve --proxy-upstream <url>` — when a request doesn't match
+    /// any declared route, forward to this upstream base URL instead
+    /// of returning 404. Blank / whitespace-only values are treated as
+    /// "disabled" to keep shell scripts happy.
+    pub proxy_upstream: Option<String>,
 }
 
 impl Default for CliArgs {
@@ -93,6 +98,7 @@ impl Default for CliArgs {
             print_config: false,
             emit_json: false,
             scenario_old_name: None,
+            proxy_upstream: None,
         }
     }
 }
@@ -290,6 +296,15 @@ where
             "old-name" => {
                 out.scenario_old_name = Some(take_value(&mut i)?);
             }
+            "proxy-upstream" => {
+                let v = take_value(&mut i)?;
+                let trimmed = v.trim();
+                out.proxy_upstream = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                };
+            }
             "interval-ms" => {
                 let v = take_value(&mut i)?;
                 let parsed = v.parse::<u64>().map_err(|err| CliError::BadValue {
@@ -353,6 +368,7 @@ pub fn help_text() -> String {
     s.push_str("    --collection <id>        Only serve the named collection(s)\n");
     s.push_str("    --capture-bodies         Record request bodies in the log (≤4KB)\n");
     s.push_str("    --auto-stop-secs <n>     Stop after N seconds (useful in tests)\n");
+    s.push_str("    --proxy-upstream <url>   Forward unmatched routes to this base URL\n");
     s.push_str("    --print-config           Print resolved config as JSON and exit\n\n");
     s.push_str("DELETE OPTIONS:\n");
     s.push_str("    --id <collection_id>     Collection to remove\n\n");
@@ -432,5 +448,20 @@ mod tests {
     fn print_config_defaults_to_false() {
         let args = parse_args(["serve"]).unwrap();
         assert!(!args.print_config);
+    }
+
+    #[test]
+    fn parses_proxy_upstream_flag() {
+        let args = parse_args(["serve", "--proxy-upstream", "https://api.example.com"]).unwrap();
+        assert_eq!(
+            args.proxy_upstream.as_deref(),
+            Some("https://api.example.com")
+        );
+    }
+
+    #[test]
+    fn empty_proxy_upstream_flag_is_treated_as_none() {
+        let args = parse_args(["serve", "--proxy-upstream", "   "]).unwrap();
+        assert!(args.proxy_upstream.is_none());
     }
 }

@@ -917,6 +917,7 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
         rate_limits: BTreeMap::new(),
         status_overrides: BTreeMap::new(),
         enforce_request_bodies: false,
+        proxy_upstream: args.proxy_upstream.clone(),
     };
 
     // Dry-run: dump the resolved config as JSON so users can verify how

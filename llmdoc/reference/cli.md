@@ -57,6 +57,10 @@ running the mock server without the Tauri shell.
 - `--capture-bodies` — record up to 4KB of each POST/PUT/PATCH/DELETE
   body into the in-memory request log (off by default; see gateway-routes
   for caveats).
+- `--proxy-upstream <url>` — forward any request whose path doesn't match
+  a registered route to this upstream base URL. Body cap is 4KB (matches
+  capture). Blank / whitespace-only values are treated as disabled so
+  shell scripts can pass an empty env var to mean "off".
 - `--print-config` — dry-run. Emits the resolved `{database_url,
   collections, gateway}` as pretty-printed JSON to stdout, then exits 0
   without binding a port. Useful in CI scripts to verify that shell

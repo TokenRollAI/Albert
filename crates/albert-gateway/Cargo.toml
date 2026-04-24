@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 albert-core = { path = "../albert-core" }
 axum = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -17,6 +18,5 @@ tower-http = { workspace = true }
 [dev-dependencies]
 albert-parser = { path = "../albert-parser" }
 albert-storage = { path = "../albert-storage" }
-reqwest = { workspace = true }
 tempfile = "3"
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros", "net", "signal", "time", "io-util"] }

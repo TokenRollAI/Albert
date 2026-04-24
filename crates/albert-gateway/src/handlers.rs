@@ -17,6 +17,14 @@ use crate::route::route_key;
 use crate::state::{AppState, RateVerdict, RequestLogEntry};
 use crate::templating::apply_templates;
 
+/// Upper bound on what the proxy layer will forward. Matches the
+/// request-body capture cap so the whole gateway agrees on how much
+/// of a body it's willing to read from the wire. Requests with bodies
+/// above this cap have their tails truncated before being proxied —
+/// callers who need un-truncated proxying should use a dedicated
+/// intercepting proxy, not the mock gateway's convenience passthrough.
+const PROXY_BODY_CAP_BYTES: usize = MAX_CAPTURED_BODY_BYTES;
+
 pub(crate) async fn status_handler(State(state): State<AppState>) -> Response {
     let table = state.snapshot_table();
     let payload = serde_json::json!({
@@ -388,45 +396,31 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         None if fallback_to_get => match table.match_route(&HttpMethod::Get, &path) {
             Some(m) => m,
             None => {
-                state.record(RequestLogEntry {
-                    at_epoch_ms: epoch_ms_now(),
-                    method: method.to_string(),
-                    path: path.clone(),
-                    query: query.clone(),
-                    matched_route: None,
-                    collection_name: None,
-                    status: 404,
-                    kind: None,
-                    source: "unmatched",
-                    latency_ms: 0,
-                    request_body: captured_string.clone(),
-                    request_id: Some(request_id.clone()),
-                });
-                return not_found(
-                    format!("no mock registered for {} {}", method.as_str(), path),
-                    Some(&request_id),
-                );
+                return proxy_or_not_found(
+                    &state,
+                    &method,
+                    &path,
+                    query.as_deref(),
+                    captured_body.raw_bytes_as_str(),
+                    captured_string.clone(),
+                    &request_headers,
+                    &request_id,
+                )
+                .await;
             }
         },
         None => {
-            state.record(RequestLogEntry {
-                at_epoch_ms: epoch_ms_now(),
-                method: method.to_string(),
-                path: path.clone(),
-                query: query.clone(),
-                matched_route: None,
-                collection_name: None,
-                status: 404,
-                kind: None,
-                source: "unmatched",
-                latency_ms: 0,
-                request_body: captured_string.clone(),
-                request_id: Some(request_id.clone()),
-            });
-            return not_found(
-                format!("no mock registered for {} {}", method.as_str(), path),
-                Some(&request_id),
-            );
+            return proxy_or_not_found(
+                &state,
+                &method,
+                &path,
+                query.as_deref(),
+                captured_body.raw_bytes_as_str(),
+                captured_string.clone(),
+                &request_headers,
+                &request_id,
+            )
+            .await;
         }
     };
     let route = matched.route;
@@ -879,6 +873,188 @@ pub(crate) fn epoch_ms_now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Shared tail for the two "no route matched" branches: if a proxy
+/// upstream is configured, forward the request to it and record the
+/// resulting status under `source: "proxy"`. Otherwise fall back to
+/// the regular 404 behavior.
+#[allow(clippy::too_many_arguments)]
+async fn proxy_or_not_found(
+    state: &AppState,
+    method: &Method,
+    path: &str,
+    query: Option<&str>,
+    body_text: Option<&str>,
+    captured_string: Option<String>,
+    headers: &[(String, String)],
+    request_id: &str,
+) -> Response {
+    let started = std::time::Instant::now();
+    if let Some(upstream) = state.snapshot_proxy_upstream() {
+        let response = proxy_passthrough(
+            &upstream, method, path, query, body_text, headers, request_id,
+        )
+        .await;
+        let status = response.status().as_u16();
+        state.record(RequestLogEntry {
+            at_epoch_ms: epoch_ms_now(),
+            method: method.to_string(),
+            path: path.to_string(),
+            query: query.map(|s| s.to_string()),
+            matched_route: None,
+            collection_name: None,
+            status,
+            kind: None,
+            source: "proxy",
+            latency_ms: started.elapsed().as_millis() as u64,
+            request_body: captured_string,
+            request_id: Some(request_id.to_string()),
+        });
+        return response;
+    }
+    state.record(RequestLogEntry {
+        at_epoch_ms: epoch_ms_now(),
+        method: method.to_string(),
+        path: path.to_string(),
+        query: query.map(|s| s.to_string()),
+        matched_route: None,
+        collection_name: None,
+        status: 404,
+        kind: None,
+        source: "unmatched",
+        latency_ms: 0,
+        request_body: captured_string,
+        request_id: Some(request_id.to_string()),
+    });
+    not_found(
+        format!("no mock registered for {} {}", method.as_str(), path),
+        Some(request_id),
+    )
+}
+
+/// Forward a request that didn't match any registered route to the
+/// configured `proxy_upstream` and return its response. Preserves
+/// method + query + JSON body + non-hop headers so the upstream sees
+/// (approximately) the original request. Body size is bounded by
+/// `PROXY_BODY_CAP_BYTES` — the same cap as request-body capture, so
+/// the gateway never buffers more than 4KB of request payload from
+/// the wire. Network failures surface as `502 proxy_error` with a
+/// structured body so clients can distinguish transport errors from
+/// real upstream responses.
+pub(crate) async fn proxy_passthrough(
+    base: &str,
+    method: &Method,
+    path: &str,
+    query: Option<&str>,
+    body_text: Option<&str>,
+    headers: &[(String, String)],
+    request_id: &str,
+) -> Response {
+    let trimmed_base = base.trim().trim_end_matches('/');
+    let full_url = match query {
+        Some(q) if !q.is_empty() => format!("{trimmed_base}{path}?{q}"),
+        _ => format!("{trimmed_base}{path}"),
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(err) => {
+            return proxy_error(format!("client build: {err}"), request_id);
+        }
+    };
+    let method_reqwest = match reqwest::Method::from_bytes(method.as_str().as_bytes()) {
+        Ok(m) => m,
+        Err(err) => {
+            return proxy_error(format!("unsupported method: {err}"), request_id);
+        }
+    };
+    let mut builder = client.request(method_reqwest, &full_url);
+    // Forward most headers, dropping hop-by-hop and noisy ones so the
+    // upstream sees a clean request. We explicitly rewrite `host` to
+    // the upstream's own host below by letting reqwest compute it.
+    let skip: &[&str] = &[
+        "host",
+        "connection",
+        "content-length",
+        "transfer-encoding",
+        "upgrade",
+        "keep-alive",
+        "proxy-authorization",
+        "proxy-authenticate",
+        "te",
+        "trailer",
+    ];
+    for (name, value) in headers {
+        if skip.contains(&name.as_str()) {
+            continue;
+        }
+        let hname = reqwest::header::HeaderName::from_bytes(name.as_bytes()).ok();
+        let hvalue = reqwest::header::HeaderValue::from_str(value).ok();
+        if let (Some(hname), Some(hvalue)) = (hname, hvalue) {
+            builder = builder.header(hname, hvalue);
+        }
+    }
+    if let Some(body) = body_text {
+        // Cap body size: if capture truncated it, we send exactly what we
+        // captured (cap bytes). Callers see this in the log source label.
+        let bytes = body.as_bytes();
+        let slice = &bytes[..bytes.len().min(PROXY_BODY_CAP_BYTES)];
+        builder = builder.body(slice.to_vec());
+    }
+    let resp = match builder.send().await {
+        Ok(r) => r,
+        Err(err) => {
+            return proxy_error(format!("transport: {err}"), request_id);
+        }
+    };
+    let status = resp.status();
+    let mut response_builder = Response::builder().status(status.as_u16());
+    // Copy headers one by one into axum's response. We preserve all
+    // upstream headers (save for transfer-encoding / connection which
+    // hyper computes itself) plus stamp our own x-albert-* labels.
+    let resp_skip: &[&str] = &["transfer-encoding", "connection", "content-length"];
+    for (name, value) in resp.headers().iter() {
+        if resp_skip.contains(&name.as_str()) {
+            continue;
+        }
+        if let Ok(v) = HeaderValue::from_bytes(value.as_bytes()) {
+            response_builder = response_builder.header(name.as_str(), v);
+        }
+    }
+    if let Ok(rid) = HeaderValue::from_str(request_id) {
+        response_builder = response_builder.header("x-request-id", rid);
+    }
+    let body_bytes = resp.bytes().await.unwrap_or_default();
+    response_builder
+        .header("x-albert-mock-source", "proxy")
+        .body(Body::from(body_bytes))
+        .unwrap_or_else(|_| proxy_error("response build failed".to_string(), request_id))
+}
+
+fn proxy_error(message: String, request_id: &str) -> Response {
+    let body = serde_json::json!({
+        "error": "proxy_error",
+        "message": message,
+        "request_id": request_id,
+    })
+    .to_string();
+    let mut resp = (StatusCode::BAD_GATEWAY, body).into_response();
+    let headers = resp.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    if let Ok(v) = HeaderValue::from_str(request_id) {
+        headers.insert("x-request-id", v);
+    }
+    headers.insert(
+        "x-albert-mock-source",
+        HeaderValue::from_static("proxy-error"),
+    );
+    resp
 }
 
 /// Dependency-free coin flip for error-rate injection. Uses a `SplitMix64`-

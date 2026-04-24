@@ -46,6 +46,7 @@ interface StartArgs {
   requiredHeaders?: Record<string, RequiredHeader[]>;
   rateLimits?: Record<string, RateLimitRule>;
   statusOverrides?: Record<string, number>;
+  proxyUpstream?: string | null;
   databaseUrl?: string;
 }
 
@@ -61,6 +62,10 @@ interface UpdateArgs {
   requiredHeaders?: Record<string, RequiredHeader[]>;
   rateLimits?: Record<string, RateLimitRule>;
   statusOverrides?: Record<string, number>;
+  /// `undefined` leaves the current value alone, `null` or `""` clears,
+  /// a non-empty string sets. See `deserialize_nullable_option` on the
+  /// Tauri side for the three-state encoding rationale.
+  proxyUpstream?: string | null;
 }
 
 /**
@@ -86,7 +91,8 @@ async function persistConfig(
     response_headers: config.response_headers,
     required_headers: config.required_headers,
     rate_limits: config.rate_limits,
-    status_overrides: config.status_overrides
+    status_overrides: config.status_overrides,
+    proxy_upstream: config.proxy_upstream ?? null
   };
   await invoke("save_gateway_preferences", {
     payload,
@@ -108,6 +114,7 @@ export interface SavedGatewayPreferences {
   required_headers?: Record<string, RequiredHeader[]>;
   rate_limits?: Record<string, RateLimitRule>;
   status_overrides?: Record<string, number>;
+  proxy_upstream?: string | null;
 }
 
 interface UseMockGatewayResult {
@@ -219,6 +226,7 @@ export function useMockGateway({
       requiredHeaders,
       rateLimits,
       statusOverrides,
+      proxyUpstream,
       databaseUrl
     }: StartArgs) => {
       if (!enabled) {
@@ -244,6 +252,7 @@ export function useMockGateway({
             required_headers: requiredHeaders ?? null,
             rate_limits: rateLimits ?? null,
             status_overrides: statusOverrides ?? null,
+            proxy_upstream: proxyUpstream ?? null,
             database_url: databaseUrl ?? null
           }
         });
@@ -314,6 +323,11 @@ export function useMockGateway({
             required_headers: args.requiredHeaders ?? null,
             rate_limits: args.rateLimits ?? null,
             status_overrides: args.statusOverrides ?? null,
+            // proxy_upstream is three-state: undefined → omit entirely,
+            // null/"" → clear, string → set.
+            ...(args.proxyUpstream !== undefined
+              ? { proxy_upstream: args.proxyUpstream ?? null }
+              : {}),
             database_url: null
           }
         });

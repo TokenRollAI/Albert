@@ -202,6 +202,7 @@ export interface GatewayConfig {
   required_headers?: Record<string, RequiredHeader[]>;
   rate_limits?: Record<string, RateLimitRule>;
   status_overrides?: Record<string, number>;
+  proxy_upstream?: string | null;
 }
 
 export interface GatewayStatus {

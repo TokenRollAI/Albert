@@ -506,6 +506,7 @@ function App() {
         onApplyStatusOverrides={gatewayActions.applyStatusOverrides}
         onApplyResponseHeaders={gatewayActions.applyResponseHeaders}
         onSeedRequiredHeadersFromHints={gatewayActions.seedRequiredHeadersFromHints}
+        onApplyProxyUpstream={gatewayActions.applyProxyUpstream}
         onClearLog={gatewayActions.clearLog}
         onExportBundle={gatewayActions.exportBundle}
         onImportBundle={gatewayActions.importBundle}

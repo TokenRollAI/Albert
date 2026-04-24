@@ -205,6 +205,7 @@ pub(crate) struct AppState {
     pub(crate) error_rate: Arc<StdMutex<f32>>,
     pub(crate) capture_bodies: Arc<StdMutex<bool>>,
     pub(crate) enforce_request_bodies: Arc<StdMutex<bool>>,
+    pub(crate) proxy_upstream: Arc<StdMutex<Option<String>>>,
     pub(crate) response_headers: Arc<StdMutex<Arc<ResponseHeaderMap>>>,
     pub(crate) required_headers: Arc<StdMutex<Arc<RequiredHeaderMap>>>,
     pub(crate) status_overrides: Arc<StdMutex<Arc<StatusOverrideMap>>>,
@@ -274,6 +275,7 @@ impl AppState {
             error_rate: Arc::new(StdMutex::new(error_rate.clamp(0.0, 1.0))),
             capture_bodies: Arc::new(StdMutex::new(capture_bodies)),
             enforce_request_bodies: Arc::new(StdMutex::new(enforce_request_bodies)),
+            proxy_upstream: Arc::new(StdMutex::new(None)),
             response_headers: Arc::new(StdMutex::new(response_headers)),
             required_headers: Arc::new(StdMutex::new(required_headers)),
             status_overrides: Arc::new(StdMutex::new(status_overrides)),
@@ -350,6 +352,18 @@ impl AppState {
     pub(crate) fn replace_capture_bodies(&self, next: bool) {
         let mut slot = self.capture_bodies.lock().expect("capture flag poisoned");
         *slot = next;
+    }
+
+    pub(crate) fn snapshot_proxy_upstream(&self) -> Option<String> {
+        self.proxy_upstream
+            .lock()
+            .expect("proxy upstream poisoned")
+            .clone()
+    }
+
+    pub(crate) fn replace_proxy_upstream(&self, next: Option<String>) {
+        let mut slot = self.proxy_upstream.lock().expect("proxy upstream poisoned");
+        *slot = next.filter(|s| !s.trim().is_empty());
     }
 
     pub(crate) fn snapshot_response_headers(&self) -> Arc<ResponseHeaderMap> {

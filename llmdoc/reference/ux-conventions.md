@@ -99,7 +99,13 @@ counts.
      validated against it; mismatches respond `400 schema_mismatch`
      with a structured body instead of serving the mock payload. Off
      by default so inspection-only workflows are unaffected.
-  6. **Scenarios** (`components/ScenariosPanel.tsx`) — named presets
+  6. **Proxy upstream** — single text input + Apply/Disable buttons
+     that set `GatewayConfig.proxy_upstream`. When active, unmatched
+     routes forward to the upstream base URL instead of returning
+     404. Useful for hybrid setups: mock a subset, let the rest hit a
+     real staging / partner API. Requests bodies above 4KB are
+     truncated before proxying (see gateway-routes.md for details).
+  7. **Scenarios** (`components/ScenariosPanel.tsx`) — named presets
      that snapshot the live `GatewayConfigBundle` to SQLite. Save with
      a label, one-click Load to snap the gateway into that state,
      Rename in-place, Delete with confirm-less removal. Typical use:

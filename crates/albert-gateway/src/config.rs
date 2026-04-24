@@ -77,6 +77,16 @@ pub struct GatewayConfig {
     /// without having to add a new `MockExampleKind` variant.
     #[serde(default)]
     pub status_overrides: BTreeMap<String, u16>,
+    /// When set, any request path that fails to match a declared route
+    /// is forwarded to this base URL instead of returning 404. Enables
+    /// a hybrid workflow: mock a subset of endpoints locally, let the
+    /// rest hit a real upstream (staging / localhost / partner API).
+    /// The full upstream URL is `{proxy_upstream}{request.path}` plus
+    /// the original query string; method, JSON body, and non-hop
+    /// headers are preserved. Log entries are tagged `source: "proxy"`.
+    /// Off by default (no proxy, strict 404 on misses).
+    #[serde(default)]
+    pub proxy_upstream: Option<String>,
 }
 
 /// A single sliding-window rate cap: "at most `limit` requests per
@@ -119,6 +129,7 @@ impl Default for GatewayConfig {
             rate_limits: BTreeMap::new(),
             status_overrides: BTreeMap::new(),
             enforce_request_bodies: false,
+            proxy_upstream: None,
         }
     }
 }

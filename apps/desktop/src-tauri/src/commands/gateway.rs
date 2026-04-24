@@ -43,6 +43,8 @@ pub struct StartMockServerArgs {
     #[serde(default)]
     pub status_overrides: Option<BTreeMap<String, u16>>,
     #[serde(default)]
+    pub proxy_upstream: Option<String>,
+    #[serde(default)]
     pub database_url: Option<String>,
 }
 
@@ -87,6 +89,7 @@ pub async fn start_mock_server(
         required_headers: args.required_headers.unwrap_or_default(),
         rate_limits: args.rate_limits.unwrap_or_default(),
         status_overrides: args.status_overrides.unwrap_or_default(),
+        proxy_upstream: args.proxy_upstream.filter(|s| !s.trim().is_empty()),
     };
 
     services
@@ -244,8 +247,41 @@ pub struct UpdateMockServerArgs {
     pub rate_limits: Option<BTreeMap<String, RateLimitRule>>,
     #[serde(default)]
     pub status_overrides: Option<BTreeMap<String, u16>>,
+    /// Use `Some(None)` to clear the proxy; `Some(Some("..."))` to set;
+    /// `None` to leave the current value alone. `null` and empty strings
+    /// both land on "clear" so the Mock Server panel's "none" radio works.
+    #[serde(default, deserialize_with = "deserialize_nullable_option")]
+    pub proxy_upstream: Option<Option<String>>,
     #[serde(default)]
     pub database_url: Option<String>,
+}
+
+/// Distinguish the three cases JSON can't normally express: field missing
+/// (None), field present as `null` (Some(None)), field present as a
+/// string (Some(Some(…))). Empty/whitespace strings are treated as
+/// explicit clears so "proxy_upstream": "" also means "turn it off".
+fn deserialize_nullable_option<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: Option<serde_json::Value> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(match value {
+        None => None,
+        Some(serde_json::Value::Null) => Some(None),
+        Some(serde_json::Value::String(s)) => {
+            if s.trim().is_empty() {
+                Some(None)
+            } else {
+                Some(Some(s))
+            }
+        }
+        Some(other) => {
+            return Err(serde::de::Error::custom(format!(
+                "proxy_upstream must be null or a string, got {}",
+                other
+            )));
+        }
+    })
 }
 
 #[tauri::command]
@@ -291,6 +327,10 @@ pub async fn update_mock_server(
     let required_headers = args.required_headers.unwrap_or(current.required_headers);
     let rate_limits = args.rate_limits.unwrap_or(current.rate_limits);
     let status_overrides = args.status_overrides.unwrap_or(current.status_overrides);
+    let proxy_upstream = match args.proxy_upstream {
+        None => current.proxy_upstream,
+        Some(next) => next,
+    };
 
     services
         .gateway
@@ -307,6 +347,7 @@ pub async fn update_mock_server(
             required_headers,
             rate_limits,
             status_overrides,
+            proxy_upstream,
         })
         .await
         .map_err(|error| error.to_string())
