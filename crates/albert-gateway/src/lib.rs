@@ -139,6 +139,10 @@ impl MockGateway {
                 "/__albert/routes",
                 axum::routing::get(handlers::routes_handler),
             )
+            .route(
+                "/__albert/config",
+                axum::routing::get(handlers::config_handler),
+            )
             .fallback(any(handlers::mock_handler))
             .with_state(state);
         if config.cors_enabled {
@@ -1348,6 +1352,56 @@ mod tests {
         let gateway = MockGateway::new();
         let err = gateway.clear_log().await.err();
         assert!(matches!(err, Some(GatewayError::NotRunning)));
+    }
+
+    #[tokio::test]
+    async fn config_endpoint_reflects_loaded_rules() {
+        // A running server with a scoped rate-limit + status-override
+        // should return both in its /__albert/config payload so external
+        // tooling can see what's live.
+        let gateway = MockGateway::new();
+        let col = collection(
+            "intro",
+            vec![endpoint(HttpMethod::Get, "/users", json!({"ok": true}))],
+        );
+        let mut rate_limits = BTreeMap::new();
+        rate_limits.insert(
+            "GET /users".to_string(),
+            config::RateLimitRule {
+                limit: 3,
+                window_ms: 1_000,
+            },
+        );
+        let mut status_overrides = BTreeMap::new();
+        status_overrides.insert("GET /users".to_string(), 418);
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    error_rate: 0.25,
+                    rate_limits,
+                    status_overrides,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("{base}/__albert/config"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["route_count"], 1);
+        assert_eq!(body["error_rate"], 0.25);
+        assert_eq!(body["capture_bodies"], false);
+        assert_eq!(body["rate_limits"]["GET /users"]["limit"], 3);
+        assert_eq!(body["status_overrides"]["GET /users"], 418);
+        gateway.stop().await.expect("stop");
     }
 
     #[tokio::test]

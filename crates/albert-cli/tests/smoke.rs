@@ -354,6 +354,56 @@ async fn ping_reports_running_gateway() {
 }
 
 #[tokio::test]
+async fn config_reports_running_gateway_rules() {
+    // Stand up a gateway with a non-default error_rate so we can see the
+    // CLI surface it.
+    let gateway = albert_gateway::MockGateway::new();
+    let status = gateway
+        .start(
+            Vec::new(),
+            albert_gateway::GatewayConfig {
+                port: 0,
+                error_rate: 0.33,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let bind = status.bind_address.clone().unwrap();
+
+    let args = parse_args([
+        "config".to_string(),
+        "--url".to_string(),
+        format!("http://{bind}"),
+    ])
+    .unwrap();
+    assert_eq!(args.command, Command::Config);
+    let outcome = run_with_args(args).await.expect("config");
+    let message = match outcome {
+        RunOutcome::Message(msg) => msg,
+        other => panic!("unexpected: {other:?}"),
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&message).unwrap();
+    assert_eq!(parsed["route_count"], 0);
+    // JSON::Value represents f64 — 0.33 round-trips exactly here.
+    assert!((parsed["error_rate"].as_f64().unwrap() - 0.33).abs() < 1e-6);
+
+    gateway.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn config_surfaces_connection_failure() {
+    let args = parse_args([
+        "config".to_string(),
+        "--url".to_string(),
+        "http://127.0.0.1:1".to_string(),
+    ])
+    .unwrap();
+    let err = run_with_args(args).await.expect_err("should fail");
+    assert!(err.contains("config request"));
+}
+
+#[tokio::test]
 async fn ping_surfaces_connection_failure() {
     // Port guaranteed closed (use 1 — typically unavailable and fails fast).
     let args = parse_args([

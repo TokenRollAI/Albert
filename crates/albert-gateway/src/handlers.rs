@@ -41,6 +41,38 @@ pub(crate) async fn routes_handler(State(state): State<AppState>) -> Response {
     (StatusCode::OK, axum::Json(payload)).into_response()
 }
 
+/// Return the full live `GatewayConfig` as JSON. Useful for quickly
+/// seeing what's loaded without having to restart the server or check
+/// the desktop UI — the CLI's `albert config --url …` command is a
+/// thin wrapper around this endpoint. Consumers: UI, CLI, shell
+/// scripts. Stays outside the `/__albert/routes` flow so automation
+/// can filter routes vs. config independently.
+pub(crate) async fn config_handler(State(state): State<AppState>) -> Response {
+    let table = state.snapshot_table();
+    let overrides = state.snapshot_overrides();
+    let latency = state.snapshot_latency();
+    let response_headers = state.snapshot_response_headers();
+    let required_headers = state.snapshot_required_headers();
+    let status_overrides = state.snapshot_status_overrides();
+    let error_rate = state.snapshot_error_rate();
+    let capture_bodies = state.snapshot_capture_bodies();
+    let rate_limits = state.snapshot_rate_limit_rules();
+    let payload = serde_json::json!({
+        "route_count": table.len(),
+        "overrides": &*overrides,
+        "default_latency_ms": latency.default_ms,
+        "latency_overrides": latency.per_route,
+        "latency_jitter_ms": latency.jitter_per_route,
+        "error_rate": error_rate,
+        "capture_bodies": capture_bodies,
+        "response_headers": &*response_headers,
+        "required_headers": &*required_headers,
+        "rate_limits": rate_limits,
+        "status_overrides": &*status_overrides,
+    });
+    (StatusCode::OK, axum::Json(payload)).into_response()
+}
+
 pub(crate) async fn metrics_handler(State(state): State<AppState>) -> Response {
     let metrics = state.snapshot_metrics();
     let by_route: serde_json::Map<String, serde_json::Value> = metrics

@@ -362,6 +362,18 @@ impl AppState {
             .admit(route_key, now_ms)
     }
 
+    /// Snapshot of the rate-limit rules only (without the rolling-window
+    /// history), for introspection via `/__albert/config`.
+    pub(crate) fn snapshot_rate_limit_rules(
+        &self,
+    ) -> BTreeMap<String, crate::config::RateLimitRule> {
+        self.rate_limits
+            .lock()
+            .expect("rate limits poisoned")
+            .rules
+            .clone()
+    }
+
     pub(crate) fn record(&self, entry: RequestLogEntry) {
         {
             let mut metrics = self.metrics.lock().expect("metrics poisoned");

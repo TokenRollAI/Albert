@@ -197,6 +197,13 @@ always serves the error example.
 - `GET /__albert/routes` returns `{routes: [{method, path}, ...]}` — the
   compiled route table without payload data. Used by the CLI `verify`
   subcommand to enumerate what to probe.
+- `GET /__albert/config` returns the full live gateway config as JSON
+  — `{route_count, overrides, default_latency_ms, latency_overrides,
+  latency_jitter_ms, error_rate, capture_bodies, response_headers,
+  required_headers, rate_limits, status_overrides}`. Read-only; any
+  mutation still goes through the desktop panel or `update_mock_server`
+  Tauri command. The CLI `albert config --url …` is a thin wrapper that
+  pretty-prints this payload.
 - `GET /__albert/metrics` returns a `MetricsSnapshot`:
   `{total_requests, by_method, by_status_class, average_latency_ms,
     max_latency_ms, started_at_epoch_ms, uptime_ms, by_route}`.

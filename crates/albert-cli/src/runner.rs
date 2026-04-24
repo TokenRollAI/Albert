@@ -31,6 +31,7 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::List => run_list(args),
         Command::Routes => run_routes(args),
         Command::Inspect => run_inspect(args),
+        Command::Config => run_config(args).await,
         Command::Export => run_export(args),
         Command::ExportAll => run_export_all(args),
         Command::Delete => run_delete(args),
@@ -165,6 +166,39 @@ async fn run_verify(args: CliArgs) -> Result<RunOutcome, String> {
             failures.join("\n- ")
         ))
     }
+}
+
+/// GET /__albert/config from a running gateway and pretty-print the
+/// JSON. Same `--url` convention as `ping` / `verify`. Returns a
+/// user-friendly error when the server isn't reachable.
+async fn run_config(args: CliArgs) -> Result<RunOutcome, String> {
+    let base = args
+        .ping_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+
+    let url = format!("{base}/__albert/config");
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("config request to {url} failed: {e}"))?;
+    let status = resp.status();
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("config body parse: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("config endpoint returned {status}: {body}"));
+    }
+    let rendered = serde_json::to_string_pretty(&body).map_err(|e| format!("serialize: {e}"))?;
+    Ok(RunOutcome::Message(rendered))
 }
 
 async fn run_ping(args: CliArgs) -> Result<RunOutcome, String> {
