@@ -835,3 +835,161 @@ async fn serve_print_config_emits_json_and_exits() {
     // Clamped float comparison — serde_json preserves the exact literal.
     assert!(parsed["gateway"]["error_rate"].as_f64().unwrap() > 0.09);
 }
+
+#[tokio::test]
+async fn scenario_save_list_load_round_trip() {
+    let temp = TempDir::new().unwrap();
+    let db_path = temp.path().join("albert.db");
+    let openapi_path = temp.path().join("spec.json");
+    fs::write(&openapi_path, OPENAPI).unwrap();
+
+    // Seed SQLite with the sample collection.
+    let import_args = parse_args([
+        "import".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        openapi_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    run_with_args(import_args).await.expect("import");
+
+    // Start a gateway with non-default settings so we can observe the save
+    // capturing live state.
+    let store = albert_storage::SqliteStore::new(db_path.to_string_lossy().to_string());
+    store.migrate().unwrap();
+    let collections = store.load_all_collections().unwrap();
+    let gateway = albert_gateway::MockGateway::new();
+    gateway
+        .start(
+            collections,
+            albert_gateway::GatewayConfig {
+                port: 0,
+                error_rate: 0.73,
+                default_latency_ms: Some(31),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let bind = gateway.status().await.bind_address.unwrap();
+
+    // Save a scenario capturing the live config.
+    let save_args = parse_args([
+        "scenario".to_string(),
+        "save".to_string(),
+        "--name".to_string(),
+        "broken-backend".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        "--url".to_string(),
+        format!("http://{bind}"),
+    ])
+    .unwrap();
+    assert_eq!(save_args.command, Command::ScenarioSave);
+    let out = run_with_args(save_args).await.unwrap();
+    match out {
+        RunOutcome::Message(m) => assert!(m.contains("saved scenario 'broken-backend'")),
+        other => panic!("unexpected: {other:?}"),
+    }
+
+    // list renders the scenario.
+    let list_args = parse_args([
+        "scenario".to_string(),
+        "list".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    assert_eq!(list_args.command, Command::ScenarioList);
+    let out = run_with_args(list_args).await.unwrap();
+    match out {
+        RunOutcome::Message(m) => assert!(m.contains("broken-backend")),
+        other => panic!("unexpected: {other:?}"),
+    }
+
+    // Flip the running server to zero so we can see load restore the preset.
+    gateway
+        .reconfigure(albert_gateway::ReconfigureOptions {
+            collections: store.load_all_collections().unwrap(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let load_args = parse_args([
+        "scenario".to_string(),
+        "load".to_string(),
+        "--name".to_string(),
+        "broken-backend".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        "--url".to_string(),
+        format!("http://{bind}"),
+    ])
+    .unwrap();
+    assert_eq!(load_args.command, Command::ScenarioLoad);
+    let out = run_with_args(load_args).await.unwrap();
+    match out {
+        RunOutcome::Message(m) => assert!(m.contains("applied scenario 'broken-backend'")),
+        other => panic!("unexpected: {other:?}"),
+    }
+
+    // Verify over HTTP (state-slot truth-source).
+    let http_client = reqwest::Client::new();
+    let live: serde_json::Value = http_client
+        .get(format!("http://{bind}/__albert/config"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let restored_err_rate = live["error_rate"].as_f64().unwrap();
+    assert!(
+        (restored_err_rate - 0.73).abs() < 1e-5,
+        "got {restored_err_rate}"
+    );
+    assert_eq!(live["default_latency_ms"].as_u64().unwrap_or(0), 31);
+
+    // Rename works.
+    let rename_args = parse_args([
+        "scenario".to_string(),
+        "rename".to_string(),
+        "--old-name".to_string(),
+        "broken-backend".to_string(),
+        "--name".to_string(),
+        "chaos".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    assert_eq!(rename_args.command, Command::ScenarioRename);
+    run_with_args(rename_args).await.unwrap();
+
+    // Delete works, and deleting a missing name fails loudly.
+    let delete_args = parse_args([
+        "scenario".to_string(),
+        "delete".to_string(),
+        "--name".to_string(),
+        "chaos".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    assert_eq!(delete_args.command, Command::ScenarioDelete);
+    run_with_args(delete_args).await.unwrap();
+
+    let missing = parse_args([
+        "scenario".to_string(),
+        "delete".to_string(),
+        "--name".to_string(),
+        "nope".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    let err = run_with_args(missing).await.unwrap_err();
+    assert!(err.contains("no scenario named"));
+
+    gateway.stop().await.unwrap();
+}

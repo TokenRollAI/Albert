@@ -54,3 +54,16 @@ CREATE TABLE IF NOT EXISTS gateway_preferences (
   payload TEXT NOT NULL
 );
 
+-- Named gateway config snapshots ("scenarios"). Each row stores a full
+-- GatewayConfigBundle as JSON plus the collection ids it depends on so
+-- users can activate / archive named presets ("healthy", "rate limited",
+-- "service down") with one click. Uniqueness is on the human-facing
+-- name so the UI can dedupe by label.
+CREATE TABLE IF NOT EXISTS gateway_scenarios (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+

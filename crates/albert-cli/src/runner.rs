@@ -35,6 +35,11 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::Openapi => run_openapi(args).await,
         Command::BundleExport => run_bundle_export(args).await,
         Command::BundleImport => run_bundle_import(args).await,
+        Command::ScenarioList => run_scenario_list(args),
+        Command::ScenarioSave => run_scenario_save(args).await,
+        Command::ScenarioLoad => run_scenario_load(args).await,
+        Command::ScenarioDelete => run_scenario_delete(args),
+        Command::ScenarioRename => run_scenario_rename(args),
         Command::Export => run_export(args),
         Command::ExportAll => run_export_all(args),
         Command::Delete => run_delete(args),
@@ -967,6 +972,188 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
     }
     gateway.stop().await.map_err(|e| format!("stop: {e}"))?;
     Ok(RunOutcome::Served(Box::new(status)))
+}
+
+// ---------------------------------------------------------------------------
+// Scenarios
+// ---------------------------------------------------------------------------
+
+fn run_scenario_list(args: CliArgs) -> Result<RunOutcome, String> {
+    let store = prepare_store(&args.database_url)?;
+    let scenarios = store.list_scenarios().map_err(|e| e.to_string())?;
+    if args.emit_json {
+        let json = serde_json::to_string_pretty(&scenarios).map_err(|e| e.to_string())?;
+        return Ok(RunOutcome::Message(json));
+    }
+    if scenarios.is_empty() {
+        return Ok(RunOutcome::Message("(no scenarios saved)".to_string()));
+    }
+    let mut out = String::new();
+    for s in scenarios {
+        out.push_str(&format!(
+            "{:<40}  updated={}  id={}\n",
+            s.name, s.updated_at, s.id
+        ));
+    }
+    Ok(RunOutcome::Message(out.trim_end().to_string()))
+}
+
+/// `scenario save --name <label>` — fetches the live bundle from a running
+/// gateway and persists it in SQLite under `<label>`. Idempotent: saving
+/// with the same name updates the payload and `updated_at` but preserves
+/// `id` and `created_at`.
+async fn run_scenario_save(args: CliArgs) -> Result<RunOutcome, String> {
+    let name = args
+        .new_name
+        .clone()
+        .ok_or("scenario save needs --name <label>")?;
+    let base = args
+        .ping_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+    let url = format!("{base}/__albert/config/bundle");
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("bundle fetch from {url} failed: {e}"))?;
+    let status = resp.status();
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("bundle body parse: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("bundle endpoint returned {status}: {body}"));
+    }
+
+    let store = prepare_store(&args.database_url)?;
+    let summary = store
+        .save_scenario(&name, &body)
+        .map_err(|e| e.to_string())?;
+    Ok(RunOutcome::Message(format!(
+        "saved scenario '{}' (id={}, updated={})",
+        summary.name, summary.id, summary.updated_at
+    )))
+}
+
+/// `scenario load --name <label>` — fetch the saved bundle and POST it to
+/// the running gateway. Missing collection ids fail loudly, same as
+/// `bundle import`.
+async fn run_scenario_load(args: CliArgs) -> Result<RunOutcome, String> {
+    let name = args
+        .new_name
+        .clone()
+        .ok_or("scenario load needs --name <label>")?;
+    let store = prepare_store(&args.database_url)?;
+    let payload = store
+        .load_scenario(&name)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no scenario named '{name}'"))?;
+    let collection_ids: Vec<String> = payload
+        .get("collection_ids")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut collections = Vec::with_capacity(collection_ids.len());
+    let mut missing: Vec<String> = Vec::new();
+    for id in &collection_ids {
+        match store.load_collection(id).map_err(|e| e.to_string())? {
+            Some(c) => collections.push(c),
+            None => missing.push(id.clone()),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "scenario '{name}' references unknown collections: {} — run `albert import` first",
+            missing.join(", ")
+        ));
+    }
+
+    let base = args
+        .ping_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+    let url = format!("{base}/__albert/config/bundle");
+    let body = serde_json::json!({
+        "bundle": payload,
+        "collections": collections,
+    });
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("bundle import to {url} failed: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let err_body: serde_json::Value = resp
+            .json()
+            .await
+            .unwrap_or_else(|_| serde_json::json!({"error": "unreadable"}));
+        return Err(format!(
+            "gateway rejected scenario ({status}): {}",
+            err_body
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&err_body.to_string())
+        ));
+    }
+    Ok(RunOutcome::Message(format!(
+        "applied scenario '{name}' to {base}"
+    )))
+}
+
+fn run_scenario_delete(args: CliArgs) -> Result<RunOutcome, String> {
+    let name = args
+        .new_name
+        .clone()
+        .ok_or("scenario delete needs --name <label>")?;
+    let store = prepare_store(&args.database_url)?;
+    let deleted = store.delete_scenario(&name).map_err(|e| e.to_string())?;
+    if deleted {
+        Ok(RunOutcome::Message(format!("deleted scenario '{name}'")))
+    } else {
+        Err(format!("no scenario named '{name}'"))
+    }
+}
+
+fn run_scenario_rename(args: CliArgs) -> Result<RunOutcome, String> {
+    let old = args
+        .scenario_old_name
+        .clone()
+        .ok_or("scenario rename needs --old-name <label>")?;
+    let new_name = args
+        .new_name
+        .clone()
+        .ok_or("scenario rename needs --name <label>")?;
+    let store = prepare_store(&args.database_url)?;
+    let ok = store
+        .rename_scenario(&old, &new_name)
+        .map_err(|e| e.to_string())?;
+    if ok {
+        Ok(RunOutcome::Message(format!(
+            "renamed scenario '{old}' → '{new_name}'"
+        )))
+    } else {
+        Err(format!("no scenario named '{old}'"))
+    }
 }
 
 #[cfg(test)]

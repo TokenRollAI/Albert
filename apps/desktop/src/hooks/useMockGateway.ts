@@ -5,7 +5,8 @@ import type {
   MockExampleKind,
   RateLimitRule,
   RequestLogEntry,
-  RequiredHeader
+  RequiredHeader,
+  StoredScenarioSummary
 } from "../types";
 
 const EMPTY_STATUS: GatewayStatus = {
@@ -122,6 +123,11 @@ interface UseMockGatewayResult {
   clearLog: () => Promise<void>;
   exportBundle: () => Promise<unknown>;
   importBundle: (bundle: unknown) => Promise<GatewayStatus | null>;
+  listScenarios: () => Promise<StoredScenarioSummary[]>;
+  saveScenario: (name: string) => Promise<StoredScenarioSummary>;
+  loadScenario: (name: string) => Promise<GatewayStatus | null>;
+  deleteScenario: (name: string) => Promise<boolean>;
+  renameScenario: (oldName: string, newName: string) => Promise<boolean>;
 }
 
 export function useMockGateway({
@@ -377,6 +383,60 @@ export function useMockGateway({
     [enabled]
   );
 
+  const listScenarios = useCallback(async () => {
+    return invoke<StoredScenarioSummary[]>("list_gateway_scenarios", {
+      databaseUrl: null
+    });
+  }, []);
+
+  const saveScenario = useCallback(
+    async (name: string) => {
+      return invoke<StoredScenarioSummary>("save_gateway_scenario", {
+        args: { name, database_url: null }
+      });
+    },
+    []
+  );
+
+  const loadScenario = useCallback(
+    async (name: string) => {
+      if (!enabled) return null;
+      setBusy(true);
+      setError(null);
+      try {
+        const next = await invoke<GatewayStatus>("load_gateway_scenario", {
+          args: { name, database_url: null }
+        });
+        if (mounted.current) {
+          setStatus(next);
+        }
+        return next;
+      } catch (err) {
+        if (mounted.current) {
+          setError(String(err));
+        }
+        throw err;
+      } finally {
+        if (mounted.current) {
+          setBusy(false);
+        }
+      }
+    },
+    [enabled]
+  );
+
+  const deleteScenario = useCallback(async (name: string) => {
+    return invoke<boolean>("delete_gateway_scenario", {
+      args: { name, database_url: null }
+    });
+  }, []);
+
+  const renameScenario = useCallback(async (oldName: string, newName: string) => {
+    return invoke<boolean>("rename_gateway_scenario", {
+      args: { old_name: oldName, new_name: newName, database_url: null }
+    });
+  }, []);
+
   return {
     status,
     busy,
@@ -389,6 +449,11 @@ export function useMockGateway({
     update,
     clearLog,
     exportBundle,
-    importBundle
+    importBundle,
+    listScenarios,
+    saveScenario,
+    loadScenario,
+    deleteScenario,
+    renameScenario
   };
 }

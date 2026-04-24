@@ -508,6 +508,13 @@ function App() {
         onExportBundle={gatewayActions.exportBundle}
         onImportBundle={gatewayActions.importBundle}
         onReplayRequest={gatewayActions.replayRequest}
+        scenarios={{
+          list: gatewayActions.listScenarios,
+          save: gatewayActions.saveScenario,
+          load: gatewayActions.loadScenario,
+          del: gatewayActions.deleteScenario,
+          rename: gatewayActions.renameScenario
+        }}
       />
 
       <ProvidersPanel

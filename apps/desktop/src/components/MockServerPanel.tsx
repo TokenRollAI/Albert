@@ -6,7 +6,8 @@ import type {
   GatewayStatus,
   MockExampleKind,
   RateLimitRule,
-  RequestLogEntry
+  RequestLogEntry,
+  StoredScenarioSummary
 } from "../types";
 
 interface MockServerPanelProps {
@@ -40,6 +41,13 @@ interface MockServerPanelProps {
   onExportBundle?: () => Promise<void>;
   onImportBundle?: (bundleJson: string) => Promise<void>;
   onReplayRequest?: (entry: RequestLogEntry) => void;
+  scenarios?: {
+    list: () => Promise<StoredScenarioSummary[]>;
+    save: (name: string) => Promise<void>;
+    load: (name: string) => Promise<void>;
+    del: (name: string) => Promise<void>;
+    rename: (oldName: string, newName: string) => Promise<void>;
+  };
 }
 
 type TabKey = "runtime" | "routes" | "requests";
@@ -66,7 +74,8 @@ export function MockServerPanel({
   onClearLog,
   onExportBundle,
   onImportBundle,
-  onReplayRequest
+  onReplayRequest,
+  scenarios
 }: MockServerPanelProps) {
   const [copied, setCopied] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("runtime");
@@ -234,6 +243,7 @@ export function MockServerPanel({
               onApplyStatusOverrides={onApplyStatusOverrides}
               onApplyResponseHeaders={onApplyResponseHeaders}
               onSeedRequiredHeadersFromHints={onSeedRequiredHeadersFromHints}
+              scenarios={scenarios}
             />
           ) : null}
 

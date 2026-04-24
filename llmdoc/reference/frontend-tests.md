@@ -57,6 +57,11 @@
   prefills an Authorization (or custom) header row on first render
   when the endpoint declares auth, and never overwrites a user-edited
   draft header.
+- `components/__tests__/ScenariosPanel.test.tsx` — covers the
+  named-preset panel: initial list rehydration, Save disabled on blank
+  name, happy-path save → re-list, Load disabled while gateway idle,
+  Delete triggers `onDelete` + refresh, Rename flow (click → inline
+  input → Enter commits, Escape aborts, same-name is a no-op).
 - `components/__tests__/MockRequestsTab.test.tsx` — pins down the
   pure-function `computeMetrics`: status-class buckets, average/max
   latency, busiest-route detection, empty-log safety, the

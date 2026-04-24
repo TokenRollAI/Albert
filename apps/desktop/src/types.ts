@@ -139,6 +139,13 @@ export interface StoredEndpointSummary {
   summary?: string | null;
 }
 
+export interface StoredScenarioSummary {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export type InspectorKey =
   | "params"
   | "headers"

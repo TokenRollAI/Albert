@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use albert_core::{
     CanonicalApiCollection, CapabilityStatus, DeliveryStage, MockExample, ProviderConfig,
 };
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -27,6 +27,16 @@ pub struct StoredEndpointSummary {
     pub method: String,
     pub path: String,
     pub summary: Option<String>,
+}
+
+/// Summary row returned from `list_scenarios`. The `payload` is not loaded
+/// here — fetch it with `load_scenario` when the user activates one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredScenarioSummary {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 impl SqliteStore {
@@ -148,6 +158,109 @@ impl SqliteStore {
         } else {
             Ok(None)
         }
+    }
+
+    /// Upsert a named scenario. The `payload` should be a `GatewayConfigBundle`
+    /// JSON value — this layer stays opaque to the shape so future bundle
+    /// versions can land without a migration. The `created_at` is preserved
+    /// on updates; only `updated_at` refreshes.
+    pub fn save_scenario(
+        &self,
+        name: &str,
+        payload: &serde_json::Value,
+    ) -> Result<StoredScenarioSummary, StorageError> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(StorageError::InvalidInput("scenario name cannot be empty"));
+        }
+        let now = unix_timestamp();
+        let connection = self.connect()?;
+        let existing: Option<(String, String)> = connection
+            .query_row(
+                "SELECT id, created_at FROM gateway_scenarios WHERE name = ?1",
+                params![trimmed],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        let (id, created_at) = existing
+            .unwrap_or_else(|| (format!("scenario-{}-{}", now, slug(trimmed)), now.clone()));
+        connection.execute(
+            "INSERT OR REPLACE INTO gateway_scenarios (id, name, payload, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                id,
+                trimmed,
+                serde_json::to_string(payload)?,
+                created_at,
+                now
+            ],
+        )?;
+        Ok(StoredScenarioSummary {
+            id,
+            name: trimmed.to_string(),
+            created_at,
+            updated_at: now,
+        })
+    }
+
+    pub fn list_scenarios(&self) -> Result<Vec<StoredScenarioSummary>, StorageError> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT id, name, created_at, updated_at \
+             FROM gateway_scenarios \
+             ORDER BY name ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(StoredScenarioSummary {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                created_at: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn load_scenario(&self, name: &str) -> Result<Option<serde_json::Value>, StorageError> {
+        let connection = self.connect()?;
+        let mut statement =
+            connection.prepare("SELECT payload FROM gateway_scenarios WHERE name = ?1")?;
+        let mut rows = statement.query(params![name])?;
+        if let Some(row) = rows.next()? {
+            let raw: String = row.get(0)?;
+            let value = serde_json::from_str(&raw)?;
+            Ok(Some(value))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn delete_scenario(&self, name: &str) -> Result<bool, StorageError> {
+        let connection = self.connect()?;
+        let affected = connection.execute(
+            "DELETE FROM gateway_scenarios WHERE name = ?1",
+            params![name],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn rename_scenario(&self, old_name: &str, new_name: &str) -> Result<bool, StorageError> {
+        let trimmed = new_name.trim();
+        if trimmed.is_empty() {
+            return Err(StorageError::InvalidInput("scenario name cannot be empty"));
+        }
+        let connection = self.connect()?;
+        let now = unix_timestamp();
+        let affected = connection.execute(
+            "UPDATE gateway_scenarios SET name = ?1, updated_at = ?2 WHERE name = ?3",
+            params![trimmed, now, old_name],
+        )?;
+        Ok(affected > 0)
     }
 
     pub fn save_provider_config(&self, provider: &ProviderConfig) -> Result<(), StorageError> {
@@ -439,6 +552,32 @@ pub enum StorageError {
     Database(#[from] rusqlite::Error),
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("invalid input: {0}")]
+    InvalidInput(&'static str),
+}
+
+/// Produce a slug suitable for embedding in a scenario id: lowercase
+/// ASCII alphanumerics and dashes, other characters become `-`. Collapses
+/// runs of `-` and trims leading/trailing dashes so `id` stays
+/// human-readable.
+fn slug(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut last_dash = true;
+    for c in input.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "unnamed".to_string()
+    } else {
+        trimmed
+    }
 }
 
 pub fn planned_capabilities() -> Vec<CapabilityStatus> {
@@ -511,6 +650,7 @@ mod tests {
         assert!(rows.contains(&"api_schemas".to_string()));
         assert!(rows.contains(&"mock_examples".to_string()));
         assert!(rows.contains(&"provider_configs".to_string()));
+        assert!(rows.contains(&"gateway_scenarios".to_string()));
     }
 
     #[test]
@@ -871,5 +1011,102 @@ mod tests {
             .pragma_query_value(None, "journal_mode", |row| row.get(0))
             .unwrap();
         assert_eq!(mode.to_ascii_lowercase(), "wal");
+    }
+
+    #[test]
+    fn scenario_save_list_load_round_trip() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let store = SqliteStore::new(temp_file.path().to_string_lossy().to_string());
+        store.migrate().unwrap();
+
+        let payload = serde_json::json!({
+            "version": 1,
+            "collection_ids": ["orders"],
+            "config": { "error_rate": 0.5 }
+        });
+
+        let summary = store.save_scenario("Broken Backend", &payload).unwrap();
+        assert_eq!(summary.name, "Broken Backend");
+        assert!(summary.id.starts_with("scenario-"));
+        assert!(summary.id.contains("broken-backend"));
+
+        let listed = store.list_scenarios().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Broken Backend");
+
+        let loaded = store.load_scenario("Broken Backend").unwrap().unwrap();
+        assert_eq!(loaded, payload);
+    }
+
+    #[test]
+    fn scenario_save_with_same_name_updates_timestamps_but_not_id() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let store = SqliteStore::new(temp_file.path().to_string_lossy().to_string());
+        store.migrate().unwrap();
+
+        let first = store
+            .save_scenario("happy path", &serde_json::json!({"v": 1}))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let second = store
+            .save_scenario("happy path", &serde_json::json!({"v": 2}))
+            .unwrap();
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(first.created_at, second.created_at);
+        assert_ne!(first.updated_at, second.updated_at);
+
+        let loaded = store.load_scenario("happy path").unwrap().unwrap();
+        assert_eq!(loaded, serde_json::json!({"v": 2}));
+    }
+
+    #[test]
+    fn scenario_rename_and_delete() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let store = SqliteStore::new(temp_file.path().to_string_lossy().to_string());
+        store.migrate().unwrap();
+
+        store
+            .save_scenario("draft", &serde_json::json!({"v": 1}))
+            .unwrap();
+        let renamed = store.rename_scenario("draft", "final").unwrap();
+        assert!(renamed);
+        assert!(store.load_scenario("draft").unwrap().is_none());
+        assert!(store.load_scenario("final").unwrap().is_some());
+
+        let deleted = store.delete_scenario("final").unwrap();
+        assert!(deleted);
+        assert!(store.list_scenarios().unwrap().is_empty());
+
+        // Deleting a missing scenario returns false but doesn't error.
+        assert!(!store.delete_scenario("missing").unwrap());
+    }
+
+    #[test]
+    fn scenario_rejects_empty_name() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let store = SqliteStore::new(temp_file.path().to_string_lossy().to_string());
+        store.migrate().unwrap();
+
+        let err = store
+            .save_scenario("   ", &serde_json::json!({}))
+            .unwrap_err();
+        assert!(matches!(err, super::StorageError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn scenario_trims_name_on_save_and_rename() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let store = SqliteStore::new(temp_file.path().to_string_lossy().to_string());
+        store.migrate().unwrap();
+
+        let summary = store
+            .save_scenario("  spaced  ", &serde_json::json!({}))
+            .unwrap();
+        assert_eq!(summary.name, "spaced");
+
+        let ok = store.rename_scenario("spaced", "  trimmed  ").unwrap();
+        assert!(ok);
+        assert!(store.load_scenario("trimmed").unwrap().is_some());
     }
 }

@@ -8,7 +8,8 @@ import type {
   RateLimitRule,
   RequestLogEntry,
   RequiredHeader,
-  SidebarCollection
+  SidebarCollection,
+  StoredScenarioSummary
 } from "../types";
 import type { UseToasts } from "./useToasts";
 
@@ -55,6 +56,11 @@ interface UseGatewayActionsArgs {
     clearLog?: () => Promise<void>;
     exportBundle?: () => Promise<unknown>;
     importBundle?: (bundle: unknown) => Promise<unknown>;
+    listScenarios?: () => Promise<StoredScenarioSummary[]>;
+    saveScenario?: (name: string) => Promise<StoredScenarioSummary>;
+    loadScenario?: (name: string) => Promise<unknown>;
+    deleteScenario?: (name: string) => Promise<boolean>;
+    renameScenario?: (oldName: string, newName: string) => Promise<boolean>;
   };
   sidebarCollections: SidebarCollection[];
   openTab: (
@@ -85,6 +91,11 @@ export interface GatewayActions {
   clearLog: () => Promise<void>;
   exportBundle: () => Promise<void>;
   importBundle: (bundleJson: string) => Promise<void>;
+  listScenarios: () => Promise<StoredScenarioSummary[]>;
+  saveScenario: (name: string) => Promise<void>;
+  loadScenario: (name: string) => Promise<void>;
+  deleteScenario: (name: string) => Promise<void>;
+  renameScenario: (oldName: string, newName: string) => Promise<void>;
   replayRequest: (entry: RequestLogEntry) => void;
 }
 
@@ -327,6 +338,63 @@ export function useGatewayActions({
     [mockGateway, toasts]
   );
 
+  const listScenarios = useCallback<GatewayActions["listScenarios"]>(async () => {
+    if (!mockGateway.listScenarios) return [];
+    return mockGateway.listScenarios();
+  }, [mockGateway]);
+
+  const saveScenario = useCallback<GatewayActions["saveScenario"]>(
+    async (name) => {
+      if (!mockGateway.saveScenario) return;
+      try {
+        const summary = await mockGateway.saveScenario(name);
+        toasts.success(`Saved scenario "${summary.name}".`);
+      } catch (err) {
+        toasts.error(`Save failed: ${String(err)}`);
+      }
+    },
+    [mockGateway, toasts]
+  );
+
+  const loadScenario = useCallback<GatewayActions["loadScenario"]>(
+    async (name) => {
+      if (!mockGateway.loadScenario) return;
+      try {
+        await mockGateway.loadScenario(name);
+        toasts.success(`Activated scenario "${name}".`);
+      } catch (err) {
+        toasts.error(`Load failed: ${String(err)}`);
+      }
+    },
+    [mockGateway, toasts]
+  );
+
+  const deleteScenario = useCallback<GatewayActions["deleteScenario"]>(
+    async (name) => {
+      if (!mockGateway.deleteScenario) return;
+      try {
+        await mockGateway.deleteScenario(name);
+        toasts.info(`Deleted scenario "${name}".`);
+      } catch (err) {
+        toasts.error(`Delete failed: ${String(err)}`);
+      }
+    },
+    [mockGateway, toasts]
+  );
+
+  const renameScenario = useCallback<GatewayActions["renameScenario"]>(
+    async (oldName, newName) => {
+      if (!mockGateway.renameScenario) return;
+      try {
+        await mockGateway.renameScenario(oldName, newName);
+        toasts.info(`Renamed to "${newName}".`);
+      } catch (err) {
+        toasts.error(`Rename failed: ${String(err)}`);
+      }
+    },
+    [mockGateway, toasts]
+  );
+
   return {
     start,
     applyOverrides,
@@ -340,6 +408,11 @@ export function useGatewayActions({
     clearLog,
     exportBundle,
     importBundle,
+    listScenarios,
+    saveScenario,
+    loadScenario,
+    deleteScenario,
+    renameScenario,
     replayRequest
   };
 }

@@ -16,6 +16,11 @@ pub enum Command {
     Openapi,
     BundleExport,
     BundleImport,
+    ScenarioList,
+    ScenarioSave,
+    ScenarioLoad,
+    ScenarioDelete,
+    ScenarioRename,
     Export,
     ExportAll,
     Delete,
@@ -61,6 +66,9 @@ pub struct CliArgs {
     /// Switch `routes` from tab-separated output to pretty JSON so scripts
     /// can parse the structure directly instead of splitting strings.
     pub emit_json: bool,
+    /// Old name for `scenario rename` (the renamed collection command
+    /// reuses `--id`; scenarios are keyed by name instead).
+    pub scenario_old_name: Option<String>,
 }
 
 impl Default for CliArgs {
@@ -84,6 +92,7 @@ impl Default for CliArgs {
             ping_url: None,
             print_config: false,
             emit_json: false,
+            scenario_old_name: None,
         }
     }
 }
@@ -149,6 +158,24 @@ where
         }
         "bundle-export" => Command::BundleExport,
         "bundle-import" => Command::BundleImport,
+        "scenario" => {
+            if argv.is_empty() {
+                return Err(CliError::UnknownCommand(
+                    "scenario (need 'list', 'save', 'load', 'delete', or 'rename')".to_string(),
+                ));
+            }
+            let sub = argv.remove(0);
+            match sub.as_str() {
+                "list" => Command::ScenarioList,
+                "save" => Command::ScenarioSave,
+                "load" => Command::ScenarioLoad,
+                "delete" => Command::ScenarioDelete,
+                "rename" => Command::ScenarioRename,
+                other => {
+                    return Err(CliError::UnknownCommand(format!("scenario {other}")));
+                }
+            }
+        }
         "export" => Command::Export,
         "export-all" => Command::ExportAll,
         "delete" => Command::Delete,
@@ -260,6 +287,9 @@ where
             "name" => {
                 out.new_name = Some(take_value(&mut i)?);
             }
+            "old-name" => {
+                out.scenario_old_name = Some(take_value(&mut i)?);
+            }
             "interval-ms" => {
                 let v = take_value(&mut i)?;
                 let parsed = v.parse::<u64>().map_err(|err| CliError::BadValue {
@@ -300,6 +330,9 @@ pub fn help_text() -> String {
         "    openapi    Fetch /__albert/openapi.json from a running gateway (--url, --output)\n",
     );
     s.push_str("    bundle     export|import a gateway config snapshot (--url, --output, --db)\n");
+    s.push_str(
+        "    scenario   list|save|load|delete|rename named gateway presets (--name, --url)\n",
+    );
     s.push_str("    export     Print a collection snapshot as JSON\n");
     s.push_str("    export-all Print all collections as a JSON array\n");
     s.push_str("    delete     Remove a collection from the database\n");

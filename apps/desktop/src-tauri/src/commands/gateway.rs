@@ -311,3 +311,132 @@ pub async fn update_mock_server(
         .await
         .map_err(|error| error.to_string())
 }
+
+// ---------------------------------------------------------------------------
+// Scenarios: named gateway config presets
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_gateway_scenarios(
+    database_url: Option<String>,
+) -> Result<Vec<albert_storage::StoredScenarioSummary>, String> {
+    let store = albert_storage::SqliteStore::new(database_url.unwrap_or_else(default_database_url));
+    store.migrate().map_err(|error| error.to_string())?;
+    store.list_scenarios().map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SaveScenarioArgs {
+    pub name: String,
+    #[serde(default)]
+    pub database_url: Option<String>,
+}
+
+/// Capture the live gateway config as a named scenario. The payload is the
+/// same `GatewayConfigBundle` shape produced by `export_gateway_config`, so
+/// scenarios can be round-tripped through file-based bundle export/import.
+#[tauri::command]
+pub async fn save_gateway_scenario(
+    args: SaveScenarioArgs,
+    services: State<'_, AppServices>,
+) -> Result<albert_storage::StoredScenarioSummary, String> {
+    let bundle = services
+        .gateway
+        .export_bundle()
+        .await
+        .map_err(|error| error.to_string())?;
+    let payload = serde_json::to_value(&bundle).map_err(|error| error.to_string())?;
+
+    let store =
+        albert_storage::SqliteStore::new(args.database_url.unwrap_or_else(default_database_url));
+    store.migrate().map_err(|error| error.to_string())?;
+    store
+        .save_scenario(&args.name, &payload)
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoadScenarioArgs {
+    pub name: String,
+    #[serde(default)]
+    pub database_url: Option<String>,
+}
+
+/// Activate a saved scenario: load its bundle, hydrate collections from
+/// SQLite, and apply via `import_bundle`. Returns the resulting gateway
+/// status so the UI can refresh immediately.
+#[tauri::command]
+pub async fn load_gateway_scenario(
+    args: LoadScenarioArgs,
+    services: State<'_, AppServices>,
+) -> Result<GatewayStatus, String> {
+    let database_url = args.database_url.unwrap_or_else(default_database_url);
+    let store = albert_storage::SqliteStore::new(database_url);
+    store.migrate().map_err(|error| error.to_string())?;
+
+    let payload = store
+        .load_scenario(&args.name)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("scenario '{}' not found", args.name))?;
+    let bundle: GatewayConfigBundle =
+        serde_json::from_value(payload).map_err(|error| error.to_string())?;
+
+    let mut collections = Vec::with_capacity(bundle.collection_ids.len());
+    let mut missing: Vec<String> = Vec::new();
+    for id in &bundle.collection_ids {
+        match store
+            .load_collection(id)
+            .map_err(|error| error.to_string())?
+        {
+            Some(c) => collections.push(c),
+            None => missing.push(id.clone()),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "scenario '{}' references unknown collections: {}",
+            args.name,
+            missing.join(", ")
+        ));
+    }
+    services
+        .gateway
+        .import_bundle(bundle, collections)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeleteScenarioArgs {
+    pub name: String,
+    #[serde(default)]
+    pub database_url: Option<String>,
+}
+
+#[tauri::command]
+pub fn delete_gateway_scenario(args: DeleteScenarioArgs) -> Result<bool, String> {
+    let store =
+        albert_storage::SqliteStore::new(args.database_url.unwrap_or_else(default_database_url));
+    store.migrate().map_err(|error| error.to_string())?;
+    store
+        .delete_scenario(&args.name)
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RenameScenarioArgs {
+    pub old_name: String,
+    pub new_name: String,
+    #[serde(default)]
+    pub database_url: Option<String>,
+}
+
+#[tauri::command]
+pub fn rename_gateway_scenario(args: RenameScenarioArgs) -> Result<bool, String> {
+    let store =
+        albert_storage::SqliteStore::new(args.database_url.unwrap_or_else(default_database_url));
+    store.migrate().map_err(|error| error.to_string())?;
+    store
+        .rename_scenario(&args.old_name, &args.new_name)
+        .map_err(|error| error.to_string())
+}

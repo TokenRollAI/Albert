@@ -91,6 +91,14 @@ counts.
      validated against it; mismatches respond `400 schema_mismatch`
      with a structured body instead of serving the mock payload. Off
      by default so inspection-only workflows are unaffected.
+  6. **Scenarios** (`components/ScenariosPanel.tsx`) — named presets
+     that snapshot the live `GatewayConfigBundle` to SQLite. Save with
+     a label, one-click Load to snap the gateway into that state,
+     Rename in-place, Delete with confirm-less removal. Typical use:
+     save "healthy", "rate limited", and "broken backend" and toggle
+     between them while demoing integrations. Inline table renders
+     under the Schema enforcement panel; empty state shows
+     "No scenarios yet". Save requires the server to be running.
 - **Routes tab** — one row per registered route, with a dropdown to pick
   the served example kind. Changes collect as a draft; `Apply (N)` sends
   them to `update_mock_server`.

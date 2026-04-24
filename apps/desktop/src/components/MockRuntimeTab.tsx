@@ -2,8 +2,13 @@ import { useMemo, useState } from "react";
 import { Icon } from "./Icon";
 import { RateLimitsEditor } from "./RateLimitsEditor";
 import { ResponseHeadersEditor } from "./ResponseHeadersEditor";
+import { ScenariosPanel } from "./ScenariosPanel";
 import { StatusOverridesEditor } from "./StatusOverridesEditor";
-import type { GatewayStatus, RateLimitRule } from "../types";
+import type {
+  GatewayStatus,
+  RateLimitRule,
+  StoredScenarioSummary
+} from "../types";
 
 interface MockRuntimeTabProps {
   status: GatewayStatus;
@@ -25,6 +30,13 @@ interface MockRuntimeTabProps {
     rules: Record<string, Record<string, string>>
   ) => Promise<void>;
   onSeedRequiredHeadersFromHints: () => Promise<void>;
+  scenarios?: {
+    list: () => Promise<StoredScenarioSummary[]>;
+    save: (name: string) => Promise<void>;
+    load: (name: string) => Promise<void>;
+    del: (name: string) => Promise<void>;
+    rename: (oldName: string, newName: string) => Promise<void>;
+  };
 }
 
 /**
@@ -47,7 +59,8 @@ export function MockRuntimeTab({
   onApplyRateLimits,
   onApplyStatusOverrides,
   onApplyResponseHeaders,
-  onSeedRequiredHeadersFromHints
+  onSeedRequiredHeadersFromHints,
+  scenarios
 }: MockRuntimeTabProps) {
   const initialHost =
     savedPreferences?.host ?? status.config.host ?? "127.0.0.1";
@@ -271,6 +284,17 @@ export function MockRuntimeTab({
           field. Endpoints without a declared schema are unaffected.
         </p>
       </section>
+
+      {scenarios ? (
+        <ScenariosPanel
+          running={status.running}
+          listScenarios={scenarios.list}
+          onSave={scenarios.save}
+          onLoad={scenarios.load}
+          onDelete={scenarios.del}
+          onRename={scenarios.rename}
+        />
+      ) : null}
 
       <RateLimitsEditor
         running={status.running}

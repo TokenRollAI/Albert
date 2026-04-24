@@ -239,6 +239,20 @@ always serves the error example.
   `{error, message, request_id}`. Round-trip covered by
   `bundle_endpoints_round_trip_over_http` in `crates/albert-gateway/src/lib.rs`
   and the CLI smoke suite's `bundle_export_and_import_round_trip`.
+- Scenarios (named presets): `albert-storage::SqliteStore` gains
+  `save_scenario`, `list_scenarios`, `load_scenario`, `delete_scenario`,
+  and `rename_scenario`. Each scenario row stores a full
+  `GatewayConfigBundle` as JSON under a user-facing name (unique). The
+  gateway itself is scenarios-ignorant — saving simply snapshots
+  `export_bundle()` to SQLite, and loading calls `import_bundle` with
+  the persisted payload. Tauri exposes `list_gateway_scenarios`,
+  `save_gateway_scenario`, `load_gateway_scenario`,
+  `delete_gateway_scenario`, `rename_gateway_scenario`. CLI mirror:
+  `albert scenario list|save|load|delete|rename --name <label>` (save
+  and load additionally take `--url` for the target gateway). Tests:
+  5 storage-level unit tests, 1 CLI smoke test
+  (`scenario_save_list_load_round_trip`), 8 React unit tests for
+  `ScenariosPanel`.
 - `GET /__albert/config` returns the full live gateway config as JSON
   — `{route_count, overrides, default_latency_ms, latency_overrides,
   latency_jitter_ms, error_rate, capture_bodies, response_headers,

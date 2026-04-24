@@ -22,6 +22,11 @@ running the mock server without the Tauri shell.
 | `openapi` | Fetch live OpenAPI 3.0 spec from gateway (`--url`, `--output`) |
 | `bundle export` | Snapshot live gateway config to JSON (`--url`, `--output`) |
 | `bundle import` | Apply a saved bundle to a running gateway (`<file>`, `--url`, `--db`) |
+| `scenario list`   | List named scenarios stored in SQLite (`--json`)           |
+| `scenario save`   | Snapshot live config as named preset (`--name`, `--url`, `--db`) |
+| `scenario load`   | Activate a saved scenario on a running gateway (`--name`, `--url`, `--db`) |
+| `scenario delete` | Remove a named scenario (`--name`, `--db`)                 |
+| `scenario rename` | Rename a scenario (`--old-name`, `--name`, `--db`)         |
 | `import`  | Parse an OpenAPI/cURL file (or a JSON bundle) and persist it |
 | `watch`   | Keep re-importing one or more files on every mtime change    |
 | `list`    | Print the collections stored in the database                 |
@@ -84,6 +89,28 @@ command) persists every entry in one call. This is the mirror image of
 `export-all` — a bundle round-trips losslessly through SQLite. Bodies
 that are not arrays, or arrays whose entries don't look like canonical
 snapshots, fall through to the regular OpenAPI / cURL parsers.
+
+## `scenario` options
+
+Scenarios are named `GatewayConfigBundle` snapshots stored in SQLite. Use
+them to define reusable "healthy", "rate limited", "broken backend" presets
+and flip between them with a single call.
+
+- `scenario save` — takes `--name <label>`, `--url <gateway>` (default
+  `http://127.0.0.1:4317`), and `--db <path>`. Fetches the bundle from the
+  running gateway and upserts under `label`; saving with an existing name
+  preserves `id` / `created_at` but refreshes `updated_at`.
+- `scenario load` — takes `--name <label>`, `--url <gateway>`, and `--db
+  <path>`. Loads the persisted bundle and POSTs it via
+  `/__albert/config/bundle`. Fails with `no scenario named …` when the
+  label is missing and `scenario '…' references unknown collections: …`
+  when the referenced ids aren't in SQLite.
+- `scenario list` — prints `<name>  updated=<unix>  id=<id>` rows. Pass
+  `--json` for machine-readable output.
+- `scenario delete` / `scenario rename` — both take `--name <label>`
+  (rename also requires `--old-name <label>`). Deleting a missing label
+  or renaming one that doesn't exist surfaces a non-zero exit with a
+  clear error.
 
 ## `watch` options
 
