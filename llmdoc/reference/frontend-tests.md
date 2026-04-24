@@ -58,6 +58,12 @@
   prefills an Authorization (or custom) header row on first render
   when the endpoint declares auth, and never overwrites a user-edited
   draft header.
+- `components/__tests__/UrlBar.buildCurl.test.ts` — covers
+  `buildCurlFromLogEntry`: base-URL fallback to api.example.com,
+  trailing-slash trimming, query-string prefix handling (with or
+  without leading `?`), `x-request-id` preservation, body → `-d` with
+  JSON Content-Type, truncation sentinel stripping, single-quote
+  `'\''` escaping, capture-failed sentinel passthrough without `-d`.
 - `components/__tests__/ScenariosPanel.test.tsx` — covers the
   named-preset panel: initial list rehydration, Save disabled on blank
   name, happy-path save → re-list, Load disabled while gateway idle,

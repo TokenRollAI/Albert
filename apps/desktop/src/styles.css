@@ -2133,6 +2133,21 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   color: var(--text);
   border-color: var(--border-strong);
 }
+.reqlog__curl {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: copy;
+  white-space: nowrap;
+}
+.reqlog__curl:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .reqlog__body {
   grid-column: 1 / -1;
   margin-top: 4px;

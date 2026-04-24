@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { downloadText, timestampSlug } from "../lib/downloadBlob";
+import { buildCurlFromLogEntry } from "./UrlBar";
 import type { GatewayStatus, RequestLogEntry } from "../types";
 
 type StatusFilter = "all" | "2xx" | "4xx" | "5xx";
@@ -666,6 +667,19 @@ export function MockRequestsTab({
                     id:{(entry.request_id ?? "").slice(0, 8)}
                   </button>
                 ) : null}
+                <button
+                  type="button"
+                  className="reqlog__curl"
+                  title="Copy as cURL (uses the gateway's live URL; replays the original body if captured)"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void navigator.clipboard?.writeText(
+                      buildCurlFromLogEntry(entry, baseUrl)
+                    );
+                  }}
+                >
+                  cURL
+                </button>
                 {entry.request_body ? (
                   <details className="reqlog__body">
                     <summary>body</summary>

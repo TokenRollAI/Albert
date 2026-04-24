@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Icon } from "./Icon";
-import type { EndpointTab } from "../types";
+import type { EndpointTab, RequestLogEntry } from "../types";
 
 interface UrlBarProps {
   tab: EndpointTab;
@@ -42,6 +42,50 @@ export function buildCurlCommand(tab: EndpointTab, baseUrl: string | null): stri
     parts.push(`-d '{ "example": true }'`);
   }
 
+  return parts.join(" \\\n  ");
+}
+
+/**
+ * Build a cURL command that replays a historical request log entry
+ * against the live mock server. Unlike `buildCurlCommand` (which works
+ * from a CanonicalEndpoint declaration), this targets the *actual*
+ * URL/query/body the gateway observed, so it reproduces whatever the
+ * caller originally sent.
+ *
+ * Request-id is preserved via `-H "x-request-id: …"` so the replay
+ * lands in the log under the same correlation key — useful when
+ * debugging flaky client behavior.
+ */
+export function buildCurlFromLogEntry(
+  entry: RequestLogEntry,
+  baseUrl: string | null
+): string {
+  const method = entry.method.toUpperCase();
+  const resolvedBase = baseUrl ?? "https://api.example.com";
+  let url = `${resolvedBase.replace(/\/$/, "")}${entry.path}`;
+  if (entry.query && entry.query.length > 0) {
+    const trimmed = entry.query.startsWith("?")
+      ? entry.query
+      : `?${entry.query}`;
+    url += trimmed;
+  }
+  const parts: string[] = [`curl -X ${method}`, `"${url}"`];
+  if (entry.request_id) {
+    parts.push(`-H "x-request-id: ${entry.request_id}"`);
+  }
+  if (
+    entry.request_body &&
+    !entry.request_body.startsWith("<capture failed:")
+  ) {
+    parts.push(`-H "Content-Type: application/json"`);
+    const body = entry.request_body.endsWith("…[truncated]")
+      ? entry.request_body.replace("…[truncated]", "")
+      : entry.request_body;
+    // Use single quotes around the body, escape embedded singles with
+    // the shell-safe `'\''` concatenation trick.
+    const escaped = body.replace(/'/g, "'\\''");
+    parts.push(`-d '${escaped}'`);
+  }
   return parts.join(" \\\n  ");
 }
 

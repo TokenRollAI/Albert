@@ -109,8 +109,14 @@ counts.
   a 2xx/4xx/5xx filter chip row + method dropdown + a free-text search
   box (matches path / matched_route / status / request_id / query),
   followed by the scrolling log. Each row shows timestamp, method, path, status,
-  latency, served-kind or source label, and a small `id:<prefix>`
-  pill for the `x-request-id`; clicking that pill copies the full id.
+  latency, served-kind or source label, a small `id:<prefix>`
+  pill for the `x-request-id` (clicking copies the full id), and a
+  `cURL` button that clipboards a runnable cURL command reproducing
+  the captured request — URL targets the live gateway base, original
+  `x-request-id` is preserved as a header, the captured body (if any)
+  is re-embedded with `'\''` shell escaping and the `…[truncated]`
+  sentinel stripped first. `<capture failed:…>` sentinels are
+  respected and omitted from the body.
   A "Capture request bodies" toggle arms the backend to store up to
   4KB per request; when captured, rows expose a `<details>` body
   preview. **Export JSON** streams the current log as a timestamped
