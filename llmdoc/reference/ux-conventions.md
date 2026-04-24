@@ -135,7 +135,13 @@ request with:
 - path-parameter inputs (auto-extracted from `{id}` tokens)
 - a query string
 - repeatable `KEY: VALUE` custom headers (auth tokens, etc.)
-- a JSON body draft (shown only for non-GET/HEAD methods)
+- a JSON body draft (shown only for non-GET/HEAD methods) with a live
+  lint line beneath it — `✓ valid JSON`, `empty body`, or
+  `× line N, col M — <parser message>` as the user types. The textarea
+  is flagged `aria-invalid` when the body is malformed so screen
+  readers and keyboard users both notice. Powered by `lib/jsonLint.ts`
+  which wraps the platform's `JSON.parse` and extracts the error
+  offset into a 1-based line/column pair
 - a "Fill from schema" button next to the body label that calls the
   `synthesize_request_body` Tauri command and replaces the draft with a
   schema-walked sample (only rendered when the endpoint has a declared

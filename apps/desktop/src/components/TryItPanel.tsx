@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { JsonView } from "./JsonView";
+import { lintJson } from "../lib/jsonLint";
 import { useTryItDraft } from "../hooks/useTryItDraft";
 import { useTryItHistory } from "../hooks/useTryItHistory";
 import type { AuthRequirementHint, EndpointTab } from "../types";
@@ -92,6 +93,7 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<ResponseState | null>(null);
+  const bodyLint = useMemo(() => lintJson(bodyDraft), [bodyDraft]);
 
   // Seed the Authorization (or custom) header the first time we see an
   // auth hint for a fresh draft. Runs per `routeKey`, not per render, so
@@ -325,7 +327,25 @@ export function TryItPanel({ tab, baseUrl }: TryItPanelProps) {
               placeholder={'{\n  "name": "value"\n}'}
               spellCheck={false}
               rows={6}
+              aria-invalid={!bodyLint.ok}
             />
+            <div
+              className={
+                bodyLint.ok
+                  ? "tryit__lint tryit__lint--ok"
+                  : "tryit__lint tryit__lint--err"
+              }
+              role="status"
+              aria-live="polite"
+            >
+              {bodyLint.ok
+                ? bodyLint.empty
+                  ? "empty body"
+                  : "✓ valid JSON"
+                : bodyLint.line && bodyLint.column
+                ? `× line ${bodyLint.line}, col ${bodyLint.column} — ${bodyLint.message}`
+                : `× ${bodyLint.message}`}
+            </div>
           </label>
         </div>
       ) : null}

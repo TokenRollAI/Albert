@@ -62,6 +62,9 @@
 - `components/__tests__/CommandPalette.test.tsx` — open/close render,
   query narrowing, arrow-key navigation with wrap, Enter vs. Esc
   dispatch, empty-result copy, action-kind run path.
+- `lib/__tests__/jsonLint.test.ts` — the Try-it body lint helper:
+  empty-ok, valid JSON scalars/objects/arrays, malformed input with
+  line/column extraction, trailing-comma rejection.
 
 ## CI integration
 

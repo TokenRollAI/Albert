@@ -2222,6 +2222,28 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   outline: none;
   border-color: var(--accent);
 }
+.tryit__field textarea[aria-invalid="true"] {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+}
+.tryit__lint {
+  margin-top: 4px;
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 2px 6px;
+  border-radius: 3px;
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tryit__lint--ok {
+  color: var(--text-muted);
+}
+.tryit__lint--err {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
 .tryit__meta {
   font-size: 11px;
   color: var(--text-muted);
