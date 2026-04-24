@@ -70,6 +70,10 @@
 - `hooks/__tests__/useDirtyRoutes.test.tsx` — covers `hasDraftContent`
   (empty vs. meaningful vs. all-blank) and `useDirtyRoutes` (initial
   scan, seed-event reactivity, ignoring untracked routes).
+- `components/__tests__/Sidebar.countMethods.test.ts` — pins down
+  the collapsed-collection chip ordering: empty input, counts-per-
+  method, canonical GET→DELETE order, alphabetical fallback for
+  non-standard verbs, case-insensitive method names.
 - `lib/__tests__/fuzzy.test.ts` — fuzzy matcher used by the command
   palette: in-order character matching, word-boundary + contiguity
   bonuses, stable sort on ties.

@@ -148,6 +148,7 @@ mod tests {
                 payload: serde_json::json!({}),
                 note: None,
             }],
+            request_body_schema: None,
         }
     }
 

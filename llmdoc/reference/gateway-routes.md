@@ -206,6 +206,23 @@ always serves the error example.
   the output is unavoidably lossy there — the recorded success / error
   example is still surfaced via `content.{type}.example` for fidelity.
   CLI mirror: `albert openapi --url …` wraps this endpoint.
+- Opt-in request-body validation: when `GatewayConfig.enforce_request_bodies`
+  is set, POST/PUT/PATCH bodies targeting an endpoint that declares a
+  `request_body.schema` are validated against it before the mock is
+  served. Mismatches return `400 schema_mismatch` with a structured
+  body `{error, path, message, request_id}` where `path` is a
+  JSON-pointer-ish dot-path to the offending field. The validator is
+  a zero-dep walk of `CanonicalSchemaNode` — it handles type / enum /
+  required-field / nullable / array-item checks. `one_of`, `all_of`,
+  and string `format` are explicit non-goals. Log entries tag these
+  rejections with `source: "schema-mismatch"`.
+- Config bundle export/import: `MockGateway::export_bundle()` packs
+  the live GatewayConfig + bound collection IDs into a portable
+  `GatewayConfigBundle` (version-stamped, JSON-friendly). The matching
+  `import_bundle(bundle, collections)` applies it back via reconfigure.
+  Tauri exposes both as `export_gateway_config` / `import_gateway_config`;
+  the Mock Server drawer now has Export / Import buttons in its header
+  that round-trip through a local JSON file.
 - `GET /__albert/config` returns the full live gateway config as JSON
   — `{route_count, overrides, default_latency_ms, latency_overrides,
   latency_jitter_ms, error_rate, capture_bodies, response_headers,

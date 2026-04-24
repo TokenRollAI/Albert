@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { MockRequestsTab } from "./MockRequestsTab";
 import { MockRuntimeTab } from "./MockRuntimeTab";
@@ -36,6 +36,8 @@ interface MockServerPanelProps {
   ) => Promise<void>;
   onSeedRequiredHeadersFromHints: () => Promise<void>;
   onClearLog?: () => Promise<void>;
+  onExportBundle?: () => Promise<void>;
+  onImportBundle?: (bundleJson: string) => Promise<void>;
   onReplayRequest?: (entry: RequestLogEntry) => void;
 }
 
@@ -60,10 +62,13 @@ export function MockServerPanel({
   onApplyResponseHeaders,
   onSeedRequiredHeadersFromHints,
   onClearLog,
+  onExportBundle,
+  onImportBundle,
   onReplayRequest
 }: MockServerPanelProps) {
   const [copied, setCopied] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("runtime");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [draftOverrides, setDraftOverrides] = useState<
     Record<string, MockExampleKind>
   >({});
@@ -130,14 +135,67 @@ export function MockServerPanel({
               {status.running ? "running" : connected ? "idle" : "offline"}
             </span>
           </div>
-          <button
-            type="button"
-            className="btn btn--icon"
-            onClick={onClose}
-            aria-label="Close mock server panel"
-          >
-            <Icon name="close" size={16} />
-          </button>
+          <div className="drawer__head-actions">
+            {onExportBundle ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() => void onExportBundle()}
+                disabled={!status.running}
+                title={
+                  status.running
+                    ? "Download the live config as a JSON bundle"
+                    : "Start the server first"
+                }
+              >
+                <Icon name="save" size={12} />
+                <span>Export</span>
+              </button>
+            ) : null}
+            {onImportBundle ? (
+              <>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!status.running}
+                  title={
+                    status.running
+                      ? "Apply a previously-exported config bundle"
+                      : "Start the server first"
+                  }
+                >
+                  <Icon name="import" size={12} />
+                  <span>Import</span>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  style={{ display: "none" }}
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (!file) return;
+                    try {
+                      const text = await file.text();
+                      await onImportBundle(text);
+                    } catch {
+                      /* surfaced via toast from the caller */
+                    }
+                  }}
+                />
+              </>
+            ) : null}
+            <button
+              type="button"
+              className="btn btn--icon"
+              onClick={onClose}
+              aria-label="Close mock server panel"
+            >
+              <Icon name="close" size={16} />
+            </button>
+          </div>
         </header>
 
         <div className="drawer__tabs" role="tablist">

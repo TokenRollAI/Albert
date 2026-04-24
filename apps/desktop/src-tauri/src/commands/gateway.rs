@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use albert_core::MockExampleKind;
 use albert_gateway::{
-    GatewayConfig, GatewayStatus, MetricsSnapshot, RateLimitRule, ReconfigureOptions,
-    RequestLogEntry, RequiredHeader,
+    GatewayConfig, GatewayConfigBundle, GatewayStatus, MetricsSnapshot, RateLimitRule,
+    ReconfigureOptions, RequestLogEntry, RequiredHeader,
 };
 use serde::Deserialize;
 use tauri::State;
@@ -32,6 +32,8 @@ pub struct StartMockServerArgs {
     pub error_rate: Option<f32>,
     #[serde(default)]
     pub capture_bodies: Option<bool>,
+    #[serde(default)]
+    pub enforce_request_bodies: Option<bool>,
     #[serde(default)]
     pub response_headers: Option<BTreeMap<String, BTreeMap<String, String>>>,
     #[serde(default)]
@@ -80,6 +82,7 @@ pub async fn start_mock_server(
         latency_jitter_ms: args.latency_jitter_ms.unwrap_or_default(),
         error_rate: args.error_rate.unwrap_or(0.0),
         capture_bodies: args.capture_bodies.unwrap_or(false),
+        enforce_request_bodies: args.enforce_request_bodies.unwrap_or(false),
         response_headers: args.response_headers.unwrap_or_default(),
         required_headers: args.required_headers.unwrap_or_default(),
         rate_limits: args.rate_limits.unwrap_or_default(),
@@ -121,6 +124,61 @@ pub async fn mock_server_metrics(
     services: State<'_, AppServices>,
 ) -> Result<MetricsSnapshot, String> {
     Ok(services.gateway.metrics().await)
+}
+
+#[tauri::command]
+pub async fn export_gateway_config(
+    services: State<'_, AppServices>,
+) -> Result<GatewayConfigBundle, String> {
+    services
+        .gateway
+        .export_bundle()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImportGatewayConfigArgs {
+    pub bundle: GatewayConfigBundle,
+    #[serde(default)]
+    pub database_url: Option<String>,
+}
+
+#[tauri::command]
+pub async fn import_gateway_config(
+    args: ImportGatewayConfigArgs,
+    services: State<'_, AppServices>,
+) -> Result<GatewayStatus, String> {
+    let database_url = args.database_url.unwrap_or_else(default_database_url);
+    let store = albert_storage::SqliteStore::new(database_url);
+    store.migrate().map_err(|error| error.to_string())?;
+
+    // Resolve the collection IDs the bundle references against the local
+    // SQLite. Missing ids are surfaced rather than silently dropped so
+    // the user knows when their dataset is out of sync with what the
+    // bundle expects.
+    let mut collections = Vec::with_capacity(args.bundle.collection_ids.len());
+    let mut missing: Vec<String> = Vec::new();
+    for id in &args.bundle.collection_ids {
+        match store
+            .load_collection(id)
+            .map_err(|error| error.to_string())?
+        {
+            Some(c) => collections.push(c),
+            None => missing.push(id.clone()),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "bundle references unknown collections: {}",
+            missing.join(", ")
+        ));
+    }
+    services
+        .gateway
+        .import_bundle(args.bundle, collections)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -177,6 +235,8 @@ pub struct UpdateMockServerArgs {
     #[serde(default)]
     pub capture_bodies: Option<bool>,
     #[serde(default)]
+    pub enforce_request_bodies: Option<bool>,
+    #[serde(default)]
     pub response_headers: Option<BTreeMap<String, BTreeMap<String, String>>>,
     #[serde(default)]
     pub required_headers: Option<BTreeMap<String, Vec<RequiredHeader>>>,
@@ -224,6 +284,9 @@ pub async fn update_mock_server(
     let latency_jitter_ms = args.latency_jitter_ms.unwrap_or(current.latency_jitter_ms);
     let error_rate = args.error_rate.unwrap_or(current.error_rate);
     let capture_bodies = args.capture_bodies.unwrap_or(current.capture_bodies);
+    let enforce_request_bodies = args
+        .enforce_request_bodies
+        .unwrap_or(current.enforce_request_bodies);
     let response_headers = args.response_headers.unwrap_or(current.response_headers);
     let required_headers = args.required_headers.unwrap_or(current.required_headers);
     let rate_limits = args.rate_limits.unwrap_or(current.rate_limits);
@@ -239,6 +302,7 @@ pub async fn update_mock_server(
             latency_jitter_ms,
             error_rate,
             capture_bodies,
+            enforce_request_bodies,
             response_headers,
             required_headers,
             rate_limits,

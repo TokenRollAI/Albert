@@ -175,6 +175,7 @@ pub(crate) struct AppState {
     pub(crate) latency: Arc<StdMutex<LatencyConfig>>,
     pub(crate) error_rate: Arc<StdMutex<f32>>,
     pub(crate) capture_bodies: Arc<StdMutex<bool>>,
+    pub(crate) enforce_request_bodies: Arc<StdMutex<bool>>,
     pub(crate) response_headers: Arc<StdMutex<Arc<ResponseHeaderMap>>>,
     pub(crate) required_headers: Arc<StdMutex<Arc<RequiredHeaderMap>>>,
     pub(crate) status_overrides: Arc<StdMutex<Arc<StatusOverrideMap>>>,
@@ -229,6 +230,7 @@ impl AppState {
         latency: LatencyConfig,
         error_rate: f32,
         capture_bodies: bool,
+        enforce_request_bodies: bool,
         response_headers: Arc<ResponseHeaderMap>,
         required_headers: Arc<RequiredHeaderMap>,
         status_overrides: Arc<StatusOverrideMap>,
@@ -242,6 +244,7 @@ impl AppState {
             latency: Arc::new(StdMutex::new(latency)),
             error_rate: Arc::new(StdMutex::new(error_rate.clamp(0.0, 1.0))),
             capture_bodies: Arc::new(StdMutex::new(capture_bodies)),
+            enforce_request_bodies: Arc::new(StdMutex::new(enforce_request_bodies)),
             response_headers: Arc::new(StdMutex::new(response_headers)),
             required_headers: Arc::new(StdMutex::new(required_headers)),
             status_overrides: Arc::new(StdMutex::new(status_overrides)),
@@ -294,6 +297,21 @@ impl AppState {
     pub(crate) fn replace_error_rate(&self, next: f32) {
         let mut slot = self.error_rate.lock().expect("error rate poisoned");
         *slot = next.clamp(0.0, 1.0);
+    }
+
+    pub(crate) fn snapshot_enforce_request_bodies(&self) -> bool {
+        *self
+            .enforce_request_bodies
+            .lock()
+            .expect("enforce flag poisoned")
+    }
+
+    pub(crate) fn replace_enforce_request_bodies(&self, next: bool) {
+        let mut slot = self
+            .enforce_request_bodies
+            .lock()
+            .expect("enforce flag poisoned");
+        *slot = next;
     }
 
     pub(crate) fn snapshot_capture_bodies(&self) -> bool {

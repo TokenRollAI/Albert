@@ -34,6 +34,30 @@ function loadExpandedState(): Record<string, boolean> {
   }
 }
 
+/// Bucketize endpoints by HTTP method for the collapsed-collection
+/// chip row. Returns them in a stable order (GET/POST/PUT/PATCH/DELETE
+/// first, then anything else alphabetically) so a collection's chips
+/// look the same every render regardless of endpoint insertion order.
+export function countMethods(
+  endpoints: CanonicalEndpoint[]
+): Array<{ method: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const endpoint of endpoints) {
+    const key = endpoint.method.toUpperCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const order = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"];
+  const primary = order
+    .map((m) => [m, counts.get(m)] as const)
+    .filter((entry): entry is readonly [string, number] => entry[1] !== undefined)
+    .map(([method, count]) => ({ method, count }));
+  const extras = [...counts.entries()]
+    .filter(([m]) => !order.includes(m))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([method, count]) => ({ method, count }));
+  return [...primary, ...extras];
+}
+
 function authTitle(hint: AuthRequirementHint): string {
   const base = (() => {
     switch (hint.scheme) {
@@ -347,6 +371,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
         ) : (
           filtered.map((collection) => {
             const isOpen = expanded[collection.id] ?? false;
+            const methodCounts = countMethods(collection.endpoints);
             return (
               <div key={collection.id} className="coll">
                 <button
@@ -365,6 +390,19 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
                   <span className="coll__name" title={collection.name}>
                     {collection.name}
                   </span>
+                  {!isOpen && methodCounts.length > 0 ? (
+                    <span className="coll__method-chips" aria-hidden="true">
+                      {methodCounts.map(({ method, count }) => (
+                        <span
+                          key={method}
+                          className={`coll__method-chip method--${method.toLowerCase()}`}
+                          title={`${count} ${method} endpoint${count === 1 ? "" : "s"}`}
+                        >
+                          {method} {count}
+                        </span>
+                      ))}
+                    </span>
+                  ) : null}
                   <span
                     className={
                       collection.origin === "imported"

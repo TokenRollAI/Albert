@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { downloadText, timestampSlug } from "../lib/downloadBlob";
 import { seedRequiredHeadersFromEndpoints } from "../lib/authHints";
 import { seedTryItDraft } from "./useTryItDraft";
 import type {
@@ -49,6 +50,8 @@ interface UseGatewayActionsArgs {
       example_overrides?: Record<string, MockExampleKind>;
     } | null;
     clearLog?: () => Promise<void>;
+    exportBundle?: () => Promise<unknown>;
+    importBundle?: (bundle: unknown) => Promise<unknown>;
   };
   sidebarCollections: SidebarCollection[];
   openTab: (
@@ -76,6 +79,8 @@ export interface GatewayActions {
   ) => Promise<void>;
   seedRequiredHeadersFromHints: () => Promise<void>;
   clearLog: () => Promise<void>;
+  exportBundle: () => Promise<void>;
+  importBundle: (bundleJson: string) => Promise<void>;
   replayRequest: (entry: RequestLogEntry) => void;
 }
 
@@ -268,6 +273,41 @@ export function useGatewayActions({
     toasts.info("Request log cleared.");
   }, [mockGateway, toasts]);
 
+  const exportBundle = useCallback<GatewayActions["exportBundle"]>(async () => {
+    if (!mockGateway.exportBundle) return;
+    try {
+      const bundle = await mockGateway.exportBundle();
+      downloadText(
+        `albert-gateway-${timestampSlug()}.json`,
+        "application/json",
+        JSON.stringify(bundle, null, 2)
+      );
+      toasts.success("Config bundle exported.");
+    } catch (err) {
+      toasts.error(`Export failed: ${String(err)}`);
+    }
+  }, [mockGateway, toasts]);
+
+  const importBundle = useCallback<GatewayActions["importBundle"]>(
+    async (bundleJson) => {
+      if (!mockGateway.importBundle) return;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(bundleJson);
+      } catch (err) {
+        toasts.error(`Bundle is not valid JSON: ${String(err)}`);
+        return;
+      }
+      try {
+        await mockGateway.importBundle(parsed);
+        toasts.success("Config bundle applied.");
+      } catch (err) {
+        toasts.error(`Import failed: ${String(err)}`);
+      }
+    },
+    [mockGateway, toasts]
+  );
+
   return {
     start,
     applyOverrides,
@@ -278,6 +318,8 @@ export function useGatewayActions({
     applyResponseHeaders,
     seedRequiredHeadersFromHints,
     clearLog,
+    exportBundle,
+    importBundle,
     replayRequest
   };
 }

@@ -414,6 +414,26 @@ body[data-theme="light"] .btn--primary {
   color: var(--text-faint);
 }
 
+.coll__method-chips {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  max-width: 55%;
+}
+.coll__method-chip {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  line-height: 1.4;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
 .coll__items {
   list-style: none;
   margin: 2px 0 6px;
@@ -1422,6 +1442,11 @@ body[data-theme="light"] .modal__overlay {
   padding: 14px 18px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
+}
+.drawer__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .drawer__title {
   display: flex;

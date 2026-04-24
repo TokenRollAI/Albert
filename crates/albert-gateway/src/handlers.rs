@@ -168,7 +168,14 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         })
         .collect();
     let request_id = resolve_request_id(&request_headers);
-    let captured_body = if capture_bodies && method != Method::GET && method != Method::HEAD {
+    // Capture the body whenever either `capture_bodies` is on (for the
+    // log) or `enforce_request_bodies` is on (for the validator). Doing
+    // both under the same path keeps the request stream consumed at
+    // most once — axum's Body can't be re-read after capture.
+    let enforce_bodies = state.snapshot_enforce_request_bodies();
+    let wants_body =
+        (capture_bodies || enforce_bodies) && method != Method::GET && method != Method::HEAD;
+    let captured_body = if wants_body {
         capture_request_body(request).await
     } else {
         CapturedBody::None
@@ -297,6 +304,62 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
             request_id: Some(request_id.clone()),
         });
         return too_many_requests(limit, window_ms, retry_after_ms, &request_id);
+    }
+
+    // Opt-in request-body validation. Runs after all the cheap gates so
+    // denied requests short-circuit without wasting cycles on JSON parse;
+    // and before example selection so a malformed body never touches a
+    // mock payload. Only POST/PUT/PATCH bodies can fail this check —
+    // GET/HEAD never carry one.
+    if enforce_bodies
+        && wants_body
+        && let Some(schema) = route.request_body_schema.as_ref()
+        && let Some(body_str) = captured_body.raw_bytes_as_str()
+    {
+        match serde_json::from_str::<serde_json::Value>(body_str) {
+            Ok(parsed) => {
+                if let Err(violation) = crate::validator::validate(&parsed, schema) {
+                    state.record(RequestLogEntry {
+                        at_epoch_ms: epoch_ms_now(),
+                        method: method.to_string(),
+                        path: path.clone(),
+                        query: query.clone(),
+                        matched_route: Some(matched_key.clone()),
+                        collection_name: Some(route.collection_name.clone()),
+                        status: 400,
+                        kind: None,
+                        source: "schema-mismatch",
+                        latency_ms: 0,
+                        request_body: captured_string.clone(),
+                        request_id: Some(request_id.clone()),
+                    });
+                    return schema_mismatch(violation, &request_id);
+                }
+            }
+            Err(parse_err) => {
+                state.record(RequestLogEntry {
+                    at_epoch_ms: epoch_ms_now(),
+                    method: method.to_string(),
+                    path: path.clone(),
+                    query: query.clone(),
+                    matched_route: Some(matched_key.clone()),
+                    collection_name: Some(route.collection_name.clone()),
+                    status: 400,
+                    kind: None,
+                    source: "schema-mismatch",
+                    latency_ms: 0,
+                    request_body: captured_string.clone(),
+                    request_id: Some(request_id.clone()),
+                });
+                return schema_mismatch(
+                    crate::validator::ValidationError {
+                        path: "$".to_string(),
+                        message: format!("body is not valid JSON: {parse_err}"),
+                    },
+                    &request_id,
+                );
+            }
+        }
     }
 
     let (override_kind, query_selected) = parse_query_override(query.as_deref());
@@ -532,6 +595,26 @@ fn resolve_request_id(request_headers: &[(String, String)]) -> String {
     crate::templating::fake_uuid_v4()
 }
 
+fn schema_mismatch(violation: crate::validator::ValidationError, request_id: &str) -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    if let Ok(name) = HeaderName::from_bytes(b"x-request-id")
+        && let Ok(value) = HeaderValue::from_str(request_id)
+    {
+        headers.insert(name, value);
+    }
+    let payload = serde_json::json!({
+        "error": "schema_mismatch",
+        "path": violation.path,
+        "message": violation.message,
+        "request_id": request_id,
+    });
+    (StatusCode::BAD_REQUEST, headers, axum::Json(payload)).into_response()
+}
+
 fn unauthorized(reason: String, request_id: &str) -> Response {
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -687,6 +770,24 @@ impl CapturedBody {
             CapturedBody::None => None,
             CapturedBody::Truncated(body) | CapturedBody::Full(body) => Some(body.clone()),
             CapturedBody::Failed(msg) => Some(format!("<capture failed: {msg}>")),
+        }
+    }
+
+    /// Return just the literal body bytes (as UTF-8 text), without the
+    /// truncation marker that `as_string` appends. Used by the validator
+    /// so the JSON parser doesn't choke on our sentinel `…[truncated]`
+    /// footer. `None` when the body wasn't captured or capture failed.
+    pub(crate) fn raw_bytes_as_str(&self) -> Option<&str> {
+        match self {
+            CapturedBody::None | CapturedBody::Failed(_) => None,
+            CapturedBody::Full(body) => Some(body.as_str()),
+            // Strip the "…[truncated]" sentinel we appended in
+            // capture_request_body so JSON parsing still works for
+            // bodies that crossed the 4KB cap.
+            CapturedBody::Truncated(body) => {
+                let sentinel = "…[truncated]";
+                Some(body.strip_suffix(sentinel).unwrap_or(body.as_str()))
+            }
         }
     }
 }

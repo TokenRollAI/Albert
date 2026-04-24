@@ -504,6 +504,8 @@ function App() {
         onApplyResponseHeaders={gatewayActions.applyResponseHeaders}
         onSeedRequiredHeadersFromHints={gatewayActions.seedRequiredHeadersFromHints}
         onClearLog={gatewayActions.clearLog}
+        onExportBundle={gatewayActions.exportBundle}
+        onImportBundle={gatewayActions.importBundle}
         onReplayRequest={gatewayActions.replayRequest}
       />
 

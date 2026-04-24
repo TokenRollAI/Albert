@@ -116,6 +116,8 @@ interface UseMockGatewayResult {
   refresh: () => Promise<void>;
   update: (args: UpdateArgs) => Promise<GatewayStatus | null>;
   clearLog: () => Promise<void>;
+  exportBundle: () => Promise<unknown>;
+  importBundle: (bundle: unknown) => Promise<GatewayStatus | null>;
 }
 
 export function useMockGateway({
@@ -337,6 +339,37 @@ export function useMockGateway({
     }
   }, [enabled]);
 
+  const exportBundle = useCallback(async () => {
+    return invoke<unknown>("export_gateway_config");
+  }, []);
+
+  const importBundle = useCallback(
+    async (bundle: unknown) => {
+      if (!enabled) return null;
+      setBusy(true);
+      setError(null);
+      try {
+        const next = await invoke<GatewayStatus>("import_gateway_config", {
+          args: { bundle, database_url: null }
+        });
+        if (mounted.current) {
+          setStatus(next);
+        }
+        return next;
+      } catch (err) {
+        if (mounted.current) {
+          setError(String(err));
+        }
+        throw err;
+      } finally {
+        if (mounted.current) {
+          setBusy(false);
+        }
+      }
+    },
+    [enabled]
+  );
+
   return {
     status,
     busy,
@@ -347,6 +380,8 @@ export function useMockGateway({
     stop,
     refresh,
     update,
-    clearLog
+    clearLog,
+    exportBundle,
+    importBundle
   };
 }

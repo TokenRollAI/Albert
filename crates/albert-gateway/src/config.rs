@@ -60,6 +60,14 @@ pub struct GatewayConfig {
     /// `state::RateLimitConfig`.
     #[serde(default)]
     pub rate_limits: BTreeMap<String, RateLimitRule>,
+    /// When `true`, POST/PUT/PATCH requests that target a route whose
+    /// canonical endpoint declares a `request_body.schema` are validated
+    /// against that schema before the mock is served. Mismatches return
+    /// `400 schema_mismatch` with a structured body listing the first
+    /// violation. Off by default so the permissive always-accept
+    /// behavior stays the zero-config default.
+    #[serde(default)]
+    pub enforce_request_bodies: bool,
     /// Per-route response status code override keyed by `METHOD path`.
     /// When set, the gateway emits this status for the selected example
     /// instead of the default derived from the example's kind (200 for
@@ -110,8 +118,31 @@ impl Default for GatewayConfig {
             required_headers: BTreeMap::new(),
             rate_limits: BTreeMap::new(),
             status_overrides: BTreeMap::new(),
+            enforce_request_bodies: false,
         }
     }
+}
+
+/// Portable, version-stamped snapshot of everything needed to rebuild
+/// a running gateway: the `GatewayConfig` itself plus the collection IDs
+/// the server is currently bound to. Intended for the Mock Server
+/// drawer's Export / Import buttons — check it into git, share it with a
+/// teammate, or reload it into a different machine's SQLite store.
+///
+/// `collection_ids` are resolved via the local SQLite on import; if a
+/// listed id is missing, the import surfaces it without silently
+/// dropping rules, so the user knows their dataset is out of sync.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GatewayConfigBundle {
+    /// Major.minor string bumped whenever we break the bundle shape.
+    /// Import rejects anything with a different major.
+    pub bundle_version: String,
+    pub config: GatewayConfig,
+    pub collection_ids: Vec<String>,
+}
+
+impl GatewayConfigBundle {
+    pub const CURRENT_VERSION: &'static str = "1.0";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

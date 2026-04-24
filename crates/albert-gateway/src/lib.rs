@@ -23,10 +23,11 @@ pub mod route;
 pub mod routing;
 pub mod state;
 pub mod templating;
+pub mod validator;
 
 pub use config::{
-    GatewayConfig, GatewayRouteSummary, GatewayStatus, RateLimitRule, RequiredHeader,
-    planned_capabilities, supported_example_kinds,
+    GatewayConfig, GatewayConfigBundle, GatewayRouteSummary, GatewayStatus, RateLimitRule,
+    RequiredHeader, planned_capabilities, supported_example_kinds,
 };
 pub use error::GatewayError;
 pub use route::{MatchedRoute, MockRoute, build_routes, route_key};
@@ -51,6 +52,7 @@ pub struct ReconfigureOptions {
     pub latency_jitter_ms: BTreeMap<String, u64>,
     pub error_rate: f32,
     pub capture_bodies: bool,
+    pub enforce_request_bodies: bool,
     pub response_headers: BTreeMap<String, BTreeMap<String, String>>,
     pub required_headers: BTreeMap<String, Vec<RequiredHeader>>,
     pub rate_limits: BTreeMap<String, RateLimitRule>,
@@ -120,6 +122,7 @@ impl MockGateway {
             latency,
             config.error_rate,
             config.capture_bodies,
+            config.enforce_request_bodies,
             response_headers,
             required_headers,
             status_overrides,
@@ -197,6 +200,7 @@ impl MockGateway {
             latency_jitter_ms: config.latency_jitter_ms,
             error_rate: config.error_rate,
             capture_bodies: config.capture_bodies,
+            enforce_request_bodies: config.enforce_request_bodies,
             response_headers: config.response_headers,
             required_headers: config.required_headers,
             rate_limits: config.rate_limits,
@@ -223,6 +227,7 @@ impl MockGateway {
             latency_jitter_ms,
             error_rate,
             capture_bodies,
+            enforce_request_bodies,
             response_headers,
             required_headers,
             rate_limits,
@@ -247,6 +252,9 @@ impl MockGateway {
         running.state.replace_capture_bodies(capture_bodies);
         running
             .state
+            .replace_enforce_request_bodies(enforce_request_bodies);
+        running
+            .state
             .replace_response_headers(Arc::new(response_headers.clone()));
         running
             .state
@@ -264,6 +272,7 @@ impl MockGateway {
         running.config.latency_jitter_ms = latency_jitter_ms;
         running.config.error_rate = clamped_rate;
         running.config.capture_bodies = capture_bodies;
+        running.config.enforce_request_bodies = enforce_request_bodies;
         running.config.response_headers = response_headers;
         running.config.required_headers = required_headers;
         running.config.rate_limits = rate_limits;
@@ -278,6 +287,78 @@ impl MockGateway {
             Some(running) => running.state.snapshot_metrics(),
             None => MetricsSnapshot::default(),
         }
+    }
+
+    /// Pack the full live config + bound collection IDs into a portable
+    /// JSON-friendly bundle. Returns `NotRunning` when the server is
+    /// idle (there's nothing meaningful to snapshot).
+    pub async fn export_bundle(&self) -> Result<GatewayConfigBundle, GatewayError> {
+        let guard = self.inner.lock().await;
+        let Some(running) = guard.as_ref() else {
+            return Err(GatewayError::NotRunning);
+        };
+        let collections = running.state.snapshot_collections();
+        let collection_ids: Vec<String> = collections.iter().map(|c| c.id.clone()).collect();
+        Ok(GatewayConfigBundle {
+            bundle_version: GatewayConfigBundle::CURRENT_VERSION.to_string(),
+            config: running.config.clone(),
+            collection_ids,
+        })
+    }
+
+    /// Apply a previously-exported bundle to a running server. The
+    /// caller supplies the resolved collections (loaded from SQLite),
+    /// which the gateway swaps atomically via `reconfigure`. Missing
+    /// collection IDs are surfaced in the error rather than silently
+    /// dropped so users know when their local store is out of sync.
+    pub async fn import_bundle(
+        &self,
+        bundle: GatewayConfigBundle,
+        collections: Vec<CanonicalApiCollection>,
+    ) -> Result<GatewayStatus, GatewayError> {
+        // Reject incompatible major versions. Minor bumps are additive
+        // and handled by `serde(default)` on new fields.
+        let major = bundle.bundle_version.split('.').next().unwrap_or("0");
+        let expected_major = GatewayConfigBundle::CURRENT_VERSION
+            .split('.')
+            .next()
+            .unwrap_or("0");
+        if major != expected_major {
+            return Err(GatewayError::InvalidConfig(format!(
+                "bundle version {} is not compatible with gateway {}",
+                bundle.bundle_version,
+                GatewayConfigBundle::CURRENT_VERSION
+            )));
+        }
+        let GatewayConfig {
+            default_latency_ms,
+            latency_overrides,
+            latency_jitter_ms,
+            error_rate,
+            capture_bodies,
+            enforce_request_bodies,
+            response_headers,
+            required_headers,
+            rate_limits,
+            status_overrides,
+            example_overrides,
+            ..
+        } = bundle.config;
+        self.reconfigure(ReconfigureOptions {
+            collections,
+            overrides: example_overrides,
+            default_latency_ms,
+            latency_overrides,
+            latency_jitter_ms,
+            error_rate,
+            capture_bodies,
+            enforce_request_bodies,
+            response_headers,
+            required_headers,
+            rate_limits,
+            status_overrides,
+        })
+        .await
     }
 
     pub async fn recent_requests(&self, limit: usize) -> Vec<RequestLogEntry> {
@@ -1362,6 +1443,228 @@ mod tests {
         let gateway = MockGateway::new();
         let err = gateway.clear_log().await.err();
         assert!(matches!(err, Some(GatewayError::NotRunning)));
+    }
+
+    #[tokio::test]
+    async fn schema_validation_rejects_mismatched_bodies_when_enforced() {
+        use albert_core::{CanonicalRequestBody, SchemaNode, SchemaNodeType};
+        let gateway = MockGateway::new();
+        // Hand-roll an endpoint with a request body schema: expects
+        // { name: string (required), amount: integer }.
+        let mut name_schema = SchemaNode::string();
+        name_schema.required = true;
+        let mut amount_schema = SchemaNode::string();
+        amount_schema.node_type = SchemaNodeType::Integer;
+        let mut body_schema = SchemaNode::object();
+        body_schema
+            .properties
+            .insert("name".to_string(), name_schema);
+        body_schema
+            .properties
+            .insert("amount".to_string(), amount_schema);
+        let mut ep = endpoint(HttpMethod::Post, "/orders", json!({"id": "o-1"}));
+        ep.request_body = Some(CanonicalRequestBody {
+            content_type: "application/json".to_string(),
+            required: true,
+            schema: body_schema,
+        });
+        let col = collection("val", vec![ep]);
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    enforce_request_bodies: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        // Missing required field → 400 schema_mismatch pointing at $.name.
+        let resp = client
+            .post(format!("{base}/orders"))
+            .json(&json!({"amount": 10}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 400);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "schema_mismatch");
+        assert_eq!(body["path"], "$.name");
+
+        // Wrong type for amount → 400 pointing at $.amount.
+        let resp = client
+            .post(format!("{base}/orders"))
+            .json(&json!({"name": "Ada", "amount": "ten"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 400);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["path"], "$.amount");
+
+        // Valid body → served normally (200 from the success example).
+        let resp = client
+            .post(format!("{base}/orders"))
+            .json(&json!({"name": "Ada", "amount": 10}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+
+        // Validator should be tagging log entries.
+        let log = gateway.recent_requests(10).await;
+        assert!(log.iter().any(|e| e.source == "schema-mismatch"));
+
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn schema_validation_off_accepts_any_body() {
+        use albert_core::{CanonicalRequestBody, SchemaNode};
+        let gateway = MockGateway::new();
+        let mut ep = endpoint(HttpMethod::Post, "/lax", json!({"ok": true}));
+        ep.request_body = Some(CanonicalRequestBody {
+            content_type: "application/json".to_string(),
+            required: true,
+            schema: SchemaNode::object(),
+        });
+        let col = collection("lax", vec![ep]);
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    // enforce_request_bodies stays false — the gateway
+                    // should accept any shape and serve the success example.
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{base}/lax"))
+            .json(&json!({"totally": ["wrong", "shape"]}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn config_bundle_round_trip_preserves_rules() {
+        // A bundle exported from a running server should apply back to
+        // another (or the same) server and restore every rule that was
+        // set, including per-route rate limits and status overrides.
+        let gateway = MockGateway::new();
+        let col = collection(
+            "rt",
+            vec![endpoint(HttpMethod::Get, "/ping", json!({"ok": true}))],
+        );
+        let mut rate_limits = BTreeMap::new();
+        rate_limits.insert(
+            "GET /ping".to_string(),
+            config::RateLimitRule {
+                limit: 5,
+                window_ms: 1_000,
+            },
+        );
+        let mut status_overrides = BTreeMap::new();
+        status_overrides.insert("GET /ping".to_string(), 418);
+        gateway
+            .start(
+                vec![col.clone()],
+                GatewayConfig {
+                    port: 0,
+                    default_latency_ms: Some(50),
+                    error_rate: 0.2,
+                    rate_limits,
+                    status_overrides,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+
+        let bundle = gateway.export_bundle().await.expect("export");
+        assert_eq!(bundle.bundle_version, "1.0");
+        assert_eq!(bundle.collection_ids, vec![col.id.clone()]);
+        assert_eq!(bundle.config.default_latency_ms, Some(50));
+        assert_eq!(bundle.config.rate_limits.len(), 1);
+
+        // Round-trip through JSON to prove the bundle is actually portable.
+        let serialized = serde_json::to_string(&bundle).unwrap();
+        let parsed: GatewayConfigBundle = serde_json::from_str(&serialized).unwrap();
+
+        // Flip to a different config on the running server so we can
+        // observe import putting the original values back.
+        gateway
+            .reconfigure(ReconfigureOptions {
+                collections: vec![col.clone()],
+                ..Default::default()
+            })
+            .await
+            .expect("reconfigure");
+        let after_reset = gateway.status().await.config;
+        assert_eq!(after_reset.error_rate, 0.0);
+        assert!(after_reset.rate_limits.is_empty());
+
+        gateway
+            .import_bundle(parsed, vec![col])
+            .await
+            .expect("import");
+        let restored = gateway.status().await.config;
+        assert_eq!(restored.default_latency_ms, Some(50));
+        assert!((restored.error_rate - 0.2).abs() < 1e-5);
+        assert_eq!(restored.rate_limits.len(), 1);
+        assert_eq!(
+            restored.status_overrides.get("GET /ping").copied(),
+            Some(418)
+        );
+
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn import_bundle_rejects_incompatible_major_version() {
+        let gateway = MockGateway::new();
+        gateway
+            .start(
+                Vec::new(),
+                GatewayConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let future_bundle = GatewayConfigBundle {
+            bundle_version: "9.9".to_string(),
+            config: GatewayConfig::default(),
+            collection_ids: Vec::new(),
+        };
+        let err = gateway
+            .import_bundle(future_bundle, Vec::new())
+            .await
+            .expect_err("expected version mismatch");
+        match err {
+            GatewayError::InvalidConfig(msg) => assert!(msg.contains("9.9")),
+            other => panic!("unexpected error: {other:?}"),
+        }
+        gateway.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn export_bundle_fails_when_not_running() {
+        let gateway = MockGateway::new();
+        let err = gateway.export_bundle().await.err().unwrap();
+        assert!(matches!(err, GatewayError::NotRunning));
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@
 
 use albert_core::{
     CanonicalApiCollection, CanonicalEndpoint, HttpMethod, MockExample, MockExampleKind,
-    default_mock_examples,
+    SchemaNode, default_mock_examples,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -17,6 +17,10 @@ pub struct MockRoute {
     pub operation_id: Option<String>,
     pub summary: Option<String>,
     pub examples: Vec<MockExample>,
+    /// Request body schema lifted from the canonical endpoint. Used by
+    /// the opt-in validator when `enforce_request_bodies` is set.
+    #[serde(default)]
+    pub request_body_schema: Option<SchemaNode>,
 }
 
 impl MockRoute {
@@ -37,6 +41,7 @@ impl MockRoute {
             operation_id: endpoint.operation_id.clone(),
             summary: endpoint.summary.clone(),
             examples,
+            request_body_schema: endpoint.request_body.as_ref().map(|b| b.schema.clone()),
         }
     }
 
