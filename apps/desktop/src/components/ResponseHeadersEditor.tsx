@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Icon } from "./Icon";
+import { useDraftMap } from "../hooks/useDraftMap";
 import type { GatewayRouteSummary } from "../types";
 
 interface ResponseHeadersEditorProps {
@@ -22,61 +23,89 @@ export function ResponseHeadersEditor({
   onApply
 }: ResponseHeadersEditorProps) {
   type Row = { route: string; name: string; value: string };
-  const initialRows: Row[] = useMemo(() => flatten(value), [value]);
-  const [rows, setRows] = useState<Row[]>(initialRows);
+  const { draft, setDraft, dirty, busy, apply, reset } = useDraftMap(
+    value,
+    onApply
+  );
+  // Rows are derived from the canonical draft map so there's only one
+  // source of truth; every edit mutates the map via `setDraft`.
+  const rows: Row[] = useMemo(() => flatten(draft), [draft]);
   const [selectedRoute, setSelectedRoute] = useState<string>(() =>
     routes.length > 0 ? routeKeyOf(routes[0]) : ""
   );
   const [newName, setNewName] = useState<string>("x-request-id");
   const [newValue, setNewValue] = useState<string>("abc-123");
-  const [busy, setBusy] = useState(false);
-
-  const draft = useMemo(() => unflatten(rows), [rows]);
-  const dirty = useMemo(
-    () => JSON.stringify(draft) !== JSON.stringify(value),
-    [draft, value]
-  );
 
   function addRow() {
     const key = selectedRoute.trim();
     const headerName = newName.trim();
     if (!key || !headerName) return;
-    // Replace if a row for (route, name) already exists — editing the
-    // value is the common case, not adding dupes.
-    setRows((prev) => {
-      const next = prev.filter(
-        (r) =>
-          !(
-            r.route === key &&
-            r.name.toLowerCase() === headerName.toLowerCase()
-          )
+    setDraft((prev) => {
+      const next = { ...prev };
+      const bucket = { ...(next[key] ?? {}) };
+      // Case-insensitive replace so "X-Foo" and "x-foo" don't dupe.
+      const existing = Object.keys(bucket).find(
+        (k) => k.toLowerCase() === headerName.toLowerCase()
       );
-      next.push({ route: key, name: headerName, value: newValue });
+      if (existing) delete bucket[existing];
+      bucket[headerName] = newValue;
+      next[key] = bucket;
       return next;
     });
   }
 
   function removeRow(index: number) {
-    setRows((prev) => prev.filter((_, i) => i !== index));
+    const row = rows[index];
+    if (!row) return;
+    setDraft((prev) => {
+      const next = { ...prev };
+      const bucket = { ...(next[row.route] ?? {}) };
+      delete bucket[row.name];
+      if (Object.keys(bucket).length === 0) {
+        delete next[row.route];
+      } else {
+        next[row.route] = bucket;
+      }
+      return next;
+    });
   }
 
   function updateRow(index: number, patch: Partial<Row>) {
-    setRows((prev) =>
-      prev.map((row, i) => (i === index ? { ...row, ...patch } : row))
-    );
-  }
-
-  async function apply() {
-    setBusy(true);
-    try {
-      await onApply(draft);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function resetToCurrent() {
-    setRows(initialRows);
+    const original = rows[index];
+    if (!original) return;
+    setDraft((prev) => {
+      const next = { ...prev };
+      const bucket = { ...(next[original.route] ?? {}) };
+      delete bucket[original.name];
+      const nextRoute = (patch.route ?? original.route).trim();
+      const nextName = (patch.name ?? original.name).trim();
+      const nextValue = patch.value ?? original.value;
+      if (!nextRoute || !nextName) {
+        // Intermediate edit: keep the (now-empty) original bucket clean
+        // and bail — we'll re-populate once both fields are non-blank.
+        if (Object.keys(bucket).length === 0) {
+          delete next[original.route];
+        } else {
+          next[original.route] = bucket;
+        }
+        return next;
+      }
+      // If the route key changed, scaffold a fresh bucket.
+      if (nextRoute === original.route) {
+        bucket[nextName] = nextValue;
+        next[nextRoute] = bucket;
+      } else {
+        if (Object.keys(bucket).length === 0) {
+          delete next[original.route];
+        } else {
+          next[original.route] = bucket;
+        }
+        const target = { ...(next[nextRoute] ?? {}) };
+        target[nextName] = nextValue;
+        next[nextRoute] = target;
+      }
+      return next;
+    });
   }
 
   return (
@@ -193,7 +222,7 @@ export function ResponseHeadersEditor({
         <button
           type="button"
           className="btn btn--primary btn--sm"
-          onClick={apply}
+          onClick={() => void apply()}
           disabled={!running || busy || !dirty}
         >
           <Icon name="zap" size={12} />
@@ -203,7 +232,7 @@ export function ResponseHeadersEditor({
           <button
             type="button"
             className="btn btn--ghost btn--sm"
-            onClick={resetToCurrent}
+            onClick={reset}
             disabled={busy}
           >
             Reset

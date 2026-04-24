@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use albert_core::MockExampleKind;
 use albert_gateway::{
-    GatewayConfig, GatewayStatus, MetricsSnapshot, RateLimitRule, RequestLogEntry, RequiredHeader,
+    GatewayConfig, GatewayStatus, MetricsSnapshot, RateLimitRule, ReconfigureOptions,
+    RequestLogEntry, RequiredHeader,
 };
 use serde::Deserialize;
 use tauri::State;
@@ -230,9 +231,9 @@ pub async fn update_mock_server(
 
     services
         .gateway
-        .reconfigure(
+        .reconfigure(ReconfigureOptions {
             collections,
-            args.example_overrides.unwrap_or_default(),
+            overrides: args.example_overrides.unwrap_or_default(),
             default_latency_ms,
             latency_overrides,
             latency_jitter_ms,
@@ -242,7 +243,7 @@ pub async fn update_mock_server(
             required_headers,
             rate_limits,
             status_overrides,
-        )
+        })
         .await
         .map_err(|error| error.to_string())
 }

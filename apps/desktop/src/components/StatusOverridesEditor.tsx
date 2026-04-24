@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Icon } from "./Icon";
+import { useDraftMap } from "../hooks/useDraftMap";
 import type { GatewayRouteSummary } from "../types";
 
 interface StatusOverridesEditorProps {
@@ -26,12 +27,14 @@ export function StatusOverridesEditor({
   value,
   onApply
 }: StatusOverridesEditorProps) {
-  const [draft, setDraft] = useState<Record<string, number>>(value);
+  const { draft, setDraft, dirty, busy, apply, reset } = useDraftMap(
+    value,
+    onApply
+  );
   const [selectedRoute, setSelectedRoute] = useState<string>(() =>
     routes.length > 0 ? routeKeyOf(routes[0]) : ""
   );
   const [code, setCode] = useState<string>("201");
-  const [busy, setBusy] = useState(false);
 
   const parsedCode = Number.parseInt(code, 10);
   const codeValid =
@@ -41,11 +44,6 @@ export function StatusOverridesEditor({
     () =>
       Object.entries(draft).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
     [draft]
-  );
-
-  const dirty = useMemo(
-    () => JSON.stringify(draft) !== JSON.stringify(value),
-    [draft, value]
   );
 
   function addRule() {
@@ -62,19 +60,6 @@ export function StatusOverridesEditor({
 
   function updateDraftCode(key: string, nextCode: number) {
     setDraft((prev) => ({ ...prev, [key]: nextCode }));
-  }
-
-  async function apply() {
-    setBusy(true);
-    try {
-      await onApply(draft);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function resetToCurrent() {
-    setDraft(value);
   }
 
   return (
@@ -186,7 +171,7 @@ export function StatusOverridesEditor({
         <button
           type="button"
           className="btn btn--primary btn--sm"
-          onClick={apply}
+          onClick={() => void apply()}
           disabled={!running || busy || !dirty}
         >
           <Icon name="zap" size={12} />
@@ -196,7 +181,7 @@ export function StatusOverridesEditor({
           <button
             type="button"
             className="btn btn--ghost btn--sm"
-            onClick={resetToCurrent}
+            onClick={reset}
             disabled={busy}
           >
             Reset

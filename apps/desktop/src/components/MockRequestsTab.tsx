@@ -7,21 +7,39 @@ const METHODS = ["ALL", "GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 type MethodFilter = (typeof METHODS)[number];
 
 /**
- * Apply the (status-class, method) filter pair to a request log. Exported
- * so unit tests can pin the semantics; the component itself passes the
- * result straight into the render.
+ * Apply the (status-class, method, free-text) filter trio to a request
+ * log. Exported so unit tests can pin the semantics; the component
+ * itself passes the result straight into the render. The free-text
+ * search matches case-insensitively against path / matched_route / the
+ * numeric status / the request_id, so users can paste an id from
+ * their client logs and find the matching row.
  */
 export function filterRequests(
   log: RequestLogEntry[],
   status: StatusFilter,
-  method: MethodFilter
+  method: MethodFilter,
+  search: string = ""
 ): RequestLogEntry[] {
+  const query = search.trim().toLowerCase();
   return log.filter((entry) => {
     if (method !== "ALL" && entry.method.toUpperCase() !== method) return false;
-    if (status === "all") return true;
-    if (status === "2xx") return entry.status >= 200 && entry.status < 300;
-    if (status === "4xx") return entry.status >= 400 && entry.status < 500;
-    if (status === "5xx") return entry.status >= 500;
+    if (status === "2xx" && !(entry.status >= 200 && entry.status < 300))
+      return false;
+    if (status === "4xx" && !(entry.status >= 400 && entry.status < 500))
+      return false;
+    if (status === "5xx" && !(entry.status >= 500)) return false;
+    if (query) {
+      const haystack = [
+        entry.path,
+        entry.matched_route ?? "",
+        String(entry.status),
+        entry.request_id ?? "",
+        entry.query ?? ""
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
     return true;
   });
 }
@@ -158,12 +176,13 @@ export function MockRequestsTab({
   const metrics = useMemo(() => computeMetrics(requests), [requests]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [methodFilter, setMethodFilter] = useState<MethodFilter>("ALL");
+  const [searchText, setSearchText] = useState("");
   const filtered = useMemo(
-    () => filterRequests(requests, statusFilter, methodFilter),
-    [requests, statusFilter, methodFilter]
+    () => filterRequests(requests, statusFilter, methodFilter, searchText),
+    [requests, statusFilter, methodFilter, searchText]
   );
   const filterActive =
-    statusFilter !== "all" || methodFilter !== "ALL";
+    statusFilter !== "all" || methodFilter !== "ALL" || searchText.trim() !== "";
 
   return (
     <>
@@ -327,6 +346,15 @@ export function MockRequestsTab({
               ))}
             </select>
           </label>
+          <input
+            type="search"
+            className="reqlog-filters__search"
+            placeholder="search path / id / status"
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
+            aria-label="Search requests"
+            spellCheck={false}
+          />
           {filterActive ? (
             <button
               type="button"
@@ -334,6 +362,7 @@ export function MockRequestsTab({
               onClick={() => {
                 setStatusFilter("all");
                 setMethodFilter("ALL");
+                setSearchText("");
               }}
             >
               clear

@@ -143,4 +143,52 @@ describe("filterRequests", () => {
     const out = filterRequests(log, "5xx", "GET");
     expect(out).toHaveLength(0);
   });
+
+  test("search matches against path", () => {
+    const out = filterRequests(log, "all", "ALL", "/b");
+    expect(out.map((e) => e.path)).toEqual(["/b"]);
+  });
+
+  test("search matches against status as a string", () => {
+    const out = filterRequests(log, "all", "ALL", "429");
+    expect(out.map((e) => e.status)).toEqual([429]);
+  });
+
+  test("search matches request_id when provided", () => {
+    const out = filterRequests(
+      [
+        entry({ path: "/x", request_id: "trace-abc-123" }),
+        entry({ path: "/y", request_id: "other-xyz" })
+      ],
+      "all",
+      "ALL",
+      "abc-123"
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].path).toBe("/x");
+  });
+
+  test("search is case-insensitive and ignores surrounding whitespace", () => {
+    const out = filterRequests(
+      [entry({ path: "/Users/Me" })],
+      "all",
+      "ALL",
+      "  users  "
+    );
+    expect(out).toHaveLength(1);
+  });
+
+  test("search composes with status + method filters", () => {
+    const out = filterRequests(
+      [
+        entry({ method: "POST", status: 500, path: "/a" }),
+        entry({ method: "POST", status: 500, path: "/b" })
+      ],
+      "5xx",
+      "POST",
+      "/b"
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].path).toBe("/b");
+  });
 });

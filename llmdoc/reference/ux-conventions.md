@@ -90,8 +90,9 @@ counts.
   them to `update_mock_server`.
 - **Requests tab** — a metrics summary (total, 2xx/4xx/5xx counts, avg
   and max latency, busiest route, top-5 route breakdown with p50/p95),
-  a 2xx/4xx/5xx filter chip row + method dropdown, followed by the
-  scrolling log. Each row shows timestamp, method, path, status,
+  a 2xx/4xx/5xx filter chip row + method dropdown + a free-text search
+  box (matches path / matched_route / status / request_id / query),
+  followed by the scrolling log. Each row shows timestamp, method, path, status,
   latency, served-kind or source label, and a small `id:<prefix>`
   pill for the `x-request-id`; clicking that pill copies the full id.
   A "Capture request bodies" toggle arms the backend to store up to

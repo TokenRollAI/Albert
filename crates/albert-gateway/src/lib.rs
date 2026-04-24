@@ -34,6 +34,28 @@ pub use state::{MetricsSnapshot, RequestLogEntry, RouteMetrics};
 
 use state::{AppState, LatencyConfig};
 
+/// Bag-of-fields passed to `MockGateway::reconfigure`. Grouping the
+/// previously-eleven positional parameters into one struct means each
+/// new enforcement knob can be added without touching every call site
+/// (tests, CLI, Tauri update handler), and call sites read like the
+/// field names on `GatewayConfig`. `Default` zeroes every map and
+/// falls back to `error_rate: 0`, `capture_bodies: false`, matching
+/// `GatewayConfig::default` so the struct can be built incrementally.
+#[derive(Debug, Clone, Default)]
+pub struct ReconfigureOptions {
+    pub collections: Vec<CanonicalApiCollection>,
+    pub overrides: BTreeMap<String, MockExampleKind>,
+    pub default_latency_ms: Option<u64>,
+    pub latency_overrides: BTreeMap<String, u64>,
+    pub latency_jitter_ms: BTreeMap<String, u64>,
+    pub error_rate: f32,
+    pub capture_bodies: bool,
+    pub response_headers: BTreeMap<String, BTreeMap<String, String>>,
+    pub required_headers: BTreeMap<String, Vec<RequiredHeader>>,
+    pub rate_limits: BTreeMap<String, RateLimitRule>,
+    pub status_overrides: BTreeMap<String, u16>,
+}
+
 /// A running or idle mock gateway.
 pub struct MockGateway {
     inner: Mutex<Option<RunningGateway>>,
@@ -156,40 +178,45 @@ impl MockGateway {
         overrides: BTreeMap<String, MockExampleKind>,
     ) -> Result<GatewayStatus, GatewayError> {
         let config = self.current_config().await;
-        self.reconfigure(
+        self.reconfigure(ReconfigureOptions {
             collections,
             overrides,
-            config.default_latency_ms,
-            config.latency_overrides,
-            config.latency_jitter_ms,
-            config.error_rate,
-            config.capture_bodies,
-            config.response_headers,
-            config.required_headers,
-            config.rate_limits,
-            config.status_overrides,
-        )
+            default_latency_ms: config.default_latency_ms,
+            latency_overrides: config.latency_overrides,
+            latency_jitter_ms: config.latency_jitter_ms,
+            error_rate: config.error_rate,
+            capture_bodies: config.capture_bodies,
+            response_headers: config.response_headers,
+            required_headers: config.required_headers,
+            rate_limits: config.rate_limits,
+            status_overrides: config.status_overrides,
+        })
         .await
     }
 
     /// Full reconfigure entry point; can change overrides, latency, error
     /// rate, body-capture flag, per-route response headers, per-route
-    /// required-header gates, and per-route rate limits in one atomic swap.
-    #[allow(clippy::too_many_arguments)]
+    /// required-header gates, rate limits, and status overrides in one
+    /// atomic swap. Fields added in future should be appended to
+    /// `ReconfigureOptions` so call sites only name what they want to
+    /// change — no more eleven-argument positional drift.
     pub async fn reconfigure(
         &self,
-        collections: Vec<CanonicalApiCollection>,
-        overrides: BTreeMap<String, MockExampleKind>,
-        default_latency_ms: Option<u64>,
-        latency_overrides: BTreeMap<String, u64>,
-        latency_jitter_ms: BTreeMap<String, u64>,
-        error_rate: f32,
-        capture_bodies: bool,
-        response_headers: BTreeMap<String, BTreeMap<String, String>>,
-        required_headers: BTreeMap<String, Vec<RequiredHeader>>,
-        rate_limits: BTreeMap<String, RateLimitRule>,
-        status_overrides: BTreeMap<String, u16>,
+        opts: ReconfigureOptions,
     ) -> Result<GatewayStatus, GatewayError> {
+        let ReconfigureOptions {
+            collections,
+            overrides,
+            default_latency_ms,
+            latency_overrides,
+            latency_jitter_ms,
+            error_rate,
+            capture_bodies,
+            response_headers,
+            required_headers,
+            rate_limits,
+            status_overrides,
+        } = opts;
         let mut guard = self.inner.lock().await;
         let Some(running) = guard.as_mut() else {
             return Err(GatewayError::NotRunning);
@@ -1173,19 +1200,11 @@ mod tests {
             },
         );
         gateway
-            .reconfigure(
-                vec![col.clone()],
-                BTreeMap::new(),
-                None,
-                BTreeMap::new(),
-                BTreeMap::new(),
-                0.0,
-                false,
-                BTreeMap::new(),
-                BTreeMap::new(),
-                same_rules,
-                BTreeMap::new(),
-            )
+            .reconfigure(ReconfigureOptions {
+                collections: vec![col.clone()],
+                rate_limits: same_rules,
+                ..Default::default()
+            })
             .await
             .expect("reconfigure");
 
@@ -1195,19 +1214,10 @@ mod tests {
 
         // Remove the rule entirely; subsequent requests succeed again.
         gateway
-            .reconfigure(
-                vec![col],
-                BTreeMap::new(),
-                None,
-                BTreeMap::new(),
-                BTreeMap::new(),
-                0.0,
-                false,
-                BTreeMap::new(),
-                BTreeMap::new(),
-                BTreeMap::new(),
-                BTreeMap::new(),
-            )
+            .reconfigure(ReconfigureOptions {
+                collections: vec![col],
+                ..Default::default()
+            })
             .await
             .expect("reconfigure");
         let resp = client.get(format!("{base}/ping")).send().await.unwrap();
@@ -1267,19 +1277,11 @@ mod tests {
             }],
         );
         gateway
-            .reconfigure(
-                vec![col],
-                BTreeMap::new(),
-                None,
-                BTreeMap::new(),
-                BTreeMap::new(),
-                0.0,
-                false,
-                BTreeMap::new(),
-                api_key_rules,
-                BTreeMap::new(),
-                BTreeMap::new(),
-            )
+            .reconfigure(ReconfigureOptions {
+                collections: vec![col],
+                required_headers: api_key_rules,
+                ..Default::default()
+            })
             .await
             .expect("reconfigure");
 

@@ -63,6 +63,10 @@
   `METHOD path` fallback when `matched_route` is null.
 - `hooks/__tests__/useAppDrawers.test.tsx` — covers the drawer-state
   hook: independent slots, open/close/toggle/set semantics.
+- `hooks/__tests__/useDraftMap.test.tsx` — shared per-route-editor
+  state machine: initial value, dirty flip, reset restores clean
+  state, apply flips busy around the promise, value-based dirty
+  comparison.
 - `lib/__tests__/fuzzy.test.ts` — fuzzy matcher used by the command
   palette: in-order character matching, word-boundary + contiguity
   bonuses, stable sort on ties.

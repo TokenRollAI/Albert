@@ -1600,6 +1600,21 @@ body[data-theme="light"] .modal__overlay {
   font-size: 11px;
   padding: 3px 8px;
 }
+.reqlog-filters__search {
+  flex: 1 1 180px;
+  min-width: 120px;
+  max-width: 260px;
+  font-size: 11px;
+  padding: 3px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+}
+.reqlog-filters__search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .kind-chip {
   font-size: 10px;
   padding: 1px 7px;

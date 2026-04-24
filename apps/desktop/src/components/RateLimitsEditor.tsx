@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Icon } from "./Icon";
+import { useDraftMap } from "../hooks/useDraftMap";
 import type { GatewayRouteSummary, RateLimitRule } from "../types";
 
 interface RateLimitsEditorProps {
@@ -11,8 +12,9 @@ interface RateLimitsEditorProps {
 
 /**
  * Compact per-route rate-limit editor. Lets the user add, edit, and delete
- * sliding-window rules keyed by `METHOD /path`. Collects changes as a draft
- * so `Apply` sends one atomic update through the gateway hot-reload surface.
+ * sliding-window rules keyed by `METHOD /path`. The draft/apply/dirty
+ * plumbing lives in `useDraftMap`; this component owns only the add-row
+ * form state and the list render.
  */
 export function RateLimitsEditor({
   running,
@@ -20,23 +22,20 @@ export function RateLimitsEditor({
   value,
   onApply
 }: RateLimitsEditorProps) {
-  const [draft, setDraft] = useState<Record<string, RateLimitRule>>(value);
+  const { draft, setDraft, dirty, busy, apply, reset } = useDraftMap(
+    value,
+    onApply
+  );
   const [selectedRoute, setSelectedRoute] = useState<string>(() =>
     routes.length > 0 ? routeKeyOf(routes[0]) : ""
   );
   const [limit, setLimit] = useState<string>("10");
   const [windowMs, setWindowMs] = useState<string>("1000");
-  const [busy, setBusy] = useState(false);
 
   const currentEntries = useMemo(
     () =>
       Object.entries(draft).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
     [draft]
-  );
-
-  const dirty = useMemo(
-    () => JSON.stringify(draft) !== JSON.stringify(value),
-    [draft, value]
   );
 
   function addRule() {
@@ -62,19 +61,6 @@ export function RateLimitsEditor({
       ...prev,
       [key]: { ...prev[key], ...patch }
     }));
-  }
-
-  async function apply() {
-    setBusy(true);
-    try {
-      await onApply(draft);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function resetToCurrent() {
-    setDraft(value);
   }
 
   return (
@@ -204,7 +190,7 @@ export function RateLimitsEditor({
         <button
           type="button"
           className="btn btn--primary btn--sm"
-          onClick={apply}
+          onClick={() => void apply()}
           disabled={!running || busy || !dirty}
         >
           <Icon name="zap" size={12} />
@@ -214,7 +200,7 @@ export function RateLimitsEditor({
           <button
             type="button"
             className="btn btn--ghost btn--sm"
-            onClick={resetToCurrent}
+            onClick={reset}
             disabled={busy}
           >
             Reset changes
