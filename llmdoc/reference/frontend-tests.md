@@ -73,9 +73,11 @@
   `prettifyRequestBody` (compact JSON → 2-space indented, non-JSON and
   capture-failed sentinels pass through untouched, truncation sentinel
   `…[truncated]` stripped before parsing then re-appended, malformed
-  JSON falls back cleanly), and `toCsvRows` (stable header row, numeric
+  JSON falls back cleanly), `toCsvRows` (stable header row, numeric
   + string stringification, RFC 4180 quoting for commas / quotes /
-  newlines, null/undefined → empty cell).
+  newlines, null/undefined → empty cell), and `computeSparkline`
+  (empty log → empty array, minute-bucketing with zero-back-fill,
+  per-bucket 5xx count, window cap).
 - `hooks/__tests__/useAppDrawers.test.tsx` — covers the drawer-state
   hook: independent slots, open/close/toggle/set semantics.
 - `hooks/__tests__/useDraftMap.test.tsx` — shared per-route-editor

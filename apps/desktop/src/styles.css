@@ -2562,6 +2562,30 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   color: var(--text-faint);
 }
 
+.sparkline {
+  margin-top: 10px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 42px;
+  padding: 4px 0;
+  border-top: 1px dashed var(--border);
+}
+.sparkline__bar {
+  flex: 1 1 0;
+  background: var(--accent-soft, rgba(99, 132, 255, 0.35));
+  border-radius: 2px 2px 0 0;
+  position: relative;
+  min-height: 2px;
+  max-width: 16px;
+}
+.sparkline__bar-err {
+  position: absolute;
+  inset: auto 0 0 0;
+  background: var(--danger);
+  border-radius: 0 0 2px 2px;
+}
+
 .route-breakdown {
   width: 100%;
   margin-top: 10px;

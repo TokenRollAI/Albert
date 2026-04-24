@@ -269,7 +269,7 @@ always serves the error example.
   pretty-prints this payload.
 - `GET /__albert/metrics` returns a `MetricsSnapshot`:
   `{total_requests, by_method, by_status_class, average_latency_ms,
-    max_latency_ms, started_at_epoch_ms, uptime_ms, by_route}`.
+    max_latency_ms, started_at_epoch_ms, uptime_ms, by_route, timeseries}`.
   Incremented on every mock_handler call (not on hits to `/__albert/*`
   itself). The `by_route` map is keyed on `METHOD /path` and contains
   `{count, total_latency_ms, average_latency_ms, max_latency_ms,
@@ -278,6 +278,13 @@ always serves the error example.
   can't make the snapshot grow unbounded. Requests that don't match a
   registered route (404 / unsupported method) don't appear in
   `by_route` — it stays a faithful picture of declared-route traffic.
+  `timeseries` is a per-minute time series (`Vec<MinuteBucket>` of
+  `{minute_epoch_ms, count, total_latency_ms, status_5xx}`) capped at
+  the `TIMESERIES_BUCKETS` constant (60 minutes). Entries are snapped
+  to the owning minute boundary so out-of-order records land in the
+  right slot; oldest buckets age out once the cap is reached. Covered
+  by `timeseries_buckets_merge_by_minute` and
+  `timeseries_buckets_are_bounded` in `state.rs`.
   Also exposed from the desktop host via the `mock_server_metrics`
   Tauri command.
 - `404` responses are JSON: `{error: "mock_not_found", message}`.

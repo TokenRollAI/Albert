@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   computeMetrics,
+  computeSparkline,
   filterRequests,
   prettifyRequestBody,
   toCsvRows
@@ -293,5 +294,53 @@ describe("toCsvRows", () => {
     expect(cells[8]).toBe("");
     expect(cells[9]).toBe("");
     expect(cells[10]).toBe("");
+  });
+});
+
+describe("computeSparkline", () => {
+  test("returns empty array for empty log", () => {
+    expect(computeSparkline([])).toEqual([]);
+  });
+
+  test("buckets by minute and back-fills empty minutes", () => {
+    const sparks = computeSparkline(
+      [
+        entry({ at_epoch_ms: 5_000 }), // minute 0
+        entry({ at_epoch_ms: 7_000 }), // also minute 0
+        entry({ at_epoch_ms: 125_000 }) // minute 2
+      ],
+      3
+    );
+    // Window is 3 minutes ending at the latest observed minute (2).
+    // Expect: [minute 0 (count=2), minute 1 (count=0), minute 2 (count=1)]
+    expect(sparks.map((b) => b.count)).toEqual([2, 0, 1]);
+    expect(sparks.map((b) => b.minuteEpochMs)).toEqual([
+      0,
+      60_000,
+      120_000
+    ]);
+  });
+
+  test("separately counts 5xx status per bucket", () => {
+    const sparks = computeSparkline(
+      [
+        entry({ at_epoch_ms: 0, status: 200 }),
+        entry({ at_epoch_ms: 10_000, status: 503 }),
+        entry({ at_epoch_ms: 20_000, status: 500 })
+      ],
+      1
+    );
+    expect(sparks).toHaveLength(1);
+    expect(sparks[0].count).toBe(3);
+    expect(sparks[0].status5xx).toBe(2);
+  });
+
+  test("window cap limits the number of buckets returned", () => {
+    const log = [];
+    for (let i = 0; i < 30; i++) {
+      log.push(entry({ at_epoch_ms: i * 60_000 }));
+    }
+    expect(computeSparkline(log, 10)).toHaveLength(10);
+    expect(computeSparkline(log, 5)).toHaveLength(5);
   });
 });

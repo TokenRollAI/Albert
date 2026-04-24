@@ -32,7 +32,7 @@ pub use config::{
 pub use error::GatewayError;
 pub use route::{MatchedRoute, MockRoute, build_routes, route_key};
 pub use routing::{CompiledRoute, RouteTable};
-pub use state::{MetricsSnapshot, RequestLogEntry, RouteMetrics};
+pub use state::{MetricsSnapshot, MinuteBucket, RequestLogEntry, RouteMetrics};
 
 use state::{AppState, LatencyConfig};
 

@@ -206,6 +206,50 @@ function formatTime(ms: number): string {
   return d.toLocaleTimeString(undefined, { hour12: false });
 }
 
+export interface SparkBucket {
+  minuteEpochMs: number;
+  count: number;
+  status5xx: number;
+}
+
+/**
+ * Bucket the request log by wall-clock minute for a sparkline. The
+ * newest minute comes last so the chart naturally reads left-to-right.
+ * Capped at 15 minutes to fit comfortably in the Requests tab without
+ * making tiny bars. Empty minutes between observed activity are
+ * back-filled with zero buckets so the chart spacing reflects elapsed
+ * time, not just "last N hit minutes".
+ */
+export function computeSparkline(
+  log: RequestLogEntry[],
+  window = 15
+): SparkBucket[] {
+  if (log.length === 0) return [];
+  const minuteOf = (ms: number): number => Math.floor(ms / 60_000) * 60_000;
+  const raw = new Map<number, { count: number; status5xx: number }>();
+  let latestMinute = -Infinity;
+  for (const entry of log) {
+    const minute = minuteOf(entry.at_epoch_ms);
+    if (minute > latestMinute) latestMinute = minute;
+    const existing = raw.get(minute) ?? { count: 0, status5xx: 0 };
+    existing.count += 1;
+    if (entry.status >= 500 && entry.status < 600) existing.status5xx += 1;
+    raw.set(minute, existing);
+  }
+  if (!Number.isFinite(latestMinute)) return [];
+  const out: SparkBucket[] = [];
+  for (let offset = window - 1; offset >= 0; offset--) {
+    const minute = latestMinute - offset * 60_000;
+    const hit = raw.get(minute);
+    out.push({
+      minuteEpochMs: minute,
+      count: hit?.count ?? 0,
+      status5xx: hit?.status5xx ?? 0
+    });
+  }
+  return out;
+}
+
 /**
  * Return a prettified view of a captured request body if it parses as
  * JSON, otherwise the raw string unchanged. Keeps the "<capture failed:
@@ -227,6 +271,54 @@ export function prettifyRequestBody(raw: string): string {
   } catch {
     return raw;
   }
+}
+
+/**
+ * Tiny per-minute bar chart over the request log. Each bar's height is
+ * proportional to the peak count in the visible window; a 5xx share is
+ * overlaid in an error-tinted segment at the bar's base. No axes, no
+ * legend — this is a glanceable "is traffic arriving" indicator, not a
+ * full dashboard.
+ */
+function Sparkline({ buckets }: { buckets: SparkBucket[] }) {
+  const peak = Math.max(1, ...buckets.map((b) => b.count));
+  return (
+    <div
+      className="sparkline"
+      role="img"
+      aria-label={`Request rate over the last ${buckets.length} minutes; peak ${peak}/min`}
+    >
+      {buckets.map((bucket, idx) => {
+        const height = Math.round((bucket.count / peak) * 100);
+        const errHeight =
+          bucket.count === 0
+            ? 0
+            : Math.round((bucket.status5xx / bucket.count) * height);
+        const minute = new Date(bucket.minuteEpochMs).toLocaleTimeString(
+          undefined,
+          { hour12: false, minute: "2-digit", hour: "2-digit" }
+        );
+        const title = `${minute} — ${bucket.count} req${
+          bucket.count === 1 ? "" : "s"
+        }${bucket.status5xx ? ` (${bucket.status5xx} 5xx)` : ""}`;
+        return (
+          <span
+            key={`${bucket.minuteEpochMs}-${idx}`}
+            className="sparkline__bar"
+            style={{ height: `${Math.max(height, 2)}%` }}
+            title={title}
+          >
+            {errHeight > 0 ? (
+              <span
+                className="sparkline__bar-err"
+                style={{ height: `${errHeight}%` }}
+              />
+            ) : null}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 interface MockRequestsTabProps {
@@ -254,6 +346,7 @@ export function MockRequestsTab({
   // Metrics always reflect the full log so the user keeps a global picture
   // even when the list itself is filtered.
   const metrics = useMemo(() => computeMetrics(requests), [requests]);
+  const sparkline = useMemo(() => computeSparkline(requests, 15), [requests]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [methodFilter, setMethodFilter] = useState<MethodFilter>("ALL");
   const [searchText, setSearchText] = useState("");
@@ -299,6 +392,9 @@ export function MockRequestsTab({
             <span className="metric__value">{metrics.maxLatencyMs}</span>
           </div>
         </div>
+        {sparkline.length > 0 ? (
+          <Sparkline buckets={sparkline} />
+        ) : null}
         {metrics.busiestRoute ? (
           <div className="metrics-row">
             <span className="metrics-row__label">Busiest:</span>

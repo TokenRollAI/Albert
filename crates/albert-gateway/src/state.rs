@@ -103,7 +103,36 @@ pub struct MetricsSnapshot {
     /// that did not match a registered route (404 / unsupported method).
     #[serde(default)]
     pub by_route: BTreeMap<String, RouteMetrics>,
+    /// Per-minute time series covering up to `TIMESERIES_BUCKETS` minutes
+    /// of traffic. Buckets are emitted oldest → newest; empty minutes
+    /// between buckets are elided (not back-filled with zeros) so the
+    /// payload stays compact. The frontend can render a sparkline over
+    /// `minute_epoch_ms` to see request rate + latency trends without
+    /// having to reconstruct them from the raw log.
+    #[serde(default)]
+    pub timeseries: Vec<MinuteBucket>,
 }
+
+/// One minute of aggregated traffic. Mirrors the fields the UI needs
+/// for a sparkline (count + average latency) without the raw log rows.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct MinuteBucket {
+    /// UNIX milliseconds at the minute boundary (i.e. always divisible by 60_000).
+    pub minute_epoch_ms: u64,
+    pub count: u64,
+    pub total_latency_ms: u64,
+    pub status_5xx: u64,
+}
+
+impl MinuteBucket {
+    pub fn average_latency_ms(&self) -> u64 {
+        self.total_latency_ms.checked_div(self.count).unwrap_or(0)
+    }
+}
+
+/// Retain at most this many minute buckets. 60 ≈ the last hour, which
+/// is plenty for a short-lived dev mock and bounds memory at ~2KB.
+pub(crate) const TIMESERIES_BUCKETS: usize = 60;
 
 /// Per-route rollup returned from `/__albert/metrics`. Latencies are
 /// approximate percentiles over a bounded reservoir (200 samples) so the
@@ -438,6 +467,41 @@ impl AppState {
                 let route_metrics = metrics.by_route.entry(key.clone()).or_default();
                 route_metrics.record(entry.latency_ms);
             }
+            // Per-minute time-series bucket for the sparkline. We snap the
+            // request's timestamp to the owning minute boundary so
+            // out-of-order entries from retries or clock skew all land in
+            // the right slot. Buckets are retained in epoch order with a
+            // hard cap so the Vec can't grow unbounded.
+            let minute = (entry.at_epoch_ms as u64) / 60_000 * 60_000;
+            let is_5xx = (500..=599).contains(&entry.status);
+            match metrics
+                .timeseries
+                .binary_search_by_key(&minute, |b| b.minute_epoch_ms)
+            {
+                Ok(idx) => {
+                    let bucket = &mut metrics.timeseries[idx];
+                    bucket.count = bucket.count.saturating_add(1);
+                    bucket.total_latency_ms =
+                        bucket.total_latency_ms.saturating_add(entry.latency_ms);
+                    if is_5xx {
+                        bucket.status_5xx = bucket.status_5xx.saturating_add(1);
+                    }
+                }
+                Err(idx) => {
+                    metrics.timeseries.insert(
+                        idx,
+                        MinuteBucket {
+                            minute_epoch_ms: minute,
+                            count: 1,
+                            total_latency_ms: entry.latency_ms,
+                            status_5xx: if is_5xx { 1 } else { 0 },
+                        },
+                    );
+                    if metrics.timeseries.len() > TIMESERIES_BUCKETS {
+                        metrics.timeseries.remove(0);
+                    }
+                }
+            }
         }
         let mut log = self.request_log.lock().expect("log poisoned");
         if log.len() >= DEFAULT_REQUEST_LOG_CAPACITY {
@@ -508,5 +572,85 @@ mod tests {
             smallest >= ROUTE_LATENCY_RESERVOIR as u64,
             "oldest samples not evicted: min={smallest}"
         );
+    }
+
+    fn log_entry(at_ms: i64, status: u16, latency: u64) -> RequestLogEntry {
+        RequestLogEntry {
+            at_epoch_ms: at_ms,
+            method: "GET".to_string(),
+            path: "/x".to_string(),
+            query: None,
+            matched_route: None,
+            collection_name: None,
+            status,
+            kind: None,
+            source: "default",
+            latency_ms: latency,
+            request_id: None,
+            request_body: None,
+        }
+    }
+
+    #[test]
+    fn timeseries_buckets_merge_by_minute() {
+        let state = AppState::new(
+            Arc::new(RouteTable::from_routes(Vec::new())),
+            Arc::new(BTreeMap::new()),
+            LatencyConfig::default(),
+            0.0,
+            false,
+            false,
+            Arc::new(BTreeMap::new()),
+            Arc::new(BTreeMap::new()),
+            Arc::new(BTreeMap::new()),
+            BTreeMap::new(),
+            Arc::new(Vec::new()),
+            0,
+        );
+        // Two entries in the same minute (60_000 ms boundary), one in the next.
+        state.record(log_entry(59_999, 200, 10));
+        state.record(log_entry(15_000, 200, 30)); // also minute 0
+        state.record(log_entry(120_500, 500, 50)); // minute 2
+
+        let snap = state.snapshot_metrics();
+        assert_eq!(snap.timeseries.len(), 2);
+        let first = &snap.timeseries[0];
+        assert_eq!(first.minute_epoch_ms, 0);
+        assert_eq!(first.count, 2);
+        assert_eq!(first.total_latency_ms, 40);
+        assert_eq!(first.status_5xx, 0);
+        let second = &snap.timeseries[1];
+        assert_eq!(second.minute_epoch_ms, 120_000);
+        assert_eq!(second.count, 1);
+        assert_eq!(second.status_5xx, 1);
+        assert_eq!(second.average_latency_ms(), 50);
+    }
+
+    #[test]
+    fn timeseries_buckets_are_bounded() {
+        let state = AppState::new(
+            Arc::new(RouteTable::from_routes(Vec::new())),
+            Arc::new(BTreeMap::new()),
+            LatencyConfig::default(),
+            0.0,
+            false,
+            false,
+            Arc::new(BTreeMap::new()),
+            Arc::new(BTreeMap::new()),
+            Arc::new(BTreeMap::new()),
+            BTreeMap::new(),
+            Arc::new(Vec::new()),
+            0,
+        );
+        // Emit one request per minute for 2x the cap. The oldest buckets
+        // should age out so the snapshot never exceeds the hard cap.
+        for i in 0..(TIMESERIES_BUCKETS as i64 * 2) {
+            state.record(log_entry(i * 60_000, 200, 1));
+        }
+        let snap = state.snapshot_metrics();
+        assert_eq!(snap.timeseries.len(), TIMESERIES_BUCKETS);
+        // Everything retained should come from the second half of the stream.
+        let oldest_kept = snap.timeseries.first().unwrap().minute_epoch_ms;
+        assert!(oldest_kept >= (TIMESERIES_BUCKETS as u64) * 60_000);
     }
 }

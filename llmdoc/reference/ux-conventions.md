@@ -103,7 +103,9 @@ counts.
   the served example kind. Changes collect as a draft; `Apply (N)` sends
   them to `update_mock_server`.
 - **Requests tab** — a metrics summary (total, 2xx/4xx/5xx counts, avg
-  and max latency, busiest route, top-5 route breakdown with p50/p95),
+  and max latency, a 15-minute request-rate sparkline with 5xx shares
+  tinted in error color, busiest route, top-5 route breakdown with
+  p50/p95),
   a 2xx/4xx/5xx filter chip row + method dropdown + a free-text search
   box (matches path / matched_route / status / request_id / query),
   followed by the scrolling log. Each row shows timestamp, method, path, status,
