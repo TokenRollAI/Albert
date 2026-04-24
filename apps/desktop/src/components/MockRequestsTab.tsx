@@ -7,6 +7,63 @@ const METHODS = ["ALL", "GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 type MethodFilter = (typeof METHODS)[number];
 
 /**
+ * Serialize a request log into an Excel-compatible CSV string. Columns
+ * are in stable order so downstream spreadsheets can rely on them; the
+ * first row is a header. Non-string columns (numbers, nulls, empty)
+ * are rendered as expected, and strings containing commas / quotes /
+ * newlines are wrapped in double quotes with embedded quotes doubled
+ * per RFC 4180.
+ */
+export function toCsvRows(log: RequestLogEntry[]): string {
+  const headers = [
+    "timestamp_ms",
+    "method",
+    "path",
+    "matched_route",
+    "status",
+    "kind",
+    "source",
+    "latency_ms",
+    "collection_name",
+    "request_id",
+    "query"
+  ];
+  const rows = [headers.join(",")];
+  for (const entry of log) {
+    rows.push(
+      [
+        entry.at_epoch_ms,
+        entry.method,
+        entry.path,
+        entry.matched_route ?? "",
+        entry.status,
+        entry.kind ?? "",
+        entry.source ?? "",
+        entry.latency_ms,
+        entry.collection_name ?? "",
+        entry.request_id ?? "",
+        entry.query ?? ""
+      ]
+        .map(csvCell)
+        .join(",")
+    );
+  }
+  return rows.join("\n");
+}
+
+function csvCell(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  const raw = String(value);
+  const needsQuoting =
+    raw.includes(",") ||
+    raw.includes("\"") ||
+    raw.includes("\n") ||
+    raw.includes("\r");
+  if (!needsQuoting) return raw;
+  return `"${raw.replace(/"/g, '""')}"`;
+}
+
+/**
  * Apply the (status-class, method, free-text) filter trio to a request
  * log. Exported so unit tests can pin the semantics; the component
  * itself passes the result straight into the render. The free-text
@@ -312,6 +369,25 @@ export function MockRequestsTab({
             }
           >
             Export JSON
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() =>
+              downloadText(
+                `albert-request-log-${timestampSlug()}.csv`,
+                "text/csv;charset=utf-8",
+                toCsvRows(requests)
+              )
+            }
+            disabled={requests.length === 0}
+            title={
+              requests.length === 0
+                ? "No requests to export"
+                : "Download the current log as CSV (spreadsheet-ready)"
+            }
+          >
+            Export CSV
           </button>
           {onClearLog ? (
             <button

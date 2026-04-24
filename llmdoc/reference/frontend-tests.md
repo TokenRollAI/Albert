@@ -69,11 +69,13 @@
   `METHOD path` fallback when `matched_route` is null, the per-route
   breakdown (hit count + p50/p95 capped at 5 with lexicographic
   tie-breaking), `filterRequests` (status + method + free-text search
-  including `request_id` with case-insensitive trimmed matching), and
+  including `request_id` with case-insensitive trimmed matching),
   `prettifyRequestBody` (compact JSON → 2-space indented, non-JSON and
   capture-failed sentinels pass through untouched, truncation sentinel
   `…[truncated]` stripped before parsing then re-appended, malformed
-  JSON falls back cleanly).
+  JSON falls back cleanly), and `toCsvRows` (stable header row, numeric
+  + string stringification, RFC 4180 quoting for commas / quotes /
+  newlines, null/undefined → empty cell).
 - `hooks/__tests__/useAppDrawers.test.tsx` — covers the drawer-state
   hook: independent slots, open/close/toggle/set semantics.
 - `hooks/__tests__/useDraftMap.test.tsx` — shared per-route-editor

@@ -2,7 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   computeMetrics,
   filterRequests,
-  prettifyRequestBody
+  prettifyRequestBody,
+  toCsvRows
 } from "../MockRequestsTab";
 import type { RequestLogEntry } from "../../types";
 
@@ -225,5 +226,72 @@ describe("prettifyRequestBody", () => {
   test("malformed JSON that starts with { still falls back cleanly", () => {
     const raw = '{"bad: true';
     expect(prettifyRequestBody(raw)).toBe(raw);
+  });
+});
+
+describe("toCsvRows", () => {
+  test("empty log still emits the header row", () => {
+    const csv = toCsvRows([]);
+    expect(csv).toBe(
+      "timestamp_ms,method,path,matched_route,status,kind,source,latency_ms,collection_name,request_id,query"
+    );
+  });
+
+  test("numeric + string columns are stringified with a stable order", () => {
+    const csv = toCsvRows([
+      entry({
+        at_epoch_ms: 1700000000,
+        method: "GET",
+        path: "/users",
+        matched_route: "GET /users",
+        status: 200,
+        kind: "success",
+        source: "default",
+        latency_ms: 42,
+        collection_name: "api",
+        request_id: "abc-123",
+        query: "q=1"
+      })
+    ]);
+    const [_, row] = csv.split("\n");
+    expect(row).toBe(
+      "1700000000,GET,/users,GET /users,200,success,default,42,api,abc-123,q=1"
+    );
+  });
+
+  test("RFC 4180: fields with commas / quotes / newlines are quoted", () => {
+    const csv = toCsvRows([
+      entry({
+        path: "/users/1",
+        query: "name=Doe, John",
+        request_id: 'he said "hi"',
+        matched_route: "line1\nline2"
+      })
+    ]);
+    // Don't split on \n here — the embedded newline is intentional. Check
+    // the raw string for each quoted token instead.
+    expect(csv).toContain('"name=Doe, John"');
+    expect(csv).toContain('"he said ""hi"""');
+    expect(csv).toContain('"line1\nline2"');
+  });
+
+  test("null / undefined optional fields render as empty strings", () => {
+    const csv = toCsvRows([
+      entry({
+        matched_route: null,
+        kind: null,
+        collection_name: null,
+        request_id: undefined,
+        query: null
+      })
+    ]);
+    // fields 4 (matched_route), 6 (kind), 9 (collection_name), 10 (request_id), 11 (query).
+    const [_, row] = csv.split("\n");
+    const cells = row.split(",");
+    expect(cells[3]).toBe("");
+    expect(cells[5]).toBe("");
+    expect(cells[8]).toBe("");
+    expect(cells[9]).toBe("");
+    expect(cells[10]).toBe("");
   });
 });

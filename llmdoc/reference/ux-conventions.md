@@ -112,7 +112,9 @@ counts.
   A "Capture request bodies" toggle arms the backend to store up to
   4KB per request; when captured, rows expose a `<details>` body
   preview. **Export JSON** streams the current log as a timestamped
-  download; **Clear** wipes both the log and the cumulative metrics
+  download; **Export CSV** does the same with RFC 4180-quoted
+  cells for pasting into Excel / Google Sheets. **Clear** wipes both
+  the log and the cumulative metrics
   (via `mock_server_clear_log`) so users can iterate on a scenario
   without restarting the server. Rows whose `matched_route` points at
   a known local endpoint are clickable — selecting one opens the
