@@ -9,6 +9,7 @@
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "test": "vitest run",
     "test:watch": "vitest",
+    "tauri:ci": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.conf.json",
     "tauri:build": "tauri build --config src-tauri/tauri.conf.json"
   },
@@ -29,4 +30,3 @@
     "vitest": "2.1.9"
   }
 }
-

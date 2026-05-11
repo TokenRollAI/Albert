@@ -1,0 +1,155 @@
+name: Release Build
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: "Upload built bundles to a GitHub Release"
+        required: false
+        default: false
+        type: boolean
+      tag_name:
+        description: "Release tag to upload to when upload_to_release is true"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-build-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag_name || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.platform }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS arm64
+            artifact: macos-arm64
+            platform: macos-latest
+            args: "--target aarch64-apple-darwin --bundles app"
+          - label: macOS x64
+            artifact: macos-x64
+            platform: macos-latest
+            args: "--target x86_64-apple-darwin --bundles app"
+          - label: Linux x64
+            artifact: linux-x64
+            platform: ubuntu-22.04
+            args: "--bundles deb"
+          - label: Windows x64
+            artifact: windows-x64
+            platform: windows-latest
+            args: "--bundles nsis"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        if: matrix.platform != 'macos-latest'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust targets
+        if: matrix.platform == 'macos-latest'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            librsvg2-dev \
+            patchelf \
+            wget
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Tauri bundles
+        uses: tauri-apps/tauri-action@v0.6.2
+        with:
+          projectPath: apps/desktop
+          tauriScript: npm run tauri:ci
+          args: ${{ matrix.args }}
+
+      - name: Stage bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          mkdir -p dist-artifacts
+          shopt -s globstar nullglob
+
+          if [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
+            apps=(target/**/release/bundle/macos/Albert.app)
+            if [[ "${#apps[@]}" -eq 0 ]]; then
+              echo "No macOS .app bundle found" >&2
+              exit 1
+            fi
+            ditto -c -k --sequesterRsrc --keepParent "${apps[0]}" \
+              "dist-artifacts/Albert-${version}-${{ matrix.artifact }}.zip"
+          else
+            files=(
+              target/**/release/bundle/**/*.deb
+              target/**/release/bundle/**/*.AppImage
+              target/**/release/bundle/**/*.exe
+              target/**/release/bundle/**/*.msi
+            )
+            if [[ "${#files[@]}" -eq 0 ]]; then
+              echo "No installer bundle found" >&2
+              exit 1
+            fi
+
+            for file in "${files[@]}"; do
+              cp "$file" "dist-artifacts/Albert-${version}-${{ matrix.artifact }}-$(basename "$file")"
+            done
+          fi
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albert-${{ matrix.artifact }}
+          path: dist-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload release assets
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag_name="${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag_name }}"
+          if [[ -z "$tag_name" ]]; then
+            echo "tag_name is required when upload_to_release is true" >&2
+            exit 1
+          fi
+          gh release upload "$tag_name" dist-artifacts/* --clobber
