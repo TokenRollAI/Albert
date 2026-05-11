@@ -6,9 +6,9 @@ use albert_core::{
     SchemaNode, SchemaNodeType, synthesize_examples,
 };
 use openapiv3::{
-    APIKeyLocation, Components, MediaType, ObjectType, OpenAPI, Operation, Parameter,
-    ParameterSchemaOrContent, PathItem, ReferenceOr, RequestBody, Response, Schema, SchemaKind,
-    SecurityRequirement, SecurityScheme, StatusCode, Type,
+    APIKeyLocation, AdditionalProperties, Components, MediaType, ObjectType, OpenAPI, Operation,
+    Parameter, ParameterSchemaOrContent, PathItem, ReferenceOr, RequestBody, Response, Schema,
+    SchemaKind, SecurityRequirement, SecurityScheme, StatusCode, Type, VariantOrUnknownOrEmpty,
 };
 use serde_json::Value;
 
@@ -30,21 +30,27 @@ impl ApiParser for OpenApiParser {
         }
 
         let spec = parse_document(&source.body)?;
+        let raw_spec = parse_raw_document(&source.body)?;
         let components = spec.components.as_ref();
         let collection_name = source.name.unwrap_or_else(|| spec.info.title.clone());
+        let context = OpenApiParseContext {
+            components,
+            default_security: spec.security.as_deref(),
+            raw_spec: &raw_spec,
+        };
 
         let mut endpoints = Vec::new();
-        let default_security = spec.security.as_ref();
         for (path, item_ref) in spec.paths.iter() {
             let Some(path_item) = item_ref.as_item() else {
                 continue;
             };
+            let raw_path_item = raw_spec.get("paths").and_then(|paths| paths.get(path));
 
             endpoints.extend(path_item_to_endpoints(
                 path,
                 path_item,
-                components,
-                default_security,
+                raw_path_item,
+                &context,
             )?);
         }
 
@@ -62,24 +68,211 @@ fn parse_document(body: &str) -> Result<OpenAPI, ParseError> {
     serde_json::from_str::<OpenAPI>(body)
         .or_else(|_| serde_yaml::from_str::<OpenAPI>(body))
         .map_err(|error| ParseError::ParseFailed(format!("failed to deserialize OpenAPI: {error}")))
+        .or_else(|_| parse_sanitized_document(body))
+}
+
+fn parse_sanitized_document(body: &str) -> Result<OpenAPI, ParseError> {
+    let mut raw = serde_json::from_str::<Value>(body)
+        .or_else(|_| serde_yaml::from_str::<Value>(body))
+        .map_err(|error| {
+            ParseError::ParseFailed(format!("failed to deserialize OpenAPI: {error}"))
+        })?;
+    sanitize_boolean_schemas_in_document(&mut raw);
+    serde_json::from_value(raw)
+        .map_err(|error| ParseError::ParseFailed(format!("failed to deserialize OpenAPI: {error}")))
+}
+
+fn sanitize_boolean_schemas_in_document(raw: &mut Value) {
+    if let Some(components) = raw.get_mut("components") {
+        if let Some(schemas) = components.get_mut("schemas").and_then(Value::as_object_mut) {
+            for schema in schemas.values_mut() {
+                sanitize_schema_position(schema);
+            }
+        }
+        if let Some(responses) = components
+            .get_mut("responses")
+            .and_then(Value::as_object_mut)
+        {
+            for response in responses.values_mut() {
+                sanitize_response_position(response);
+            }
+        }
+        if let Some(request_bodies) = components
+            .get_mut("requestBodies")
+            .and_then(Value::as_object_mut)
+        {
+            for body in request_bodies.values_mut() {
+                sanitize_request_body_position(body);
+            }
+        }
+        if let Some(parameters) = components
+            .get_mut("parameters")
+            .and_then(Value::as_object_mut)
+        {
+            for parameter in parameters.values_mut() {
+                sanitize_parameter_position(parameter);
+            }
+        }
+    }
+
+    if let Some(paths) = raw.get_mut("paths").and_then(Value::as_object_mut) {
+        for path_item in paths.values_mut() {
+            let Some(path_item) = path_item.as_object_mut() else {
+                continue;
+            };
+            if let Some(parameters) = path_item
+                .get_mut("parameters")
+                .and_then(Value::as_array_mut)
+            {
+                for parameter in parameters {
+                    sanitize_parameter_position(parameter);
+                }
+            }
+            for method in [
+                "get", "put", "post", "delete", "options", "head", "patch", "trace",
+            ] {
+                if let Some(operation) = path_item.get_mut(method).and_then(Value::as_object_mut) {
+                    if let Some(parameters) = operation
+                        .get_mut("parameters")
+                        .and_then(Value::as_array_mut)
+                    {
+                        for parameter in parameters {
+                            sanitize_parameter_position(parameter);
+                        }
+                    }
+                    if let Some(request_body) = operation.get_mut("requestBody") {
+                        sanitize_request_body_position(request_body);
+                    }
+                    if let Some(responses) = operation
+                        .get_mut("responses")
+                        .and_then(Value::as_object_mut)
+                    {
+                        for response in responses.values_mut() {
+                            sanitize_response_position(response);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn sanitize_parameter_position(value: &mut Value) {
+    let value = maybe_sanitize_reference_target(value);
+    if let Some(schema) = value.get_mut("schema") {
+        sanitize_schema_position(schema);
+    }
+    if let Some(content) = value.get_mut("content").and_then(Value::as_object_mut) {
+        for media in content.values_mut() {
+            if let Some(schema) = media.get_mut("schema") {
+                sanitize_schema_position(schema);
+            }
+        }
+    }
+}
+
+fn sanitize_request_body_position(value: &mut Value) {
+    let value = maybe_sanitize_reference_target(value);
+    if let Some(content) = value.get_mut("content").and_then(Value::as_object_mut) {
+        for media in content.values_mut() {
+            if let Some(schema) = media.get_mut("schema") {
+                sanitize_schema_position(schema);
+            }
+        }
+    }
+}
+
+fn sanitize_response_position(value: &mut Value) {
+    let value = maybe_sanitize_reference_target(value);
+    if let Some(content) = value.get_mut("content").and_then(Value::as_object_mut) {
+        for media in content.values_mut() {
+            if let Some(schema) = media.get_mut("schema") {
+                sanitize_schema_position(schema);
+            }
+        }
+    }
+}
+
+fn maybe_sanitize_reference_target(value: &mut Value) -> &mut Value {
+    if value.is_boolean() {
+        *value = Value::Object(serde_json::Map::new());
+    }
+    value
+}
+
+fn sanitize_schema_position(value: &mut Value) {
+    if value.is_boolean() {
+        *value = Value::Object(serde_json::Map::new());
+        return;
+    }
+    let Some(schema) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        for property in properties.values_mut() {
+            sanitize_schema_position(property);
+        }
+    }
+    for key in [
+        "items",
+        "contains",
+        "additionalProperties",
+        "unevaluatedProperties",
+        "unevaluatedItems",
+        "if",
+        "then",
+        "else",
+    ] {
+        if let Some(child) = schema.get_mut(key) {
+            sanitize_schema_position(child);
+        }
+    }
+    for key in ["prefixItems", "allOf", "anyOf", "oneOf"] {
+        if let Some(items) = schema.get_mut(key).and_then(Value::as_array_mut) {
+            for item in items {
+                sanitize_schema_position(item);
+            }
+        }
+    }
+    if let Some(dependent_schemas) = schema
+        .get_mut("dependentSchemas")
+        .and_then(Value::as_object_mut)
+    {
+        for dependent in dependent_schemas.values_mut() {
+            sanitize_schema_position(dependent);
+        }
+    }
+}
+
+fn parse_raw_document(body: &str) -> Result<Value, ParseError> {
+    serde_json::from_str::<Value>(body)
+        .or_else(|_| serde_yaml::from_str::<Value>(body))
+        .map_err(|error| ParseError::ParseFailed(format!("failed to deserialize OpenAPI: {error}")))
+}
+
+struct OpenApiParseContext<'a> {
+    components: Option<&'a Components>,
+    default_security: Option<&'a [SecurityRequirement]>,
+    raw_spec: &'a Value,
 }
 
 fn path_item_to_endpoints(
     path: &str,
     path_item: &PathItem,
-    components: Option<&Components>,
-    default_security: Option<&Vec<SecurityRequirement>>,
+    raw_path_item: Option<&Value>,
+    context: &OpenApiParseContext<'_>,
 ) -> Result<Vec<CanonicalEndpoint>, ParseError> {
     let mut endpoints = Vec::new();
 
     for (method, operation) in path_item.iter() {
+        let raw_operation = raw_path_item.and_then(|item| item.get(method));
         endpoints.push(operation_to_endpoint(
             path,
             method,
             path_item,
             operation,
-            components,
-            default_security,
+            raw_operation,
+            context,
         )?);
     }
 
@@ -91,33 +284,48 @@ fn operation_to_endpoint(
     method: &str,
     path_item: &PathItem,
     operation: &Operation,
-    components: Option<&Components>,
-    default_security: Option<&Vec<SecurityRequirement>>,
+    raw_operation: Option<&Value>,
+    context: &OpenApiParseContext<'_>,
 ) -> Result<CanonicalEndpoint, ParseError> {
     let mut parameters = BTreeMap::new();
 
     for parameter in &path_item.parameters {
-        let canonical = parameter_to_canonical(parameter, components)?;
+        let canonical = parameter_to_canonical(parameter, context.components)?;
         parameters.insert(parameter_key(&canonical), canonical);
     }
 
     for parameter in &operation.parameters {
-        let canonical = parameter_to_canonical(parameter, components)?;
+        let canonical = parameter_to_canonical(parameter, context.components)?;
         parameters.insert(parameter_key(&canonical), canonical);
     }
 
     let request_body = operation
         .request_body
         .as_ref()
-        .map(|body| request_body_to_canonical(body, components))
+        .map(|body| {
+            request_body_to_canonical(
+                body,
+                context.components,
+                raw_operation.and_then(|operation| operation.get("requestBody")),
+                context.raw_spec,
+            )
+        })
         .transpose()?;
 
-    let responses = responses_to_canonical(&operation.responses.responses, components)?;
+    let responses = responses_to_canonical(
+        &operation.responses.responses,
+        context.components,
+        raw_operation
+            .and_then(|operation| operation.get("responses"))
+            .map(|responses| resolve_raw_reference_if_needed(responses, context.raw_spec))
+            .unwrap_or(&Value::Null),
+        context.raw_spec,
+    )?;
 
     // Operation-level security overrides the top-level default (even when
     // empty — an empty list means "explicitly no auth required").
-    let effective_security = operation.security.as_ref().or(default_security);
-    let auth = effective_security.and_then(|reqs| resolve_auth_hint(reqs, components));
+    let effective_security = operation.security.as_deref().or(context.default_security);
+    let auth = effective_security.and_then(|reqs| resolve_auth_hint(reqs, context.components));
 
     let mut endpoint = CanonicalEndpoint {
         operation_id: operation.operation_id.clone(),
@@ -234,17 +442,32 @@ fn security_scheme_to_hint(scheme: &SecurityScheme) -> Option<AuthRequirement> {
 fn responses_to_canonical(
     responses: &indexmap::IndexMap<StatusCode, ReferenceOr<Response>>,
     components: Option<&Components>,
+    raw_responses: &Value,
+    raw_spec: &Value,
 ) -> Result<Vec<CanonicalResponse>, ParseError> {
     let mut parsed = Vec::new();
 
     for (status_code, response) in responses {
         let resolved = resolve_response(response, components)?;
         let (content_type, media_type) = select_media_type(&resolved.content);
+        let status_key = status_code.to_string();
+        let raw_schema = raw_responses
+            .get(&status_key)
+            .or_else(|| raw_responses.get(status_key.trim_matches('"')))
+            .or_else(|| raw_responses.get("default"))
+            .map(|response| resolve_raw_reference_if_needed(response, raw_spec))
+            .and_then(|response| raw_media_type_schema(response, &content_type, raw_spec));
         parsed.push(CanonicalResponse {
             status_code: status_code.to_string(),
             description: Some(resolved.description.clone()),
             content_type,
-            schema: media_type.and_then(|media| media_type_schema(media, components)),
+            schema: media_type.and_then(|media| {
+                let mut schema = media_type_schema(media, components);
+                if let (Some(schema), Some(raw_schema)) = (schema.as_mut(), raw_schema) {
+                    apply_raw_schema_extensions(schema, raw_schema, raw_spec);
+                }
+                schema
+            }),
         });
     }
 
@@ -263,16 +486,28 @@ fn responses_to_canonical(
 fn request_body_to_canonical(
     request_body: &ReferenceOr<RequestBody>,
     components: Option<&Components>,
+    raw_request_body: Option<&Value>,
+    raw_spec: &Value,
 ) -> Result<CanonicalRequestBody, ParseError> {
     let resolved = resolve_request_body(request_body, components)?;
     let (content_type, media_type) = select_media_type(&resolved.content);
+    let raw_request_body = raw_request_body
+        .map(|body| resolve_raw_reference_if_needed(body, raw_spec))
+        .unwrap_or(&Value::Null);
+    let raw_schema = raw_media_type_schema(raw_request_body, &content_type, raw_spec);
 
     Ok(CanonicalRequestBody {
         content_type,
         required: resolved.required,
-        schema: media_type
-            .and_then(|media| media_type_schema(media, components))
-            .unwrap_or_else(SchemaNode::object),
+        schema: {
+            let mut schema = media_type
+                .and_then(|media| media_type_schema(media, components))
+                .unwrap_or_else(SchemaNode::object);
+            if let Some(raw_schema) = raw_schema {
+                apply_raw_schema_extensions(&mut schema, raw_schema, raw_spec);
+            }
+            schema
+        },
     })
 }
 
@@ -338,6 +573,325 @@ fn media_type_schema(
         .or_else(|| media_type.example.as_ref().map(schema_from_json_value))
 }
 
+fn raw_media_type_schema<'a>(
+    raw_container: &'a Value,
+    content_type: &str,
+    raw_spec: &'a Value,
+) -> Option<&'a Value> {
+    let content = raw_container.get("content")?;
+    let media = content
+        .get(content_type)
+        .or_else(|| content.get("application/json"))
+        .or_else(|| {
+            content
+                .as_object()
+                .and_then(|object| object.values().next())
+        })?;
+    media
+        .get("schema")
+        .map(|schema| resolve_raw_reference_if_needed(schema, raw_spec))
+}
+
+fn resolve_raw_reference_if_needed<'a>(value: &'a Value, raw_spec: &'a Value) -> &'a Value {
+    let Some(reference) = value.get("$ref").and_then(Value::as_str) else {
+        return value;
+    };
+    resolve_raw_pointer(reference, raw_spec).unwrap_or(value)
+}
+
+fn resolve_raw_pointer<'a>(reference: &str, raw_spec: &'a Value) -> Option<&'a Value> {
+    let pointer = reference.strip_prefix('#')?;
+    if pointer.is_empty() {
+        return Some(raw_spec);
+    }
+    raw_spec.pointer(pointer)
+}
+
+fn apply_raw_schema_extensions(node: &mut SchemaNode, raw_schema: &Value, raw_spec: &Value) {
+    let raw_schema = resolve_raw_reference_if_needed(raw_schema, raw_spec);
+    apply_raw_conditional_schema_extensions(node, raw_schema, raw_spec);
+    match node.node_type {
+        SchemaNodeType::Object => apply_raw_object_schema_extensions(node, raw_schema, raw_spec),
+        SchemaNodeType::Array => apply_raw_array_schema_extensions(node, raw_schema, raw_spec),
+        _ => {}
+    }
+}
+
+fn apply_raw_conditional_schema_extensions(
+    node: &mut SchemaNode,
+    raw_schema: &Value,
+    raw_spec: &Value,
+) {
+    if let Some(raw_if) = raw_schema.get("if") {
+        let raw_if = resolve_raw_reference_if_needed(raw_if, raw_spec);
+        node.if_schema = Some(Box::new(raw_schema_value_to_node(raw_if, raw_spec)));
+    }
+    if let Some(raw_then) = raw_schema.get("then") {
+        let raw_then = resolve_raw_reference_if_needed(raw_then, raw_spec);
+        node.then_schema = Some(Box::new(raw_schema_value_to_node(raw_then, raw_spec)));
+    }
+    if let Some(raw_else) = raw_schema.get("else") {
+        let raw_else = resolve_raw_reference_if_needed(raw_else, raw_spec);
+        node.else_schema = Some(Box::new(raw_schema_value_to_node(raw_else, raw_spec)));
+    }
+}
+
+fn apply_raw_object_schema_extensions(node: &mut SchemaNode, raw_schema: &Value, raw_spec: &Value) {
+    match raw_schema.get("additionalProperties") {
+        Some(Value::Bool(false)) => {
+            node.allow_additional_properties = false;
+            node.additional_properties = None;
+        }
+        Some(Value::Bool(true)) => {
+            node.allow_additional_properties = true;
+            node.additional_properties = None;
+        }
+        Some(raw_additional) => {
+            let raw_additional = resolve_raw_reference_if_needed(raw_additional, raw_spec);
+            node.allow_additional_properties = true;
+            node.additional_properties =
+                Some(Box::new(raw_schema_value_to_node(raw_additional, raw_spec)));
+        }
+        None => {}
+    }
+    if raw_schema
+        .get("unevaluatedProperties")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        node.allow_unevaluated_properties = false;
+    }
+    if let Some(map) = raw_schema
+        .get("dependentRequired")
+        .and_then(Value::as_object)
+    {
+        for (name, value) in map {
+            let dependents = value
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            if !dependents.is_empty() {
+                node.dependent_required.insert(name.clone(), dependents);
+            }
+        }
+    }
+    if let Some(map) = raw_schema
+        .get("dependentSchemas")
+        .and_then(Value::as_object)
+    {
+        for (name, raw_dependent) in map {
+            let raw_dependent = resolve_raw_reference_if_needed(raw_dependent, raw_spec);
+            let mut dependent = raw_schema_value_to_node(raw_dependent, raw_spec);
+            apply_raw_schema_extensions(&mut dependent, raw_dependent, raw_spec);
+            node.dependent_schemas.insert(name.clone(), dependent);
+        }
+    }
+    if let Some(raw_properties) = raw_schema.get("properties").and_then(Value::as_object) {
+        for (name, child) in &mut node.properties {
+            if let Some(raw_child) = raw_properties.get(name) {
+                apply_raw_schema_extensions(child, raw_child, raw_spec);
+            }
+        }
+    }
+}
+
+fn apply_raw_array_schema_extensions(node: &mut SchemaNode, raw_schema: &Value, raw_spec: &Value) {
+    if let Some(raw_prefix_items) = raw_schema.get("prefixItems").and_then(Value::as_array) {
+        node.prefix_items = raw_prefix_items
+            .iter()
+            .map(|raw_item| {
+                let raw_item = resolve_raw_reference_if_needed(raw_item, raw_spec);
+                let mut item = raw_schema_value_to_node(raw_item, raw_spec);
+                apply_raw_schema_extensions(&mut item, raw_item, raw_spec);
+                item
+            })
+            .collect();
+    }
+    if raw_schema.get("unevaluatedItems").and_then(Value::as_bool) == Some(false) {
+        node.allow_unevaluated_items = false;
+    }
+    if let Some(raw_contains) = raw_schema.get("contains") {
+        let raw_contains = resolve_raw_reference_if_needed(raw_contains, raw_spec);
+        let mut contains = raw_schema_value_to_node(raw_contains, raw_spec);
+        apply_raw_schema_extensions(&mut contains, raw_contains, raw_spec);
+        node.contains = Some(Box::new(contains));
+    }
+    node.min_contains = raw_schema
+        .get("minContains")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    node.max_contains = raw_schema
+        .get("maxContains")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    if let Some(raw_items) = raw_schema.get("items") {
+        let raw_items = resolve_raw_reference_if_needed(raw_items, raw_spec);
+        if raw_items.is_boolean() {
+            node.items = Some(Box::new(raw_schema_value_to_node(raw_items, raw_spec)));
+        } else if let Some(item) = node.items.as_mut() {
+            apply_raw_schema_extensions(item, raw_items, raw_spec);
+        }
+    }
+}
+
+fn raw_schema_value_to_node(raw_schema: &Value, raw_spec: &Value) -> SchemaNode {
+    let raw_schema = resolve_raw_reference_if_needed(raw_schema, raw_spec);
+    if let Some(value) = raw_schema.as_bool() {
+        return SchemaNode::bool_schema(value);
+    }
+    let mut node = match raw_schema.get("type").and_then(Value::as_str) {
+        Some("object") => raw_object_schema_to_node(raw_schema, raw_spec),
+        None if raw_schema.get("properties").is_some() => {
+            raw_object_schema_to_node(raw_schema, raw_spec)
+        }
+        Some("array") => raw_array_schema_to_node(raw_schema, raw_spec),
+        None if raw_schema.get("items").is_some() || raw_schema.get("contains").is_some() => {
+            raw_array_schema_to_node(raw_schema, raw_spec)
+        }
+        Some("string") => {
+            let mut node = SchemaNode::string();
+            node.format = raw_schema
+                .get("format")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            node.pattern = raw_schema
+                .get("pattern")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            node.min_length = raw_schema
+                .get("minLength")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize);
+            node.max_length = raw_schema
+                .get("maxLength")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize);
+            node
+        }
+        Some("integer") => SchemaNode {
+            node_type: SchemaNodeType::Integer,
+            minimum: raw_schema.get("minimum").and_then(Value::as_f64),
+            maximum: raw_schema.get("maximum").and_then(Value::as_f64),
+            multiple_of: raw_schema.get("multipleOf").and_then(Value::as_f64),
+            ..SchemaNode::string()
+        },
+        Some("number") => SchemaNode {
+            node_type: SchemaNodeType::Number,
+            minimum: raw_schema.get("minimum").and_then(Value::as_f64),
+            maximum: raw_schema.get("maximum").and_then(Value::as_f64),
+            multiple_of: raw_schema.get("multipleOf").and_then(Value::as_f64),
+            ..SchemaNode::string()
+        },
+        Some("boolean") => SchemaNode {
+            node_type: SchemaNodeType::Boolean,
+            ..SchemaNode::string()
+        },
+        Some("null") => SchemaNode {
+            node_type: SchemaNodeType::Null,
+            nullable: true,
+            ..SchemaNode::string()
+        },
+        _ => SchemaNode {
+            node_type: SchemaNodeType::Unknown,
+            ..SchemaNode::string()
+        },
+    };
+    node.description = raw_schema
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    node.enum_values = raw_schema
+        .get("enum")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    node.example = raw_schema.get("example").cloned();
+    node.nullable = raw_schema
+        .get("nullable")
+        .and_then(Value::as_bool)
+        .unwrap_or(node.nullable);
+    node.exclusive_minimum = raw_schema
+        .get("exclusiveMinimum")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    node.exclusive_maximum = raw_schema
+        .get("exclusiveMaximum")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    node
+}
+
+fn raw_object_schema_to_node(raw_schema: &Value, raw_spec: &Value) -> SchemaNode {
+    let mut node = SchemaNode::object();
+    node.min_properties = raw_schema
+        .get("minProperties")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    node.max_properties = raw_schema
+        .get("maxProperties")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    match raw_schema.get("additionalProperties") {
+        Some(Value::Bool(false)) => {
+            node.allow_additional_properties = false;
+        }
+        Some(Value::Bool(true)) | None => {}
+        Some(raw_additional) => {
+            let raw_additional = resolve_raw_reference_if_needed(raw_additional, raw_spec);
+            node.additional_properties =
+                Some(Box::new(raw_schema_value_to_node(raw_additional, raw_spec)));
+        }
+    }
+    if raw_schema
+        .get("unevaluatedProperties")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        node.allow_unevaluated_properties = false;
+    }
+    let required = raw_schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<BTreeSet<_>>();
+    if let Some(properties) = raw_schema.get("properties").and_then(Value::as_object) {
+        for (name, raw_child) in properties {
+            let mut child = raw_schema_value_to_node(raw_child, raw_spec);
+            child.required = required.contains(name.as_str());
+            node.properties.insert(name.clone(), child);
+        }
+    }
+    apply_raw_object_schema_extensions(&mut node, raw_schema, raw_spec);
+    node
+}
+
+fn raw_array_schema_to_node(raw_schema: &Value, raw_spec: &Value) -> SchemaNode {
+    let item = raw_schema
+        .get("items")
+        .map(|items| raw_schema_value_to_node(items, raw_spec))
+        .unwrap_or_else(|| SchemaNode::bool_schema(true));
+    let mut node = SchemaNode::array(item);
+    node.min_items = raw_schema
+        .get("minItems")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    node.max_items = raw_schema
+        .get("maxItems")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    node.unique_items = raw_schema
+        .get("uniqueItems")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    apply_raw_array_schema_extensions(&mut node, raw_schema, raw_spec);
+    node
+}
+
 fn schema_ref_to_node(schema: &ReferenceOr<Schema>, components: Option<&Components>) -> SchemaNode {
     match schema {
         ReferenceOr::Item(schema) => schema_to_node(schema, components),
@@ -346,12 +900,7 @@ fn schema_ref_to_node(schema: &ReferenceOr<Schema>, components: Option<&Componen
             .unwrap_or_else(|| SchemaNode {
                 node_type: SchemaNodeType::Unknown,
                 description: Some(format!("Unresolved schema reference: {reference}")),
-                required: false,
-                nullable: false,
-                properties: Default::default(),
-                items: None,
-                enum_values: Vec::new(),
-                example: None,
+                ..SchemaNode::string()
             }),
     }
 }
@@ -367,41 +916,35 @@ fn boxed_schema_ref_to_node(
             .unwrap_or_else(|| SchemaNode {
                 node_type: SchemaNodeType::Unknown,
                 description: Some(format!("Unresolved schema reference: {reference}")),
-                required: false,
-                nullable: false,
-                properties: Default::default(),
-                items: None,
-                enum_values: Vec::new(),
-                example: None,
+                ..SchemaNode::string()
             }),
     }
 }
 
 fn schema_to_node(schema: &Schema, components: Option<&Components>) -> SchemaNode {
     let mut node = match &schema.schema_kind {
-        SchemaKind::Type(Type::String(string_type)) => SchemaNode {
-            node_type: SchemaNodeType::String,
-            description: schema.schema_data.description.clone(),
-            required: false,
-            nullable: schema.schema_data.nullable,
-            properties: Default::default(),
-            items: None,
-            enum_values: string_type
+        SchemaKind::Type(Type::String(string_type)) => {
+            let mut node = SchemaNode::string();
+            node.description = schema.schema_data.description.clone();
+            node.nullable = schema.schema_data.nullable;
+            node.enum_values = string_type
                 .enumeration
                 .iter()
                 .flatten()
                 .cloned()
                 .map(Value::String)
-                .collect(),
-            example: schema.schema_data.example.clone(),
-        },
+                .collect();
+            node.example = schema.schema_data.example.clone();
+            node.format = format_name(&string_type.format);
+            node.pattern = string_type.pattern.clone();
+            node.min_length = string_type.min_length;
+            node.max_length = string_type.max_length;
+            node
+        }
         SchemaKind::Type(Type::Number(number_type)) => SchemaNode {
             node_type: SchemaNodeType::Number,
             description: schema.schema_data.description.clone(),
-            required: false,
             nullable: schema.schema_data.nullable,
-            properties: Default::default(),
-            items: None,
             enum_values: number_type
                 .enumeration
                 .iter()
@@ -410,14 +953,18 @@ fn schema_to_node(schema: &Schema, components: Option<&Components>) -> SchemaNod
                 .map(Value::Number)
                 .collect(),
             example: schema.schema_data.example.clone(),
+            format: format_name(&number_type.format),
+            minimum: number_type.minimum,
+            maximum: number_type.maximum,
+            exclusive_minimum: number_type.exclusive_minimum,
+            exclusive_maximum: number_type.exclusive_maximum,
+            multiple_of: number_type.multiple_of,
+            ..SchemaNode::string()
         },
         SchemaKind::Type(Type::Integer(integer_type)) => SchemaNode {
             node_type: SchemaNodeType::Integer,
             description: schema.schema_data.description.clone(),
-            required: false,
             nullable: schema.schema_data.nullable,
-            properties: Default::default(),
-            items: None,
             enum_values: integer_type
                 .enumeration
                 .iter()
@@ -427,14 +974,18 @@ fn schema_to_node(schema: &Schema, components: Option<&Components>) -> SchemaNod
                 .map(Value::Number)
                 .collect(),
             example: schema.schema_data.example.clone(),
+            format: format_name(&integer_type.format),
+            minimum: integer_type.minimum.map(|value| value as f64),
+            maximum: integer_type.maximum.map(|value| value as f64),
+            exclusive_minimum: integer_type.exclusive_minimum,
+            exclusive_maximum: integer_type.exclusive_maximum,
+            multiple_of: integer_type.multiple_of.map(|value| value as f64),
+            ..SchemaNode::string()
         },
         SchemaKind::Type(Type::Boolean(boolean_type)) => SchemaNode {
             node_type: SchemaNodeType::Boolean,
             description: schema.schema_data.description.clone(),
-            required: false,
             nullable: schema.schema_data.nullable,
-            properties: Default::default(),
-            items: None,
             enum_values: boolean_type
                 .enumeration
                 .iter()
@@ -443,6 +994,7 @@ fn schema_to_node(schema: &Schema, components: Option<&Components>) -> SchemaNod
                 .map(Value::Bool)
                 .collect(),
             example: schema.schema_data.example.clone(),
+            ..SchemaNode::string()
         },
         SchemaKind::Type(Type::Object(object_type)) => {
             object_type_to_node(object_type, schema, components)
@@ -450,15 +1002,16 @@ fn schema_to_node(schema: &Schema, components: Option<&Components>) -> SchemaNod
         SchemaKind::Type(Type::Array(array_type)) => SchemaNode {
             node_type: SchemaNodeType::Array,
             description: schema.schema_data.description.clone(),
-            required: false,
             nullable: schema.schema_data.nullable,
-            properties: Default::default(),
             items: array_type
                 .items
                 .as_ref()
                 .map(|items| Box::new(boxed_schema_ref_to_node(items, components))),
-            enum_values: Vec::new(),
             example: schema.schema_data.example.clone(),
+            min_items: array_type.min_items,
+            max_items: array_type.max_items,
+            unique_items: array_type.unique_items,
+            ..SchemaNode::string()
         },
         SchemaKind::OneOf { one_of } => collapse_variants(one_of, components),
         SchemaKind::AllOf { all_of } => merge_all_of_nodes(all_of, components),
@@ -466,12 +1019,9 @@ fn schema_to_node(schema: &Schema, components: Option<&Components>) -> SchemaNod
         SchemaKind::Not { .. } => SchemaNode {
             node_type: SchemaNodeType::Unknown,
             description: schema.schema_data.description.clone(),
-            required: false,
             nullable: schema.schema_data.nullable,
-            properties: Default::default(),
-            items: None,
-            enum_values: Vec::new(),
             example: schema.schema_data.example.clone(),
+            ..SchemaNode::string()
         },
         SchemaKind::Any(any_schema) => any_schema_to_node(any_schema, schema, components),
     };
@@ -496,6 +1046,9 @@ fn object_type_to_node(
     node.description = schema.schema_data.description.clone();
     node.nullable = schema.schema_data.nullable;
     node.example = schema.schema_data.example.clone();
+    node.min_properties = object_type.min_properties;
+    node.max_properties = object_type.max_properties;
+    apply_additional_properties(&mut node, &object_type.additional_properties, components);
 
     for (name, property_schema) in &object_type.properties {
         let mut child = boxed_schema_ref_to_node(property_schema, components);
@@ -514,6 +1067,7 @@ fn any_schema_to_node(
     if !any_schema.properties.is_empty() {
         let mut node = SchemaNode::object();
         let required: BTreeSet<&String> = any_schema.required.iter().collect();
+        apply_additional_properties(&mut node, &any_schema.additional_properties, components);
         for (name, property_schema) in &any_schema.properties {
             let mut child = boxed_schema_ref_to_node(property_schema, components);
             child.required = required.contains(name);
@@ -521,6 +1075,9 @@ fn any_schema_to_node(
         }
         node.description = schema.schema_data.description.clone();
         node.example = schema.schema_data.example.clone();
+        node.min_properties = any_schema.min_properties;
+        node.max_properties = any_schema.max_properties;
+        node.unique_items = any_schema.unique_items.unwrap_or(false);
         return node;
     }
 
@@ -528,6 +1085,9 @@ fn any_schema_to_node(
         let mut node = SchemaNode::array(boxed_schema_ref_to_node(items, components));
         node.description = schema.schema_data.description.clone();
         node.example = schema.schema_data.example.clone();
+        node.min_items = any_schema.min_items;
+        node.max_items = any_schema.max_items;
+        node.unique_items = any_schema.unique_items.unwrap_or(false);
         return node;
     }
 
@@ -535,54 +1095,111 @@ fn any_schema_to_node(
         Some("null") => SchemaNode {
             node_type: SchemaNodeType::Null,
             description: schema.schema_data.description.clone(),
-            required: false,
             nullable: true,
-            properties: Default::default(),
-            items: None,
-            enum_values: Vec::new(),
             example: schema.schema_data.example.clone(),
+            ..SchemaNode::string()
         },
-        Some("string") => SchemaNode::string(),
+        Some("string") => {
+            let mut node = SchemaNode::string();
+            node.description = schema.schema_data.description.clone();
+            node.nullable = schema.schema_data.nullable;
+            node.enum_values = any_schema.enumeration.clone();
+            node.example = schema.schema_data.example.clone();
+            node.format = any_schema.format.clone();
+            node.pattern = any_schema.pattern.clone();
+            node.min_length = any_schema.min_length;
+            node.max_length = any_schema.max_length;
+            node
+        }
         Some("integer") => SchemaNode {
             node_type: SchemaNodeType::Integer,
             description: schema.schema_data.description.clone(),
-            required: false,
             nullable: schema.schema_data.nullable,
-            properties: Default::default(),
-            items: None,
             enum_values: any_schema.enumeration.clone(),
             example: schema.schema_data.example.clone(),
+            format: any_schema.format.clone(),
+            minimum: any_schema.minimum,
+            maximum: any_schema.maximum,
+            exclusive_minimum: any_schema.exclusive_minimum.unwrap_or(false),
+            exclusive_maximum: any_schema.exclusive_maximum.unwrap_or(false),
+            multiple_of: any_schema.multiple_of,
+            ..SchemaNode::string()
         },
         Some("number") => SchemaNode {
             node_type: SchemaNodeType::Number,
             description: schema.schema_data.description.clone(),
-            required: false,
             nullable: schema.schema_data.nullable,
-            properties: Default::default(),
-            items: None,
             enum_values: any_schema.enumeration.clone(),
             example: schema.schema_data.example.clone(),
+            format: any_schema.format.clone(),
+            minimum: any_schema.minimum,
+            maximum: any_schema.maximum,
+            exclusive_minimum: any_schema.exclusive_minimum.unwrap_or(false),
+            exclusive_maximum: any_schema.exclusive_maximum.unwrap_or(false),
+            multiple_of: any_schema.multiple_of,
+            ..SchemaNode::string()
         },
         Some("boolean") => SchemaNode {
             node_type: SchemaNodeType::Boolean,
             description: schema.schema_data.description.clone(),
-            required: false,
             nullable: schema.schema_data.nullable,
-            properties: Default::default(),
-            items: None,
             enum_values: any_schema.enumeration.clone(),
             example: schema.schema_data.example.clone(),
+            ..SchemaNode::string()
         },
         _ => SchemaNode {
             node_type: SchemaNodeType::Unknown,
             description: schema.schema_data.description.clone(),
-            required: false,
             nullable: schema.schema_data.nullable,
-            properties: Default::default(),
-            items: None,
             enum_values: any_schema.enumeration.clone(),
             example: schema.schema_data.example.clone(),
+            ..SchemaNode::string()
         },
+    }
+}
+
+fn apply_additional_properties(
+    node: &mut SchemaNode,
+    additional: &Option<AdditionalProperties>,
+    components: Option<&Components>,
+) {
+    match additional {
+        Some(AdditionalProperties::Any(false)) => {
+            node.allow_additional_properties = false;
+            node.additional_properties = None;
+        }
+        Some(AdditionalProperties::Any(true)) | None => {
+            node.allow_additional_properties = true;
+            node.additional_properties = None;
+        }
+        Some(AdditionalProperties::Schema(schema)) => {
+            node.allow_additional_properties = true;
+            node.additional_properties = Some(Box::new(schema_ref_to_node(schema, components)));
+        }
+    }
+}
+
+fn format_name<T: std::fmt::Debug>(format: &VariantOrUnknownOrEmpty<T>) -> Option<String> {
+    match format {
+        VariantOrUnknownOrEmpty::Item(value) => {
+            let raw = format!("{value:?}");
+            Some(
+                raw.chars()
+                    .enumerate()
+                    .flat_map(|(idx, ch)| {
+                        let needs_dash = idx > 0 && ch.is_ascii_uppercase();
+                        let lower = ch.to_ascii_lowercase();
+                        if needs_dash {
+                            vec!['-', lower]
+                        } else {
+                            vec![lower]
+                        }
+                    })
+                    .collect(),
+            )
+        }
+        VariantOrUnknownOrEmpty::Unknown(value) => Some(value.clone()),
+        VariantOrUnknownOrEmpty::Empty => None,
     }
 }
 
@@ -612,12 +1229,8 @@ fn collapse_variants(
         SchemaNode {
             node_type: SchemaNodeType::Unknown,
             description: None,
-            required: false,
-            nullable: false,
-            properties: Default::default(),
-            items: None,
-            enum_values: Vec::new(),
             example: None,
+            ..SchemaNode::string()
         }
     } else if concrete_branches
         .iter()

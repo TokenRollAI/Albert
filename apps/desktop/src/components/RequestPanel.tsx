@@ -136,6 +136,7 @@ function BodyView({ endpoint }: { endpoint: CanonicalEndpoint }) {
   if (!body) {
     return <EmptyHint label="This endpoint has no request body." />;
   }
+  const properties = body.schema.properties ?? {};
   return (
     <div className="kv-block">
       <h4>Request body</h4>
@@ -151,11 +152,11 @@ function BodyView({ endpoint }: { endpoint: CanonicalEndpoint }) {
         <span className="kv-row__label">Root</span>
         <code>{body.schema.node_type}</code>
       </div>
-      {Object.keys(body.schema.properties ?? {}).length > 0 ? (
+      {Object.keys(properties).length > 0 ? (
         <div className="kv-row kv-row--wrap">
           <span className="kv-row__label">Properties</span>
           <ul className="chip-list">
-            {Object.keys(body.schema.properties).map((key) => (
+            {Object.keys(properties).map((key) => (
               <li key={key} className="chip">
                 {key}
               </li>

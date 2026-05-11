@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use albert_core::MockExampleKind;
 use albert_gateway::{
-    GatewayConfig, GatewayConfigBundle, GatewayStatus, MetricsSnapshot, RateLimitRule,
-    ReconfigureOptions, RequestLogEntry, RequiredHeader,
+    CachedResponse, ConditionalExampleRule, GatewayConfig, GatewayConfigBundle, GatewayStatus,
+    MetricsSnapshot, RateLimitRule, ReconfigureOptions, RequestLogEntry, RequiredHeader,
 };
 use serde::Deserialize;
 use tauri::State;
@@ -22,6 +22,10 @@ pub struct StartMockServerArgs {
     pub collection_ids: Option<Vec<String>>,
     #[serde(default)]
     pub example_overrides: Option<BTreeMap<String, MockExampleKind>>,
+    #[serde(default)]
+    pub conditional_example_rules: Option<BTreeMap<String, Vec<ConditionalExampleRule>>>,
+    #[serde(default)]
+    pub use_request_cache: Option<bool>,
     #[serde(default)]
     pub default_latency_ms: Option<u64>,
     #[serde(default)]
@@ -74,11 +78,21 @@ pub async fn start_mock_server(
             .map_err(|error| error.to_string())?
     };
 
+    let use_request_cache = args.use_request_cache.unwrap_or(false);
+    let request_cache_entries = if use_request_cache {
+        load_gateway_request_cache(&store, &collections)?
+    } else {
+        BTreeMap::new()
+    };
+
     let config = GatewayConfig {
         host: args.host.unwrap_or_else(|| "127.0.0.1".to_string()),
         port: args.port.unwrap_or(4317),
         cors_enabled: args.cors_enabled.unwrap_or(true),
         example_overrides: args.example_overrides.unwrap_or_default(),
+        conditional_example_rules: args.conditional_example_rules.unwrap_or_default(),
+        use_request_cache,
+        request_cache_entries,
         default_latency_ms: args.default_latency_ms,
         latency_overrides: args.latency_overrides.unwrap_or_default(),
         latency_jitter_ms: args.latency_jitter_ms.unwrap_or_default(),
@@ -221,12 +235,16 @@ pub fn save_gateway_preferences(
         .map_err(|error| error.to_string())
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct UpdateMockServerArgs {
     #[serde(default)]
     pub collection_ids: Option<Vec<String>>,
     #[serde(default)]
     pub example_overrides: Option<BTreeMap<String, MockExampleKind>>,
+    #[serde(default)]
+    pub conditional_example_rules: Option<BTreeMap<String, Vec<ConditionalExampleRule>>>,
+    #[serde(default)]
+    pub use_request_cache: Option<bool>,
     #[serde(default)]
     pub default_latency_ms: Option<u64>,
     #[serde(default)]
@@ -284,10 +302,91 @@ where
     })
 }
 
+fn load_gateway_request_cache(
+    store: &albert_storage::SqliteStore,
+    collections: &[albert_core::CanonicalApiCollection],
+) -> Result<BTreeMap<String, CachedResponse>, String> {
+    let mut out = BTreeMap::new();
+    for collection in collections {
+        for endpoint in &collection.endpoints {
+            let entries = store
+                .list_request_cache(&collection.id, endpoint.method.as_str(), &endpoint.path, 25)
+                .map_err(|error| error.to_string())?;
+            for entry in entries {
+                let Some(cached) = cached_response_from_entry(entry) else {
+                    continue;
+                };
+                out.insert(cached.fingerprint.clone(), cached);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn cached_response_from_entry(entry: albert_storage::RequestCacheEntry) -> Option<CachedResponse> {
+    let response = entry.response_snapshot.as_object()?;
+    let status = response
+        .get("status")
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u16::try_from(value).ok())?;
+    let body = response
+        .get("body")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let headers = response
+        .get("headers")
+        .and_then(|value| value.as_object())
+        .map(|map| {
+            map.iter()
+                .map(|(key, value)| {
+                    (
+                        key.to_ascii_lowercase(),
+                        value
+                            .as_str()
+                            .map(ToString::to_string)
+                            .unwrap_or_else(|| value.to_string()),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(CachedResponse {
+        collection_id: entry.collection_id,
+        method: method_from_cache_entry(&entry.method)?,
+        path: entry.path,
+        fingerprint: entry.fingerprint,
+        status,
+        headers,
+        body,
+        hit_count: entry.hit_count,
+        last_seen_at: Some(entry.last_seen_at),
+    })
+}
+
+fn method_from_cache_entry(method: &str) -> Option<albert_core::HttpMethod> {
+    match method.trim().to_ascii_uppercase().as_str() {
+        "GET" => Some(albert_core::HttpMethod::Get),
+        "POST" => Some(albert_core::HttpMethod::Post),
+        "PUT" => Some(albert_core::HttpMethod::Put),
+        "PATCH" => Some(albert_core::HttpMethod::Patch),
+        "DELETE" => Some(albert_core::HttpMethod::Delete),
+        "OPTIONS" => Some(albert_core::HttpMethod::Options),
+        "HEAD" => Some(albert_core::HttpMethod::Head),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 pub async fn update_mock_server(
     args: UpdateMockServerArgs,
     services: State<'_, AppServices>,
+) -> Result<GatewayStatus, String> {
+    update_mock_server_impl(args, services.inner()).await
+}
+
+async fn update_mock_server_impl(
+    args: UpdateMockServerArgs,
+    services: &AppServices,
 ) -> Result<GatewayStatus, String> {
     let database_url = args.database_url.unwrap_or_else(default_database_url);
     let store = albert_storage::SqliteStore::new(database_url);
@@ -310,6 +409,7 @@ pub async fn update_mock_server(
     };
 
     let current = services.gateway.status().await.config;
+    let example_overrides = args.example_overrides.unwrap_or(current.example_overrides);
     // Treat 0 as "clear", any positive number as "set to n".
     let default_latency_ms = match args.default_latency_ms {
         None => current.default_latency_ms,
@@ -325,18 +425,30 @@ pub async fn update_mock_server(
         .unwrap_or(current.enforce_request_bodies);
     let response_headers = args.response_headers.unwrap_or(current.response_headers);
     let required_headers = args.required_headers.unwrap_or(current.required_headers);
+    let conditional_example_rules = args
+        .conditional_example_rules
+        .unwrap_or(current.conditional_example_rules);
     let rate_limits = args.rate_limits.unwrap_or(current.rate_limits);
     let status_overrides = args.status_overrides.unwrap_or(current.status_overrides);
     let proxy_upstream = match args.proxy_upstream {
         None => current.proxy_upstream,
         Some(next) => next,
     };
+    let use_request_cache = args.use_request_cache.unwrap_or(current.use_request_cache);
+    let request_cache_entries = if use_request_cache {
+        load_gateway_request_cache(&store, &collections)?
+    } else {
+        BTreeMap::new()
+    };
 
     services
         .gateway
         .reconfigure(ReconfigureOptions {
             collections,
-            overrides: args.example_overrides.unwrap_or_default(),
+            overrides: example_overrides,
+            conditional_example_rules,
+            use_request_cache,
+            request_cache_entries,
             default_latency_ms,
             latency_overrides,
             latency_jitter_ms,
@@ -480,4 +592,99 @@ pub fn rename_gateway_scenario(args: RenameScenarioArgs) -> Result<bool, String>
     store
         .rename_scenario(&args.old_name, &args.new_name)
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use albert_core::{
+        CanonicalApiCollection, CanonicalEndpoint, CanonicalResponse, HttpMethod, InputSourceKind,
+        MockExampleKind, SchemaNode, default_mock_examples,
+    };
+    use albert_gateway::{ConditionalExampleRule, MockGateway, RequestCondition};
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn update_preserves_overrides_and_replaces_conditional_rules() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let database_url = temp_file.path().to_string_lossy().to_string();
+        let store = albert_storage::SqliteStore::new(database_url.clone());
+        store.migrate().unwrap();
+        store.save_collection(&sample_collection()).unwrap();
+
+        let gateway = MockGateway::new();
+        gateway
+            .start(
+                store.load_all_collections().unwrap(),
+                GatewayConfig {
+                    port: 0,
+                    example_overrides: BTreeMap::from([(
+                        "GET /orders".to_string(),
+                        MockExampleKind::Error,
+                    )]),
+                    ..GatewayConfig::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let rules = BTreeMap::from([(
+            "GET /orders".to_string(),
+            vec![ConditionalExampleRule {
+                name: "VIP empty list".to_string(),
+                example: MockExampleKind::Empty,
+                when: vec![RequestCondition::Query {
+                    name: "status".to_string(),
+                    equals: "empty".to_string(),
+                }],
+            }],
+        )]);
+        let services = AppServices {
+            gateway: std::sync::Arc::new(gateway),
+        };
+        let status = update_mock_server_impl(
+            UpdateMockServerArgs {
+                conditional_example_rules: Some(rules.clone()),
+                database_url: Some(database_url),
+                ..UpdateMockServerArgs::default()
+            },
+            &services,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            status.config.example_overrides.get("GET /orders"),
+            Some(&MockExampleKind::Error)
+        );
+        assert_eq!(status.config.conditional_example_rules, rules);
+        services.gateway.stop().await.unwrap();
+    }
+
+    fn sample_collection() -> CanonicalApiCollection {
+        CanonicalApiCollection {
+            id: "orders".to_string(),
+            name: "Orders".to_string(),
+            source: InputSourceKind::OpenApi,
+            description: Some("Sample collection".to_string()),
+            endpoints: vec![CanonicalEndpoint {
+                operation_id: Some("listOrders".to_string()),
+                method: HttpMethod::Get,
+                path: "/orders".to_string(),
+                summary: Some("List orders".to_string()),
+                description: None,
+                tags: vec!["orders".to_string()],
+                parameters: Vec::new(),
+                request_body: None,
+                responses: vec![CanonicalResponse {
+                    status_code: "200".to_string(),
+                    description: Some("OK".to_string()),
+                    content_type: "application/json".to_string(),
+                    schema: Some(SchemaNode::object()),
+                }],
+                examples: default_mock_examples(),
+                auth: None,
+            }],
+        }
+    }
 }

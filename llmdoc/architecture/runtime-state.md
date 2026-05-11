@@ -63,9 +63,13 @@ in `generate_handler!` because `#[tauri::command]` generates a companion
   the setup holds under real contention.
 - The mock gateway does NOT query SQLite at request time — it gets fully
   resolved collections when `start_mock_server` calls
-  `load_all_collections` / `load_collection`. A restart is required to pick up
-  newly imported collections; this is intentional to keep the data plane
-  immutable while serving.
+  `load_all_collections` / `load_collection`. When Request cache routing is
+  enabled, Tauri also resolves recent `request_fingerprint_cache` rows and
+  injects them into `GatewayConfig.request_cache_entries`; the gateway consumes
+  that in-memory map only. A restart, toggle/update, or the Runtime tab's
+  **Reload request cache** action is required to pick up newly imported
+  collections or newly recorded cache rows; this is intentional to keep the data
+  plane immutable while serving.
 
 ## Error boundary
 

@@ -37,16 +37,18 @@ describe("ScenariosPanel", () => {
   });
 
   test("Save button disabled while name is blank", async () => {
+    const listScenarios = vi.fn().mockResolvedValue([]);
     render(
       <ScenariosPanel
         running={true}
-        listScenarios={vi.fn().mockResolvedValue([])}
+        listScenarios={listScenarios}
         onSave={vi.fn()}
         onLoad={vi.fn()}
         onDelete={vi.fn()}
         onRename={vi.fn()}
       />
     );
+    await waitFor(() => expect(listScenarios).toHaveBeenCalled());
     const save = screen.getAllByRole("button", { name: /Save/ })[0];
     expect((save as HTMLButtonElement).disabled).toBe(true);
   });

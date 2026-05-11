@@ -43,7 +43,7 @@ pub fn planned_capabilities() -> Vec<CapabilityStatus> {
         CapabilityStatus {
             name: "cURL parser".to_string(),
             stage: DeliveryStage::Partial,
-            note: "Common request flags and JSON request bodies are normalized into canonical endpoints."
+            note: "Common request flags, JSON/form/binary request bodies, repeated query values, and repeated headers are normalized into canonical endpoints."
                 .to_string(),
         },
         CapabilityStatus {
@@ -144,43 +144,24 @@ pub(crate) fn schema_from_json_value(value: &Value) -> SchemaNode {
         }
         Value::Number(number) if number.is_i64() || number.is_u64() => SchemaNode {
             node_type: SchemaNodeType::Integer,
-            description: None,
-            required: false,
-            nullable: false,
-            properties: Default::default(),
-            items: None,
-            enum_values: Vec::new(),
             example: Some(value.clone()),
+            ..SchemaNode::string()
         },
         Value::Number(_) => SchemaNode {
             node_type: SchemaNodeType::Number,
-            description: None,
-            required: false,
-            nullable: false,
-            properties: Default::default(),
-            items: None,
-            enum_values: Vec::new(),
             example: Some(value.clone()),
+            ..SchemaNode::string()
         },
         Value::Bool(_) => SchemaNode {
             node_type: SchemaNodeType::Boolean,
-            description: None,
-            required: false,
-            nullable: false,
-            properties: Default::default(),
-            items: None,
-            enum_values: Vec::new(),
             example: Some(value.clone()),
+            ..SchemaNode::string()
         },
         Value::Null => SchemaNode {
             node_type: SchemaNodeType::Null,
-            description: None,
-            required: false,
             nullable: true,
-            properties: Default::default(),
-            items: None,
-            enum_values: Vec::new(),
             example: Some(Value::Null),
+            ..SchemaNode::string()
         },
     }
 }
@@ -728,6 +709,117 @@ paths:
     }
 
     #[test]
+    fn curl_preserves_repeated_query_and_header_parameters() {
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: r#"curl "https://api.example.com/search?tag=rust&tag=tauri" -H "X-Trace: one" -H "X-Trace: two""#
+                .to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        let query_tags = endpoint
+            .parameters
+            .iter()
+            .filter(|p| p.name == "tag" && p.location == ParameterLocation::Query)
+            .collect::<Vec<_>>();
+        assert_eq!(query_tags.len(), 2);
+        assert_eq!(
+            query_tags[0]
+                .schema
+                .example
+                .as_ref()
+                .and_then(|v| v.as_str()),
+            Some("rust")
+        );
+        assert_eq!(
+            query_tags[1]
+                .schema
+                .example
+                .as_ref()
+                .and_then(|v| v.as_str()),
+            Some("tauri")
+        );
+
+        let trace_headers = endpoint
+            .parameters
+            .iter()
+            .filter(|p| p.name == "X-Trace" && p.location == ParameterLocation::Header)
+            .collect::<Vec<_>>();
+        assert_eq!(trace_headers.len(), 2);
+        assert_eq!(
+            trace_headers[0]
+                .schema
+                .example
+                .as_ref()
+                .and_then(|v| v.as_str()),
+            Some("one")
+        );
+        assert_eq!(
+            trace_headers[1]
+                .schema
+                .example
+                .as_ref()
+                .and_then(|v| v.as_str()),
+            Some("two")
+        );
+    }
+
+    #[test]
+    fn curl_marks_data_binary_file_reference_as_binary_body() {
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: r#"curl https://api.example.com/upload --data-binary "@payload.bin""#.to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        assert_eq!(endpoint.method, HttpMethod::Post);
+        let body = endpoint.request_body.as_ref().expect("request body");
+        assert_eq!(body.content_type, "application/octet-stream");
+        assert_eq!(body.schema.node_type, SchemaNodeType::String);
+        assert_eq!(body.schema.format.as_deref(), Some("binary"));
+        assert_eq!(
+            body.schema.example.as_ref().and_then(|v| v.as_str()),
+            Some("@payload.bin")
+        );
+    }
+
+    #[test]
+    fn curl_parses_multipart_form_parts_into_object_schema() {
+        let collection = parse_source(ParseSource {
+            name: None,
+            body: r#"curl https://api.example.com/profile -F "avatar=@avatar.png;type=image/png" -F "display_name=Ada""#
+                .to_string(),
+        })
+        .unwrap();
+        let endpoint = &collection.endpoints[0];
+        assert_eq!(endpoint.method, HttpMethod::Post);
+        let body = endpoint.request_body.as_ref().expect("request body");
+        assert_eq!(body.content_type, "multipart/form-data");
+        assert_eq!(body.schema.node_type, SchemaNodeType::Object);
+
+        let avatar = &body.schema.properties["avatar"];
+        assert!(avatar.required);
+        assert_eq!(avatar.node_type, SchemaNodeType::String);
+        assert_eq!(avatar.format.as_deref(), Some("binary"));
+        assert_eq!(
+            avatar.example.as_ref().and_then(|v| v.as_str()),
+            Some("@avatar.png")
+        );
+        assert_eq!(
+            avatar.description.as_deref(),
+            Some("Binary upload part (image/png)")
+        );
+
+        let display_name = &body.schema.properties["display_name"];
+        assert!(display_name.required);
+        assert_eq!(display_name.node_type, SchemaNodeType::String);
+        assert_eq!(
+            display_name.example.as_ref().and_then(|v| v.as_str()),
+            Some("Ada")
+        );
+    }
+
+    #[test]
     fn synthesizes_enum_string_example() {
         let source = r#"
 openapi: 3.0.3
@@ -864,5 +956,226 @@ paths:
         })
         .unwrap();
         assert!(collection.endpoints[0].auth.is_none());
+    }
+
+    #[test]
+    fn preserves_openapi_schema_constraints() {
+        let source = r#"
+openapi: 3.0.3
+info:
+  title: Constrained API
+  version: 1.0.0
+paths:
+  /users:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 2
+              maxProperties: 6
+              required: [email, age, tags]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  pattern: ^.+@example\.com$
+                  minLength: 6
+                  maxLength: 120
+                age:
+                  type: integer
+                  minimum: 18
+                  maximum: 99
+                  exclusiveMinimum: true
+                  multipleOf: 2
+                tags:
+                  type: array
+                  minItems: 1
+                  maxItems: 3
+                  uniqueItems: true
+                  contains:
+                    type: string
+                    pattern: ^featured$
+                  minContains: 1
+                  maxContains: 1
+                  items:
+                    type: string
+                tuple:
+                  type: array
+                  prefixItems:
+                    - type: string
+                      enum: [status]
+                    - type: integer
+                  unevaluatedItems: false
+                closedTuple:
+                  type: array
+                  prefixItems:
+                    - type: string
+                  items: false
+                metadata:
+                  type: object
+                  additionalProperties:
+                    type: integer
+                closed:
+                  type: object
+                  additionalProperties: false
+                blockedMap:
+                  type: object
+                  additionalProperties: false
+                sealed:
+                  type: object
+                  unevaluatedProperties: false
+                  properties:
+                    id:
+                      type: string
+                payment:
+                  type: object
+                  dependentRequired:
+                    credit_card: [billing_address]
+                  dependentSchemas:
+                    credit_card:
+                      type: object
+                      required: [country]
+                      properties:
+                        country:
+                          type: string
+                conditional:
+                  type: object
+                  required: [kind]
+                  properties:
+                    kind:
+                      type: string
+                    admin_code:
+                      type: string
+                    guest_token:
+                      type: string
+                  if:
+                    type: object
+                    required: [kind]
+                    properties:
+                      kind:
+                        type: string
+                        enum: [admin]
+                  then:
+                    type: object
+                    required: [admin_code]
+                    properties:
+                      admin_code:
+                        type: string
+                  else:
+                    type: object
+                    required: [guest_token]
+                    properties:
+                      guest_token:
+                        type: string
+      responses:
+        "201":
+          description: Created
+"#;
+
+        let collection = parse_source(ParseSource {
+            name: Some("constraints".to_string()),
+            body: source.to_string(),
+        })
+        .unwrap();
+        let schema = &collection.endpoints[0]
+            .request_body
+            .as_ref()
+            .unwrap()
+            .schema;
+        let email = &schema.properties["email"];
+        assert_eq!(schema.min_properties, Some(2));
+        assert_eq!(schema.max_properties, Some(6));
+        assert_eq!(email.format.as_deref(), Some("email"));
+        assert_eq!(email.pattern.as_deref(), Some("^.+@example\\.com$"));
+        assert_eq!(email.min_length, Some(6));
+        assert_eq!(email.max_length, Some(120));
+        let age = &schema.properties["age"];
+        assert_eq!(age.minimum, Some(18.0));
+        assert_eq!(age.maximum, Some(99.0));
+        assert!(age.exclusive_minimum);
+        assert_eq!(age.multiple_of, Some(2.0));
+        let tags = &schema.properties["tags"];
+        assert_eq!(tags.min_items, Some(1));
+        assert_eq!(tags.max_items, Some(3));
+        assert!(tags.unique_items);
+        assert_eq!(tags.min_contains, Some(1));
+        assert_eq!(tags.max_contains, Some(1));
+        assert_eq!(
+            tags.contains
+                .as_ref()
+                .and_then(|node| node.pattern.as_deref()),
+            Some("^featured$")
+        );
+        let tuple = &schema.properties["tuple"];
+        assert_eq!(
+            tuple.prefix_items[0].enum_values.first(),
+            Some(&serde_json::json!("status"))
+        );
+        assert_eq!(tuple.prefix_items[1].node_type, SchemaNodeType::Integer);
+        assert!(!tuple.allow_unevaluated_items);
+        let closed_tuple = &schema.properties["closedTuple"];
+        assert_eq!(
+            closed_tuple
+                .items
+                .as_ref()
+                .and_then(|node| node.bool_schema),
+            Some(false)
+        );
+        let metadata = &schema.properties["metadata"];
+        assert_eq!(
+            metadata
+                .additional_properties
+                .as_ref()
+                .map(|node| &node.node_type),
+            Some(&SchemaNodeType::Integer)
+        );
+        let closed = &schema.properties["closed"];
+        assert!(!closed.allow_additional_properties);
+        let blocked_map = &schema.properties["blockedMap"];
+        assert!(!blocked_map.allow_additional_properties);
+        assert!(blocked_map.additional_properties.is_none());
+        let sealed = &schema.properties["sealed"];
+        assert!(!sealed.allow_unevaluated_properties);
+        let payment = &schema.properties["payment"];
+        assert_eq!(
+            payment.dependent_required.get("credit_card").cloned(),
+            Some(vec!["billing_address".to_string()])
+        );
+        assert_eq!(
+            payment
+                .dependent_schemas
+                .get("credit_card")
+                .and_then(|node| node.properties.get("country"))
+                .map(|node| node.required),
+            Some(true)
+        );
+        let conditional = &schema.properties["conditional"];
+        assert_eq!(
+            conditional
+                .if_schema
+                .as_ref()
+                .and_then(|node| node.properties.get("kind"))
+                .and_then(|node| node.enum_values.first()),
+            Some(&serde_json::json!("admin"))
+        );
+        assert_eq!(
+            conditional
+                .then_schema
+                .as_ref()
+                .and_then(|node| node.properties.get("admin_code"))
+                .map(|node| node.required),
+            Some(true)
+        );
+        assert_eq!(
+            conditional
+                .else_schema
+                .as_ref()
+                .and_then(|node| node.properties.get("guest_token"))
+                .map(|node| node.required),
+            Some(true)
+        );
     }
 }

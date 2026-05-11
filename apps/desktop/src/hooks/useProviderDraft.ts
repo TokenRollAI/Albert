@@ -5,9 +5,17 @@ const STORAGE_KEY = "albert.provider.draft";
 
 const DEFAULT_DRAFT: ProviderConfigDraft = {
   provider_name: "openai",
+  environment: "local",
   base_url: "https://api.openai.com",
   model: "gpt-4o-mini",
-  api_key_env: "OPENAI_API_KEY"
+  api_key_env: "OPENAI_API_KEY",
+  api_type: "openai_compatible",
+  azure_deployment: null,
+  azure_api_version: null,
+  temperature: 0.7,
+  max_output_tokens: null,
+  reasoning_effort: null,
+  schema_repair_attempts: 2
 };
 
 function load(): ProviderConfigDraft {

@@ -10,6 +10,17 @@ export interface CapabilityStatus {
   note: string;
 }
 
+export interface CanonicalSchemaNode {
+  node_type: string;
+  description?: string | null;
+  required?: boolean;
+  nullable?: boolean;
+  properties?: Record<string, CanonicalSchemaNode>;
+  items?: CanonicalSchemaNode | null;
+  enum_values?: unknown[];
+  example?: unknown;
+}
+
 export interface AppBootstrapSummary {
   project_name: string;
   current_phase: string;
@@ -48,32 +59,20 @@ export interface CanonicalParameter {
   location: "path" | "query" | "header" | "cookie";
   description?: string | null;
   required: boolean;
-  schema: {
-    node_type: string;
-    properties: Record<string, unknown>;
-    items?: unknown;
-  };
+  schema: CanonicalSchemaNode;
 }
 
 export interface CanonicalRequestBody {
   content_type: string;
   required: boolean;
-  schema: {
-    node_type: string;
-    properties: Record<string, unknown>;
-    items?: unknown;
-  };
+  schema: CanonicalSchemaNode;
 }
 
 export interface CanonicalResponse {
   status_code: string;
   description?: string | null;
   content_type: string;
-  schema?: {
-    node_type: string;
-    properties: Record<string, unknown>;
-    items?: unknown;
-  } | null;
+  schema?: CanonicalSchemaNode | null;
 }
 
 export type AuthScheme =
@@ -117,11 +116,33 @@ export interface CanonicalApiCollection {
   endpoints: CanonicalEndpoint[];
 }
 
+export interface ImportedApiCollection extends CanonicalApiCollection {
+  created_at: string;
+  updated_at: string;
+  endpoint_count: number;
+}
+
+export interface ImportEndpointChange {
+  method: string;
+  path: string;
+  summary?: string | null;
+  reasons?: string[];
+  details?: string[];
+}
+
+export interface ImportDiffSummary {
+  added: ImportEndpointChange[];
+  removed: ImportEndpointChange[];
+  changed: ImportEndpointChange[];
+  unchanged: number;
+}
+
 export interface ImportResult {
   collection_id: string;
   collection_name: string;
   endpoint_count: number;
   database_url: string;
+  diff: ImportDiffSummary;
 }
 
 export interface StoredCollectionSummary {
@@ -129,6 +150,8 @@ export interface StoredCollectionSummary {
   name: string;
   source_kind: string;
   endpoint_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface StoredEndpointSummary {
@@ -187,11 +210,25 @@ export interface RateLimitRule {
   window_ms: number;
 }
 
+export type RequestCondition =
+  | { source: "query"; name: string; equals: string }
+  | { source: "header"; name: string; equals: string }
+  | { source: "body"; path: string; equals: unknown };
+
+export interface ConditionalExampleRule {
+  name: string;
+  example: MockExampleKind;
+  when: RequestCondition[];
+}
+
 export interface GatewayConfig {
   host: string;
   port: number;
   cors_enabled: boolean;
   example_overrides: Record<string, MockExampleKind>;
+  conditional_example_rules?: Record<string, ConditionalExampleRule[]>;
+  use_request_cache?: boolean;
+  request_cache_entries?: Record<string, unknown>;
   default_latency_ms?: number | null;
   latency_overrides?: Record<string, number>;
   latency_jitter_ms?: Record<string, number>;
@@ -231,11 +268,49 @@ export interface RequestLogEntry {
   request_id?: string | null;
 }
 
+export interface RequestCacheEntry {
+  id: string;
+  collection_id: string;
+  method: string;
+  path: string;
+  fingerprint: string;
+  request_snapshot: unknown;
+  response_snapshot: unknown;
+  hit_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface GenerationContext {
+  request_snapshot?: unknown;
+  response_snapshot?: unknown;
+  note?: string | null;
+}
+
 export interface ProviderConfigDraft {
   provider_name: string;
+  environment?: string | null;
   base_url: string;
   model: string;
   api_key_env: string;
+  api_type?:
+    | "openai_compatible"
+    | "azure_openai"
+    | "openai_responses"
+    | "azure_openai_responses";
+  azure_deployment?: string | null;
+  azure_api_version?: string | null;
+  temperature?: number | null;
+  max_output_tokens?: number | null;
+  reasoning_effort?:
+    | "none"
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh"
+    | null;
+  schema_repair_attempts?: number | null;
 }
 
 export interface GenerationRequest {
@@ -246,6 +321,7 @@ export interface GenerationRequest {
   persist?: boolean;
   database_url?: string;
   api_key_override?: string;
+  generation_context?: GenerationContext | null;
 }
 
 export type ThemeMode = "dark" | "light";
@@ -267,4 +343,7 @@ export interface SidebarCollection {
   origin: "imported" | "preview" | "fallback";
   source: "openapi" | "curl";
   endpoints: CanonicalEndpoint[];
+  createdAt?: string;
+  updatedAt?: string;
+  endpointCount?: number;
 }

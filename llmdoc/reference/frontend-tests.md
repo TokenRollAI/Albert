@@ -86,6 +86,24 @@
   per-bucket 5xx count, window cap).
 - `hooks/__tests__/useAppDrawers.test.tsx` — covers the drawer-state
   hook: independent slots, open/close/toggle/set semantics.
+- `components/__tests__/WorkspacePanel.test.tsx` — covers the Workspace
+  collections drawer: closed render, metadata formatting, imported summary and
+  actions, fallback preview source with disabled refresh, and empty-state
+  import routing.
+- `components/__tests__/TopBar.test.tsx` — covers top-bar workspace rendering,
+  the Workspace collections button callback, import/mock/provider callbacks,
+  theme toggle callback, and disabled export state.
+- `components/__tests__/ImportReportPanel.test.tsx` — covers the latest Import
+  report drawer: closed render, grouped diff counts, endpoint rows,
+  changed-endpoint reason chips and detail rows, added/changed Open and Prompt
+  actions, changed-only Refresh action, batch Refresh changed action, removed
+  rows staying read-only, no-report empty state, and no-change messaging.
+- `lib/__tests__/importReportContext.test.ts` — covers the import-report helper
+  that turns changed-endpoint reasons/details into a prompt-preview / refresh
+  generation-context note.
+- `hooks/__tests__/useImportActions.test.tsx` — covers import diff message
+  formatting, import hook status/toast output, and the `onImportComplete`
+  callback that feeds the Import report drawer.
 - `hooks/__tests__/useKeyboardShortcuts.test.tsx` — matcher semantics:
   basic `Mod+K` fire, INPUT target suppression (when combo has no
   modifier), `Mod+Alt+Arrow` combo gating (missing alt = no-fire),

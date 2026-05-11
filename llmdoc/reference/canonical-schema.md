@@ -70,9 +70,45 @@ bad element.
 
 `albert_core::validate_value(schema, value) -> Vec<String>` enforces the
 declared `node_type`, nullable-null agreement, and required-property
-presence. Arrays validate every item against `items`; objects walk
-`properties`. Enum/format/length constraints are intentionally not
-checked — callers that need them layer their own rules on top.
+presence. Arrays validate tuple-style `prefix_items` first, then validate
+remaining entries against `items` when present; objects walk `properties`;
+enum values are rejected when the payload is off-list. The
+canonical `SchemaNode` also carries common JSON Schema constraints parsed
+from OpenAPI: `format`, `pattern`, `min_length`, `max_length`, numeric
+`minimum` / `maximum` (including exclusive flags), and `min_items` /
+`max_items`. It also carries `multiple_of`, `unique_items`, `contains` /
+`min_contains` / `max_contains`, `prefix_items`, `allow_unevaluated_items`,
+and `additional_properties` /
+`allow_additional_properties` for OpenAPI typed maps and closed objects,
+plus object `min_properties` / `max_properties`, `dependent_required`,
+`dependent_schemas`, and `allow_unevaluated_properties`. Conditional schemas
+(`if` / `then` / `else`) are also carried as nested `SchemaNode`s and enforced
+by applying `then` when the `if` schema validates, otherwise applying `else`
+when present. Boolean JSON Schemas are represented with
+`SchemaNode::bool_schema(true|false)`: `true` accepts any payload and `false`
+rejects every payload at that schema position. This is used for raw OpenAPI /
+JSON Schema positions such as `items: false`, `prefixItems: [false]`,
+`additionalProperties: false`, and conditional/dependent schemas.
+
+The OpenAPI parser uses `openapiv3` for the standard 3.0 typed schema
+surface and also keeps a raw JSON/YAML `Value` copy long enough to overlay
+JSON Schema keywords that `openapiv3` 2.2 does not expose directly, including
+`contains`, `minContains`, `maxContains`, `dependentRequired`, and
+`dependentSchemas`, plus `if`, `then`, `else`, `prefixItems`,
+`unevaluatedItems: false`, and object-level `unevaluatedProperties: false`.
+The `unevaluated*` support is conservative: object closure checks properties
+not covered by `properties` or typed `additionalProperties`; array closure
+checks items beyond `prefixItems` when no tail `items` schema exists. This is
+not a complete JSON Schema evaluated-set algorithm. Because `openapiv3` 2.2
+does not accept JSON Schema boolean schemas on its typed parse path, the parser
+sanitizes schema-position booleans to `{}` only for typed deserialization, then
+re-applies the original raw `true` / `false` semantics through the raw overlay.
+
+Validation enforces these constraints with
+conservative format checks for `email`, `date`, and `date-time`; unknown
+formats are left as hints rather than hard errors. Patterns that Rust
+`regex` can compile are enforced; unsupported ECMA-262 patterns remain
+prompt hints instead of failing every payload.
 
 Used by the OpenAI adapter for the schema-aware repair loop.
 
@@ -82,8 +118,11 @@ The `albert-parser::curl` module recognizes the following flag set:
 
 - `-X` / `--request` — explicit HTTP method
 - `-H` / `--header` — request headers (preserved as `ParameterLocation::Header` parameters)
-- `-d` / `--data` / `--data-raw` / `--data-binary` / `--data-ascii` — raw request body
+- `-d` / `--data` / `--data-raw` / `--data-ascii` — raw request body
+- `--data-binary` — raw request body, with `@file` / `<file` references represented as string schema with `format: binary`
 - `--data-urlencode` — accumulates into an `application/x-www-form-urlencoded` body with percent encoding
+- `-F` / `--form` — builds a `multipart/form-data` object schema; `@file` / `<file` parts are represented as required binary string fields, and `;type=...` is kept as a field description hint
+- `--form-string` — builds a `multipart/form-data` string field even when the value starts with `@` / `<`
 - `-u` / `--user <user:pass>` — surfaces as `Authorization: Basic <user:pass>` header
 - `-b` / `--cookie <value>` — stored as the `Cookie` header
 - `--url <url>` — explicit URL (otherwise any positional token beginning
@@ -92,4 +131,5 @@ The `albert-parser::curl` module recognizes the following flag set:
 `Content-Type` is intentionally suppressed from the header parameter list
 because it's already materialized on the request body. `Authorization`,
 `Accept`, `Cookie`, and custom headers all land as canonical parameters.
-
+Repeated query parameters and repeated headers are preserved as separate
+canonical parameters in source order rather than collapsed to one value.

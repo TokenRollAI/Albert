@@ -11,7 +11,9 @@ Registered globally via `useKeyboardShortcuts`. `Mod` = `Cmd` on macOS,
 | `Mod + P`       | Open the command palette            |
 | `Mod + .`       | Toggle the Mock Server drawer       |
 | `Mod + I`       | Open the Import dialog              |
+| `Mod + Shift+I` | Open the latest Import report       |
 | `Mod + Shift+P` | Toggle the Providers drawer         |
+| `Mod + Shift+W` | Open Workspace collections          |
 | `Mod + W`       | Close the active endpoint tab       |
 | `Mod + /`       | Show keyboard shortcuts overlay     |
 | `Mod + Alt + →` | Next endpoint tab (wraps)           |
@@ -28,6 +30,10 @@ Within the sidebar:
 - Tag chips below the search input filter endpoints by `tags[]`. Click
   a chip to toggle an exclusive "show only this tag" filter; click
   again or press the `✕` chip to clear.
+- Imported collection rows show a compact metadata line under the collection
+  name: latest update/import timestamp plus endpoint count. The timestamp
+  refreshes after re-import, rename, and persisted mock-example edits. Preview
+  and fallback rows omit this line.
 - Two-token search syntax: when the first whitespace-separated token is
   an HTTP method (`get`, `post`, `put`, `patch`, `delete`, `options`,
   `head`, `trace`) AND a second token is present, the method is matched
@@ -36,6 +42,34 @@ Within the sidebar:
   `get` alone still does a single-token method filter. Non-method first
   tokens fall through to single-substring behavior (e.g. `foo bar`
   looks for the literal "foo bar" in any field).
+
+## Import feedback
+
+- Successful SQLite imports include an endpoint-level diff summary in both the
+  status bar and success toast: `N added`, `N changed`, `N removed`, and
+  `N unchanged`.
+- After import, App keeps the latest report in memory. The Import report drawer
+  opens automatically and is also available from the command palette or
+  `Mod+Shift+I`.
+- The report groups endpoint rows by Added, Changed, and Removed. Added and
+  Changed rows expose Open and Prompt because the endpoint exists in the latest
+  snapshot. Prompt opens the normal generation prompt preview for `success`.
+  Changed rows also show coarse reasons (`metadata changed`, `parameters
+  changed`, `request body changed`, `responses changed`, `auth changed`) when
+  the backend reports them, plus concise details such as `parameter added:
+  query status`, `request body schema changed`, or `response changed: 200
+  (schema)`. Reasons and details are passed into prompt preview as a
+  generation-context note, and Changed rows also expose Refresh to regenerate
+  and persist the `success` mock with the same context. When one or more
+  changed endpoints are refreshable, the drawer header exposes **Refresh
+  changed (n)** to run the same refresh sequentially for every changed endpoint.
+  Removed rows are display-only.
+- New collections report all endpoints as added. Re-importing the same
+  collection id compares the previous canonical snapshot with the new parse
+  result before saving.
+- Changed endpoints compare the API contract and ignore mock examples, so
+  hand-edited or AI-generated examples do not produce false contract-change
+  messages.
 
 Shortcuts are suppressed while focus is inside an editable element unless
 a modifier key is held. Conventions live in
@@ -72,6 +106,45 @@ counts.
 - Body uses `.panel` sections for logical grouping; tabs when a drawer has
   three or more distinct views (e.g. Mock Server: Runtime / Routes /
   Requests).
+
+## Workspace collections drawer
+
+- Opens from the database icon next to the top-bar workspace name, from the
+  command palette, or via `Mod+Shift+W`.
+- Summarizes imported collection count, endpoint count, and data source
+  (`SQLite` when Tauri is connected, `Preview` in static fallback mode).
+- Collection cards show latest update/import timestamp, endpoint count, origin
+  badge, and method distribution chips.
+- Imported cards reuse the existing collection actions: Open first endpoint,
+  Rename, Export, and Delete. The drawer header also exposes Refresh and
+  Import. Refresh is disabled in fallback preview mode.
+- If no imported collection exists, the drawer falls back to the preview/demo
+  collections so the layout remains inspectable in browser-only development.
+
+## Providers panel
+
+- Presets select the provider API shape (`openai_compatible`,
+  `openai_responses`, `azure_openai`, or `azure_openai_responses`) and include
+  the current default generation controls.
+- Saved profiles persist only non-secret provider settings through Tauri:
+  provider name, optional environment label, base URL, model, API key
+  environment variable, provider API type, Azure deployment/version,
+  temperature, max output tokens, reasoning effort, and schema repair retry
+  count.
+- Saved profiles can be filtered by environment label. Blank legacy labels are
+  grouped as `default`; presets seed `local` for OpenAI-compatible defaults and
+  `staging` for Azure examples.
+- API key override remains session-only and is never saved into profiles.
+- Generation controls live in the Active provider form. Temperature is edited
+  with a range control plus numeric input, clamped from `0` to `2`, and defaults
+  to `0.7`. Max output tokens is a numeric input; blank means "provider
+  default" and is omitted from outbound provider requests. Reasoning effort is
+  a select with Default / None / Minimal / Low / Medium / High / Xhigh; Default
+  stores `null` and omits the `reasoning` request object. The control is
+  persisted for every profile, but the current adapter sends it only for
+  OpenAI/Azure Responses providers. Schema repair retries is a numeric control
+  clamped to `0..=5`; blank means the adapter default of `2`, while `0`
+  disables bounded repair after the initial schema validation failure.
 
 ## Mock Server panel
 
@@ -118,7 +191,12 @@ counts.
      "No scenarios yet". Save requires the server to be running.
 - **Routes tab** — one row per registered route, with a dropdown to pick
   the served example kind. Changes collect as a draft; `Apply (N)` sends
-  them to `update_mock_server`.
+  them to `update_mock_server`. Below the override rows, **Conditional
+  examples** edits `GatewayConfig.conditional_example_rules` for the same
+  route keys. It supports query/header/body equality conditions, multiple
+  conditions per rule (AND), rule ordering with first-match-wins semantics,
+  and a draft-then-Apply flow. Body equality values are parsed as JSON when
+  possible, so `2`, `true`, and objects are not forced to strings.
 - **Requests tab** — a metrics summary (total, 2xx/4xx/5xx counts, avg
   and max latency, a 15-minute request-rate sparkline with 5xx shares
   tinted in error color, busiest route, top-5 route breakdown with
@@ -208,6 +286,62 @@ The panel displays the response status, elapsed ms, body size (bytes /
 kB / MB), select headers (`x-albert-*`, `content-type`), and body via
 `JsonView`. A **Copy body** button next to the status line clipboards
 the full response — pretty-printed for JSON, raw text otherwise.
+When the Tauri runtime is available, the latest Try-it response also
+shows **Save as mock**. It maps `2xx/3xx` responses to the `success`
+example, `204` to `empty`, and `4xx/5xx` to `error`, then exposes a
+compact `as Success|Empty|Error` select so the user can override the
+slot before persisting. The response body is saved through
+`save_mock_example` with a `Captured from Try-it` note. Before saving,
+the frontend asks the Tauri backend to run `validate_mock_payload`
+against the selected response schema, so mismatch warnings use the same
+canonical Rust validator as AI generation and gateway schema checks.
+Static previews or older backends fall back to a lightweight frontend
+check. A warning banner is shown when the captured payload looks
+mismatched; the save still proceeds so real upstream behavior is not
+lost. The
+existing `saveExample` action refreshes the endpoint tab and selects the
+saved example kind, while the Try-it button briefly flips to `Saved` so
+the user has local confirmation. This is the first manual slice of the
+"record real response → mock example" workflow. The same latest response action
+row also exposes **AI refresh latest** and **Prompt latest** when provider
+actions are wired. Both use the latest Try-it request/response snapshots as
+`generation_context`; the mock-kind select controls the target
+`success | empty | error` slot.
+
+After every successful Try-it send against a persisted collection, the
+panel best-effort calls `save_request_cache` with a normalized request
+snapshot and response snapshot. The row stores into SQLite under
+`request_fingerprint_cache`; repeated method/path/query/body/header-shape
+requests increment `hit_count`. The action row shows `cached` for a first
+capture and `cache hit ×N` for repeated fingerprints, with a small
+timestamp line above the response. If Mock Server Request cache routing is
+currently enabled, the latest response area shows **Reload routing** after a
+successful cache write; clicking it calls the same reload action as the Runtime
+tab so the just-captured fingerprint can serve immediately. The panel also
+loads the five most recent cached fingerprints for the active endpoint; each
+row shows status, last-seen time, fingerprint, hit count, age, a Replay button,
+a Remove button, a mock-kind select, a Save button that writes the cached
+response body into the selected `success | empty | error` slot through the same
+`save_mock_example` path, an **AI refresh** button, and a **Prompt** button.
+AI refresh uses the cached request/response snapshots as
+`generation_context` for `generate_mock_example` and persists the generated
+payload into the selected mock slot. Prompt opens the same prompt preview
+modal with that cache context included, so users can inspect what the model
+will see before refreshing. Rows older than 24 hours are marked `stale`;
+Replay loads the cached request snapshot (`query`, headers, body) back into
+the Try-it draft so the user can resend it and refresh the fingerprint
+deliberately. When stale rows exist, Try-it shows a visible **Refresh queue**
+above the collapsible cache list. The queue summarizes stale vs refreshable
+rows, exposes **AI refresh stale (n)** for stale rows whose response body can
+be reused, **Preview first** for the first refreshable stale prompt, and
+**Clear stale (n)**, which deletes stale rows only for the active
+collection/method/path. Stale batch refresh runs serially through the same
+cache-contextual generation path as per-row **AI refresh**; it does not resend
+requests or remove cache rows.
+Static previews, fallback collections, and older backends degrade to
+`cache unavailable` or an empty cache list without blocking the request
+or Save-as-mock path. Sensitive header values are redacted by the storage
+layer before fingerprinting and persistence.
 `Mod+Enter` anywhere inside the Try-it surface (including the body
 textarea) fires Send, matching the Postman / Insomnia muscle memory.
 
@@ -257,8 +391,24 @@ In the response pane:
 - **Generate all** (next to the per-kind Generate button) runs
   success → empty → error sequentially, updating the UI as each
   completes and surfacing a single toast with the final success count.
+- Per-kind **Generate**, **Generate all**, and **Preview prompt** include each
+  target slot's current mock example as `generation_context` when that slot
+  already has a payload, so a hand edit or previous AI result becomes the next
+  iteration's reference instead of being discarded.
 
 ## Gateway preferences
+
+The Runtime tab includes **Request cache routing**, an opt-in toggle that
+loads recent Try-it cache rows into the running gateway. Its meta label shows
+how many cache entries are currently injected. When enabled, **Reload request
+cache** re-runs `update_mock_server(use_request_cache=true)` so newly captured
+Try-it rows can participate without a listener restart. Matching
+method/path/query/header/body fingerprints return the cached response before
+falling back to ordinary mock example selection; the response includes
+`x-albert-mock-source: cache` and `x-albert-cache-fingerprint`. Query overrides
+and explicit route overrides still win over cache routing. The gateway consumes
+only the injected in-memory cache map and never queries SQLite on the request
+path.
 
 The Mock Server panel persists the full runtime config across sessions,
 not just host/port/cors. On startup, `load_gateway_preferences` returns
@@ -267,7 +417,8 @@ and `update_mock_server` the current `status.config` is written back via
 `save_gateway_preferences`. Persisted fields include:
 
 - `host`, `port`, `cors_enabled`
-- `example_overrides`, `default_latency_ms`, `latency_overrides`
+- `example_overrides`, `conditional_example_rules`, `use_request_cache`,
+  `default_latency_ms`, `latency_overrides`
 - `error_rate`, `capture_bodies`, `enforce_request_bodies`
 - `response_headers`, `required_headers`, `rate_limits`
 - `status_overrides`, `latency_jitter_ms`

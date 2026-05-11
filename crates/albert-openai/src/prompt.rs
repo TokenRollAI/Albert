@@ -47,7 +47,25 @@ pub struct PromptBundle {
     pub endpoint_context: Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GenerationContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_snapshot: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_snapshot: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 pub fn build_prompt_bundle(endpoint: &CanonicalEndpoint, intent: GenerationIntent) -> PromptBundle {
+    build_prompt_bundle_with_context(endpoint, intent, None)
+}
+
+pub fn build_prompt_bundle_with_context(
+    endpoint: &CanonicalEndpoint,
+    intent: GenerationIntent,
+    generation_context: Option<&GenerationContext>,
+) -> PromptBundle {
     let system = String::from(
         "You are Albert, an API mock data generator. Produce a single JSON object \
          that is a realistic mock response body for the described endpoint. \
@@ -73,6 +91,26 @@ pub fn build_prompt_bundle(endpoint: &CanonicalEndpoint, intent: GenerationInten
         "responses": response_hints(&endpoint.responses),
     });
 
+    let request_context = generation_context.and_then(|context| {
+        if context.request_snapshot.is_none()
+            && context.response_snapshot.is_none()
+            && context
+                .note
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+        {
+            None
+        } else {
+            Some(json!({
+                "request_snapshot": context.request_snapshot.clone(),
+                "previous_response_snapshot": context.response_snapshot.clone(),
+                "note": context.note.clone(),
+            }))
+        }
+    });
+
     let instruction = match intent {
         GenerationIntent::Success => {
             "Return a representative success response payload. Include realistic IDs, \
@@ -88,17 +126,37 @@ pub fn build_prompt_bundle(endpoint: &CanonicalEndpoint, intent: GenerationInten
         }
     };
 
+    let request_context_block = request_context
+        .as_ref()
+        .map(|context| {
+            format!(
+                "\n\nRequest context (JSON):\n{context}\n\nUse this request/response context to keep the generated mock aligned with the observed scenario, but still obey the target response schema and mock type.",
+                context = serde_json::to_string_pretty(context)
+                    .unwrap_or_else(|_| "{}".to_string())
+            )
+        })
+        .unwrap_or_default();
+
     let user = format!(
-        "Endpoint context (JSON):\n{context}\n\nMock type: {intent}\nInstruction: {instruction}\n\n\
+        "Endpoint context (JSON):\n{context}{request_context_block}\n\nMock type: {intent}\nInstruction: {instruction}\n\n\
          Respond with a single JSON object only.",
         context = serde_json::to_string_pretty(&context).unwrap_or_else(|_| "{}".to_string()),
+        request_context_block = request_context_block,
         intent = intent.intent_label(),
         instruction = instruction,
     );
 
+    let endpoint_context = match request_context {
+        Some(request_context) => json!({
+            "endpoint": context,
+            "request_context": request_context,
+        }),
+        None => context,
+    };
+
     PromptBundle {
         system,
         user,
-        endpoint_context: context,
+        endpoint_context,
     }
 }

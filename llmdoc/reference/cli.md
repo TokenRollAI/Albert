@@ -37,6 +37,7 @@ running the mock server without the Tauri shell.
 | `doctor`  | Health checks: db migratability, env keys, provider probe   |
 | `ping`    | Probe a running mock gateway (`/__albert/status` + metrics) |
 | `verify`  | Hit every declared route on a running gateway; fail on 5xx  |
+| `bench`   | Lightweight per-route load check with p50 / p95 latency     |
 | `help`    | Show the usage text                                          |
 | `version` | Print the crate version                                      |
 
@@ -57,6 +58,11 @@ running the mock server without the Tauri shell.
 - `--capture-bodies` — record up to 4KB of each POST/PUT/PATCH/DELETE
   body into the in-memory request log (off by default; see gateway-routes
   for caveats).
+- `--use-request-cache` — opt into request-cache routing. On startup, the CLI
+  loads recent `request_fingerprint_cache` rows for the served collections into
+  `GatewayConfig.request_cache_entries`; matching requests are served from that
+  in-memory map before default examples. Newly recorded rows require a restart;
+  the gateway still never queries SQLite on the request path.
 - `--proxy-upstream <url>` — forward any request whose path doesn't match
   a registered route to this upstream base URL. Body cap is 4KB (matches
   capture). Blank / whitespace-only values are treated as disabled so
@@ -153,6 +159,27 @@ POST/PUT/PATCH carry an empty `{}` JSON body, etc.
 
 Covered by `verify_hits_every_route` in the CLI smoke suite.
 
+## `bench`
+
+Pulls the registered route list from `/__albert/routes`, substitutes path
+parameters with `_name` sentinels like `verify`, and sends repeated
+requests to each declared route. It is intended as a local dev sanity
+check, not a production benchmarking tool.
+
+- `--url <base>` — gateway base URL (default `http://127.0.0.1:4317`).
+- `--iterations <n>` — requests per route (default `50`, clamped to
+  `1..=10000`).
+- `--concurrency <n>` — in-flight requests per route (default `4`,
+  clamped to `1..=64` and never above `iterations`).
+
+Output includes per-route count, p50, p95, max, request rate, and error
+count, followed by an overall throughput summary. Transport errors,
+unsupported methods, and 5xx responses count as errors and make the
+command exit non-zero; 4xx responses are treated as reachable mock
+behavior, matching `verify`.
+
+Covered by `bench_reports_route_latency` in the CLI smoke suite.
+
 ## `doctor`
 
 Runs three sequential checks and exits non-zero when any fail:
@@ -191,4 +218,4 @@ wrote 2348 bytes to snapshot.json
 
 - Unit tests in `src/args.rs` cover flag parsing + error cases.
 - `tests/smoke.rs` runs the full `import → list → export → serve` round
-  trip against a real TCP listener.
+  trip, route verification, and bench checks against real TCP listeners.

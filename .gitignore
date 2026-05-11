@@ -7,6 +7,8 @@ target/
 albert.db
 apps/desktop/src-tauri/albert.db
 assets/branding/.build/
+.playwright-cli/
+output/
 .claude/
 .env
 .env.local

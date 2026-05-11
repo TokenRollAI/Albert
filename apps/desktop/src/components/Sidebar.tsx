@@ -130,6 +130,32 @@ function authTitle(hint: AuthRequirementHint): string {
   return hint.description ? `${base} — ${hint.description}` : base;
 }
 
+export function formatCollectionTimestamp(value?: string): string | null {
+  if (!value) return null;
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric)
+    ? new Date(numeric * 1000)
+    : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+export function collectionMetaLabel(collection: SidebarCollection): string | null {
+  if (collection.origin !== "imported") return null;
+  const updated = formatCollectionTimestamp(collection.updatedAt);
+  const imported = formatCollectionTimestamp(collection.createdAt);
+  const count = collection.endpointCount ?? collection.endpoints.length;
+  const endpointLabel = `${count} endpoint${count === 1 ? "" : "s"}`;
+  if (updated) return `Updated ${updated} · ${endpointLabel}`;
+  if (imported) return `Imported ${imported} · ${endpointLabel}`;
+  return null;
+}
+
 interface SidebarProps {
   collections: SidebarCollection[];
   activeTabId: string | null;
@@ -420,6 +446,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
           filtered.map((collection) => {
             const isOpen = expanded[collection.id] ?? false;
             const methodCounts = countMethods(collection.endpoints);
+            const metaLabel = collectionMetaLabel(collection);
             return (
               <div key={collection.id} className="coll">
                 <button
@@ -435,8 +462,15 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
                     name={isOpen ? "folder-open" : "folder"}
                     size={14}
                   />
-                  <span className="coll__name" title={collection.name}>
-                    {collection.name}
+                  <span className="coll__title">
+                    <span className="coll__name" title={collection.name}>
+                      {collection.name}
+                    </span>
+                    {metaLabel ? (
+                      <span className="coll__meta" title={metaLabel}>
+                        {metaLabel}
+                      </span>
+                    ) : null}
                   </span>
                   {!isOpen && methodCounts.length > 0 ? (
                     <span className="coll__method-chips" aria-hidden="true">

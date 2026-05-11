@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS api_collections (
   source_kind TEXT NOT NULL,
   name TEXT NOT NULL,
   raw_snapshot TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
@@ -42,9 +44,17 @@ CREATE TABLE IF NOT EXISTS mock_examples (
 CREATE TABLE IF NOT EXISTS provider_configs (
   id TEXT PRIMARY KEY,
   provider_name TEXT NOT NULL,
+  environment TEXT,
   base_url TEXT NOT NULL,
   model TEXT NOT NULL,
-  api_key_env TEXT NOT NULL
+  api_key_env TEXT NOT NULL,
+  api_type TEXT NOT NULL DEFAULT 'openai_compatible',
+  azure_deployment TEXT,
+  azure_api_version TEXT,
+  temperature REAL,
+  max_output_tokens INTEGER,
+  reasoning_effort TEXT,
+  schema_repair_attempts INTEGER
 );
 
 -- Single-row store of gateway runtime preferences. Keyed on a constant
@@ -67,3 +77,20 @@ CREATE TABLE IF NOT EXISTS gateway_scenarios (
   updated_at TEXT NOT NULL
 );
 
+-- Last-response cache keyed by a normalized request fingerprint. This is the
+-- first Phase 5 slice: Try-it can remember the most recent response for a
+-- concrete method/path/query/body/header-shape without changing mock serving
+-- behavior.
+CREATE TABLE IF NOT EXISTS request_fingerprint_cache (
+  id TEXT PRIMARY KEY,
+  collection_id TEXT NOT NULL,
+  method TEXT NOT NULL,
+  path TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  request_snapshot TEXT NOT NULL,
+  response_snapshot TEXT NOT NULL,
+  hit_count INTEGER NOT NULL DEFAULT 1,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  UNIQUE(collection_id, method, path, fingerprint)
+);

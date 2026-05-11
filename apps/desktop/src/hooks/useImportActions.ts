@@ -4,6 +4,7 @@ import { fallbackParsedCollection } from "../data/fallback";
 import type {
   CanonicalApiCollection,
   CanonicalEndpoint,
+  ImportDiffSummary,
   ImportResult
 } from "../types";
 import type { UseToasts } from "./useToasts";
@@ -14,12 +15,35 @@ interface UseImportActionsArgs {
   setPreviewCollection: (collection: CanonicalApiCollection | null) => void;
   setStatusMessage: (msg: string) => void;
   refreshStoredCollections: () => Promise<void>;
+  onImportComplete?: (
+    result: ImportResult,
+    collection: CanonicalApiCollection
+  ) => void;
   openTab: (
     collectionId: string,
     collectionName: string,
     endpoint: CanonicalEndpoint
   ) => void;
   onClose: () => void;
+}
+
+export function describeImportDiff(diff?: ImportDiffSummary): string {
+  if (!diff) return "No diff available";
+  const added = diff.added.length;
+  const removed = diff.removed.length;
+  const changed = diff.changed.length;
+  const unchanged = diff.unchanged;
+  if (added === 0 && removed === 0 && changed === 0) {
+    return unchanged > 0
+      ? `${unchanged} unchanged endpoint(s)`
+      : "No endpoint changes";
+  }
+  const parts: string[] = [];
+  if (added > 0) parts.push(`${added} added`);
+  if (changed > 0) parts.push(`${changed} changed`);
+  if (removed > 0) parts.push(`${removed} removed`);
+  if (unchanged > 0) parts.push(`${unchanged} unchanged`);
+  return parts.join(" · ");
 }
 
 export interface ImportActions {
@@ -47,6 +71,7 @@ export function useImportActions({
   setPreviewCollection,
   setStatusMessage,
   refreshStoredCollections,
+  onImportComplete,
   openTab,
   onClose
 }: UseImportActionsArgs): ImportActions {
@@ -74,12 +99,14 @@ export function useImportActions({
         );
         setPreviewCollection(null);
         await refreshStoredCollections();
+        const diffLabel = describeImportDiff(result.diff);
         setStatusMessage(
-          `Imported ${result.endpoint_count} endpoint(s) into ${result.database_url}.`
+          `Imported ${result.endpoint_count} endpoint(s) into ${result.database_url}. ${diffLabel}.`
         );
         toasts.success(
-          `Imported ${result.endpoint_count} endpoint(s) as "${result.collection_name}".`
+          `Imported ${result.endpoint_count} endpoint(s) as "${result.collection_name}" · ${diffLabel}.`
         );
+        onImportComplete?.(result, collection);
         onClose();
         const first = collection.endpoints[0];
         if (first) {
@@ -97,6 +124,7 @@ export function useImportActions({
       isTauriRuntime,
       onClose,
       openTab,
+      onImportComplete,
       refreshStoredCollections,
       setPreviewCollection,
       setStatusMessage,

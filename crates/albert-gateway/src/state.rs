@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use albert_core::{CanonicalApiCollection, MockExampleKind};
 use serde::{Deserialize, Serialize};
 
+use crate::config::CachedResponse;
 use crate::routing::RouteTable;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -36,7 +37,11 @@ pub(crate) type ResponseHeaderMap = BTreeMap<String, BTreeMap<String, String>>;
 
 pub(crate) type RequiredHeaderMap = BTreeMap<String, Vec<crate::config::RequiredHeader>>;
 
+pub(crate) type ConditionalRuleMap = BTreeMap<String, Vec<crate::config::ConditionalExampleRule>>;
+
 pub(crate) type StatusOverrideMap = BTreeMap<String, u16>;
+
+pub(crate) type RequestCacheMap = BTreeMap<String, CachedResponse>;
 
 /// Per-route sliding-window counters. Keyed by `METHOD /path`; stores
 /// `{rule, timestamps}` where `timestamps` are millisecond epochs of
@@ -208,7 +213,9 @@ pub(crate) struct AppState {
     pub(crate) proxy_upstream: Arc<StdMutex<Option<String>>>,
     pub(crate) response_headers: Arc<StdMutex<Arc<ResponseHeaderMap>>>,
     pub(crate) required_headers: Arc<StdMutex<Arc<RequiredHeaderMap>>>,
+    pub(crate) conditional_example_rules: Arc<StdMutex<Arc<ConditionalRuleMap>>>,
     pub(crate) status_overrides: Arc<StdMutex<Arc<StatusOverrideMap>>>,
+    pub(crate) request_cache: Arc<StdMutex<Arc<RequestCacheMap>>>,
     pub(crate) rate_limits: Arc<StdMutex<RateLimitState>>,
     pub(crate) metrics: Arc<StdMutex<MetricsSnapshot>>,
     pub(crate) request_log: Arc<StdMutex<VecDeque<RequestLogEntry>>>,
@@ -263,7 +270,9 @@ impl AppState {
         enforce_request_bodies: bool,
         response_headers: Arc<ResponseHeaderMap>,
         required_headers: Arc<RequiredHeaderMap>,
+        conditional_example_rules: Arc<ConditionalRuleMap>,
         status_overrides: Arc<StatusOverrideMap>,
+        request_cache: Arc<RequestCacheMap>,
         rate_limits: BTreeMap<String, crate::config::RateLimitRule>,
         collections: Arc<Vec<CanonicalApiCollection>>,
         started_at_epoch_ms: i64,
@@ -278,7 +287,9 @@ impl AppState {
             proxy_upstream: Arc::new(StdMutex::new(None)),
             response_headers: Arc::new(StdMutex::new(response_headers)),
             required_headers: Arc::new(StdMutex::new(required_headers)),
+            conditional_example_rules: Arc::new(StdMutex::new(conditional_example_rules)),
             status_overrides: Arc::new(StdMutex::new(status_overrides)),
+            request_cache: Arc::new(StdMutex::new(request_cache)),
             collections: Arc::new(StdMutex::new(collections)),
             rate_limits: Arc::new(StdMutex::new(RateLimitState {
                 rules: rate_limits,
@@ -396,6 +407,21 @@ impl AppState {
         *slot = next;
     }
 
+    pub(crate) fn snapshot_conditional_example_rules(&self) -> Arc<ConditionalRuleMap> {
+        self.conditional_example_rules
+            .lock()
+            .expect("conditional rules poisoned")
+            .clone()
+    }
+
+    pub(crate) fn replace_conditional_example_rules(&self, next: Arc<ConditionalRuleMap>) {
+        let mut slot = self
+            .conditional_example_rules
+            .lock()
+            .expect("conditional rules poisoned");
+        *slot = next;
+    }
+
     pub(crate) fn snapshot_collections(&self) -> Arc<Vec<CanonicalApiCollection>> {
         self.collections
             .lock()
@@ -420,6 +446,18 @@ impl AppState {
             .status_overrides
             .lock()
             .expect("status overrides poisoned");
+        *slot = next;
+    }
+
+    pub(crate) fn snapshot_request_cache(&self) -> Arc<RequestCacheMap> {
+        self.request_cache
+            .lock()
+            .expect("request cache poisoned")
+            .clone()
+    }
+
+    pub(crate) fn replace_request_cache(&self, next: Arc<RequestCacheMap>) {
+        let mut slot = self.request_cache.lock().expect("request cache poisoned");
         *slot = next;
     }
 
@@ -617,6 +655,8 @@ mod tests {
             Arc::new(BTreeMap::new()),
             Arc::new(BTreeMap::new()),
             Arc::new(BTreeMap::new()),
+            Arc::new(BTreeMap::new()),
+            Arc::new(BTreeMap::new()),
             BTreeMap::new(),
             Arc::new(Vec::new()),
             0,
@@ -649,6 +689,8 @@ mod tests {
             0.0,
             false,
             false,
+            Arc::new(BTreeMap::new()),
+            Arc::new(BTreeMap::new()),
             Arc::new(BTreeMap::new()),
             Arc::new(BTreeMap::new()),
             Arc::new(BTreeMap::new()),

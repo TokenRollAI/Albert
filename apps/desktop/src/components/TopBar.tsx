@@ -5,6 +5,7 @@ interface TopBarProps {
   workspace: string;
   theme: ThemeMode;
   onToggleTheme: () => void;
+  onWorkspaceClick: () => void;
   onImportClick: () => void;
   onMockServerClick: () => void;
   onProvidersClick: () => void;
@@ -18,6 +19,7 @@ export function TopBar({
   workspace,
   theme,
   onToggleTheme,
+  onWorkspaceClick,
   onImportClick,
   onMockServerClick,
   onProvidersClick,
@@ -39,6 +41,15 @@ export function TopBar({
         <span className="topbar__workspace" title={workspace}>
           {workspace}
         </span>
+        <button
+          type="button"
+          className="topbar__workspace-btn"
+          onClick={onWorkspaceClick}
+          title="Open workspace collections"
+          aria-label="Open workspace collections"
+        >
+          <Icon name="database" size={13} />
+        </button>
       </div>
 
       <div className="topbar__actions">

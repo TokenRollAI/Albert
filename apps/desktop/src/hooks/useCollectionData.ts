@@ -4,11 +4,12 @@ import { fallbackSummary } from "../data/fallback";
 import type {
   AppBootstrapSummary,
   CanonicalApiCollection,
+  ImportedApiCollection,
   StoredCollectionSummary
 } from "../types";
 
 export interface UseCollectionData {
-  storedCollections: CanonicalApiCollection[];
+  storedCollections: ImportedApiCollection[];
   summary: AppBootstrapSummary;
   runtime: string;
   statusMessage: string;
@@ -25,7 +26,7 @@ export interface UseCollectionData {
  */
 export function useCollectionData(): UseCollectionData {
   const [storedCollections, setStoredCollections] = useState<
-    CanonicalApiCollection[]
+    ImportedApiCollection[]
   >([]);
   const [summary, setSummary] =
     useState<AppBootstrapSummary>(fallbackSummary);
@@ -36,18 +37,25 @@ export function useCollectionData(): UseCollectionData {
   const [refreshBusy, setRefreshBusy] = useState(false);
 
   const loadSnapshots = useCallback(async (tauri: boolean) => {
-    if (!tauri) return [] as CanonicalApiCollection[];
+    if (!tauri) return [] as ImportedApiCollection[];
     const summaries = await invoke<StoredCollectionSummary[]>(
       "list_imported_collections"
     );
-    const enriched: CanonicalApiCollection[] = [];
+    const enriched: ImportedApiCollection[] = [];
     for (const item of summaries) {
       try {
         const full = await invoke<CanonicalApiCollection | null>(
           "load_collection_snapshot",
           { collectionId: item.id }
         );
-        if (full) enriched.push(full);
+        if (full) {
+          enriched.push({
+            ...full,
+            created_at: item.created_at,
+            updated_at: item.updated_at,
+            endpoint_count: item.endpoint_count
+          });
+        }
       } catch {
         /* skip broken snapshot, continue */
       }

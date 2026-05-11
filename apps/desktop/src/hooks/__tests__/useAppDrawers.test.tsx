@@ -5,6 +5,8 @@ import { useAppDrawers } from "../useAppDrawers";
 describe("useAppDrawers", () => {
   test("every slot starts closed", () => {
     const { result } = renderHook(() => useAppDrawers());
+    expect(result.current.workspace.open).toBe(false);
+    expect(result.current.importReport.open).toBe(false);
     expect(result.current.import.open).toBe(false);
     expect(result.current.mockServer.open).toBe(false);
     expect(result.current.providers.open).toBe(false);
@@ -13,12 +15,12 @@ describe("useAppDrawers", () => {
 
   test("open$ / close / toggle update only the targeted slot", () => {
     const { result } = renderHook(() => useAppDrawers());
-    act(() => result.current.import.open$());
-    expect(result.current.import.open).toBe(true);
+    act(() => result.current.workspace.open$());
+    expect(result.current.workspace.open).toBe(true);
     expect(result.current.providers.open).toBe(false);
 
-    act(() => result.current.import.close());
-    expect(result.current.import.open).toBe(false);
+    act(() => result.current.workspace.close());
+    expect(result.current.workspace.open).toBe(false);
 
     act(() => result.current.providers.toggle());
     expect(result.current.providers.open).toBe(true);

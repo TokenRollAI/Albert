@@ -1,8 +1,10 @@
 import { useMemo, useRef, useState } from "react";
+import { ConditionalRulesEditor } from "./ConditionalRulesEditor";
 import { Icon } from "./Icon";
 import { MockRequestsTab } from "./MockRequestsTab";
 import { MockRuntimeTab } from "./MockRuntimeTab";
 import type {
+  ConditionalExampleRule,
   GatewayStatus,
   MockExampleKind,
   RateLimitRule,
@@ -28,6 +30,9 @@ interface MockServerPanelProps {
   onApplyOverrides: (
     overrides: Record<string, MockExampleKind>
   ) => Promise<void>;
+  onApplyConditionalRules: (
+    rules: Record<string, ConditionalExampleRule[]>
+  ) => Promise<void>;
   onApplyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
   onToggleCaptureBodies: (enabled: boolean) => Promise<void>;
   onToggleEnforceRequestBodies: (enabled: boolean) => Promise<void>;
@@ -38,6 +43,8 @@ interface MockServerPanelProps {
   ) => Promise<void>;
   onSeedRequiredHeadersFromHints: () => Promise<void>;
   onApplyProxyUpstream?: (upstream: string | null) => Promise<void>;
+  onToggleRequestCache?: (enabled: boolean) => Promise<void>;
+  onReloadRequestCache?: () => Promise<void>;
   onClearLog?: () => Promise<void>;
   onExportBundle?: () => Promise<void>;
   onImportBundle?: (bundleJson: string) => Promise<void>;
@@ -65,6 +72,7 @@ export function MockServerPanel({
   onStart,
   onStop,
   onApplyOverrides,
+  onApplyConditionalRules,
   onApplyChaos,
   onToggleCaptureBodies,
   onToggleEnforceRequestBodies,
@@ -73,6 +81,8 @@ export function MockServerPanel({
   onApplyResponseHeaders,
   onSeedRequiredHeadersFromHints,
   onApplyProxyUpstream,
+  onToggleRequestCache,
+  onReloadRequestCache,
   onClearLog,
   onExportBundle,
   onImportBundle,
@@ -258,6 +268,8 @@ export function MockServerPanel({
               onApplyResponseHeaders={onApplyResponseHeaders}
               onSeedRequiredHeadersFromHints={onSeedRequiredHeadersFromHints}
               onApplyProxyUpstream={onApplyProxyUpstream}
+              onToggleRequestCache={onToggleRequestCache}
+              onReloadRequestCache={onReloadRequestCache}
               scenarios={scenarios}
             />
           ) : null}
@@ -356,6 +368,12 @@ export function MockServerPanel({
                   </button>
                 ) : null}
               </div>
+              <ConditionalRulesEditor
+                running={status.running}
+                routes={status.routes}
+                value={status.config.conditional_example_rules ?? {}}
+                onApply={onApplyConditionalRules}
+              />
             </section>
           ) : null}
 

@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use albert_core::{CapabilityStatus, DeliveryStage, HttpMethod, MockExampleKind};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Configuration for a running mock gateway.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -17,6 +18,22 @@ pub struct GatewayConfig {
     /// Per-endpoint example overrides, keyed by `METHOD path`.
     #[serde(default)]
     pub example_overrides: BTreeMap<String, MockExampleKind>,
+    /// Per-route conditional example selection rules. Evaluated after
+    /// query/per-route overrides and before request-cache routing. This
+    /// models simple query/header/body-branching without mutating stored
+    /// endpoint examples.
+    #[serde(default)]
+    pub conditional_example_rules: BTreeMap<String, Vec<ConditionalExampleRule>>,
+    /// Opt-in route selection from previously recorded request fingerprints.
+    /// The gateway never reads SQLite on the hot path; callers inject
+    /// `request_cache_entries` when this is enabled.
+    #[serde(default)]
+    pub use_request_cache: bool,
+    /// Runtime cache rows keyed by the stable request fingerprint. These are
+    /// loaded by Tauri/CLI before start or reconfigure, then consumed in memory
+    /// by the gateway request handler.
+    #[serde(default)]
+    pub request_cache_entries: BTreeMap<String, CachedResponse>,
     /// Optional global latency floor applied to every served request.
     #[serde(default)]
     pub default_latency_ms: Option<u64>,
@@ -112,6 +129,22 @@ pub struct RequiredHeader {
     pub value_equals: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConditionalExampleRule {
+    pub name: String,
+    pub example: MockExampleKind,
+    #[serde(default)]
+    pub when: Vec<RequestCondition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum RequestCondition {
+    Query { name: String, equals: String },
+    Header { name: String, equals: String },
+    Body { path: String, equals: Value },
+}
+
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
@@ -119,6 +152,9 @@ impl Default for GatewayConfig {
             port: 4317,
             cors_enabled: true,
             example_overrides: BTreeMap::new(),
+            conditional_example_rules: BTreeMap::new(),
+            use_request_cache: false,
+            request_cache_entries: BTreeMap::new(),
             default_latency_ms: None,
             latency_overrides: BTreeMap::new(),
             latency_jitter_ms: BTreeMap::new(),
@@ -132,6 +168,22 @@ impl Default for GatewayConfig {
             proxy_upstream: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CachedResponse {
+    pub collection_id: String,
+    pub method: HttpMethod,
+    pub path: String,
+    pub fingerprint: String,
+    pub status: u16,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    pub body: Value,
+    #[serde(default)]
+    pub hit_count: u64,
+    #[serde(default)]
+    pub last_seen_at: Option<String>,
 }
 
 /// Portable, version-stamped snapshot of everything needed to rebuild

@@ -35,9 +35,11 @@ Albert 要建立一条从接口描述到结构化 Mock 资产的本地闭环：
 - README 需要明确说明这一点，避免命名来源在后续传播中丢失
 - 当前不要求全大写或缩写化品牌写法，统一使用 `Albert`
 
-## 6. 一期目标
+## 6. 一期目标与当前阶段
 
 一期是基础设施期，重点是把开发驱动文档、模块边界和工作区骨架建立起来。
+这些目标已经基本交付；当前实现已推进到 Phase 4/5 的 AI-assisted mocking、
+本地 Mock Server 和请求指纹缓存切片。
 
 ### 6.1 一期必须交付
 
@@ -46,13 +48,13 @@ Albert 要建立一条从接口描述到结构化 Mock 资产的本地闭环：
 - `llmdoc` 项目知识体系
 - `Tauri + React + TypeScript` 桌面控制台基础 UI
 - Rust workspace 与核心 crates 边界
-- Canonical API Schema 的基础数据结构
-- OpenAPI / cURL parser 的接口定义与占位实现
-- OpenAI Chat Completions provider 的接口适配器占位
-- SQLite 存储层与迁移脚手架占位
+- Canonical API Schema 的基础数据结构（已演进为可用 schema/validation 模型）
+- OpenAPI / cURL parser 的接口定义与基础实现
+- OpenAI Chat Completions provider 的接口适配器与基础运行时
+- SQLite 存储层与迁移脚手架、核心实体落库
 - Mock 样例模型，至少覆盖 `success`、`empty`、`error`
 
-### 6.2 一期明确不做
+### 6.2 一期明确不做（历史约束）
 
 - 请求指纹缓存
 - AOT 预生成和 JIT 实时生成调度
@@ -61,6 +63,12 @@ Albert 要建立一条从接口描述到结构化 Mock 资产的本地闭环：
 - Postman Collection、GraphQL、gRPC
 - 完整本地网关监听服务
 - 完整的 Schema Diff Engine
+
+说明：上面的“不做”是一期边界，不再代表当前仓库状态。当前已经具备本地 HTTP
+Mock Server、多 provider 类型基础适配、Responses API 基础路径、请求指纹缓存、
+Try-it 录制、手动 AI refresh 和重复导入时的 endpoint-level diff 摘要；尚未完成的是
+后台自动录制/JIT、完整 Schema Diff Engine、导入版本历史、高级 provider matrix 和
+团队级协作能力。
 
 ## 7. 一期功能范围
 
@@ -83,16 +91,21 @@ Albert 要建立一条从接口描述到结构化 Mock 资产的本地闭环：
 
 当前说明：
 
-- 当前仓库中的桌面 UI 只作为占位工作台
-- 它的职责是承载导入、解析预览、SQLite 落库和基础回看
-- 这版界面不应被视为最终产品交互或最终视觉方向
+- 当前桌面 UI 已从占位工作台推进为可用控制台，覆盖导入、接口浏览、Mock Server
+  配置、Provider profiles、AI 生成、Try-it 请求发送、真实响应保存和请求指纹缓存。
+- Sidebar 已展示 imported collection 的最近更新时间和 endpoint 数；顶部
+  Workspace collections 抽屉进一步集中展示当前 imported collections 的数量、
+  endpoint 数、来源、更新时间、方法分布和常用 collection 操作，作为工作区导入
+  记录的第一层可见性。完整项目历史、多项目切换仍属于后续产品形态。
+- 它仍不是最终完整产品形态，后续重点是项目/工作区管理、自动刷新策略和更完整的
+  AI/Provider 体验。
 
 ### 7.3 协议解析
 
 - 支持 OpenAPI/Swagger 输入
 - 支持 cURL 输入
 - 输出统一 Canonical API Schema
-- 解析实现可保留为占位或基础骨架，但接口和数据结构必须稳定
+- 解析实现以稳定接口和数据结构为优先，逐步扩大 OpenAPI/cURL 语法覆盖
 
 ### 7.4 存储模型
 
@@ -104,13 +117,40 @@ Albert 要建立一条从接口描述到结构化 Mock 资产的本地闭环：
 - `api_schemas`
 - `mock_examples`
 - `provider_configs`
+- `gateway_preferences`
+- `gateway_scenarios`
+- `request_fingerprint_cache`
+
+当前 `api_collections` 还记录 `created_at` / `updated_at`，用于排序和 Sidebar
+展示最近导入/更新信息，并驱动 Workspace collections 抽屉的导入记录卡片；
+重新导入、重命名和 mock example 编辑会刷新更新时间。
+
+重复导入同一 collection id 时，导入命令会基于旧 `raw_snapshot` 与新解析结果返回
+endpoint-level diff 摘要（added / changed / removed / unchanged），changed endpoint
+还会附带粗粒度原因（metadata、parameters、request body、responses、auth）和简短
+明细（如参数新增/移除/修改、请求体变化、响应状态码/ schema 变化）。前端在导入成功
+消息中展示摘要，并提供最近一次 Import report 抽屉查看 added / changed / removed
+endpoint 明细。对仍存在的 added / changed endpoint，可直接打开接口或查看 success
+prompt preview；changed 行会展示这些原因和明细，并在打开 prompt preview 时把它们
+作为生成上下文 note 传入。Changed 行还可一键 Refresh success mock，复用同一变更
+上下文并持久化到对应样例；报告头部也可批量 Refresh 全部可刷新 changed endpoint。
+当前 diff 不落库，也不追踪完整字段级版本历史。
 
 ### 7.5 AI Provider
 
-- 一期仅支持 OpenAI
-- 优先支持 `Chat Completions`
-- `Responses API` 在文档中保留演进位，但代码可先不接
-- 一期不接复杂高级能力，只定义统一适配接口
+- 当前支持 OpenAI-compatible Chat Completions、Azure OpenAI Chat Completions、
+  OpenAI Responses API 与 Azure OpenAI Responses API 基础路径。
+- 当前 endpoint 级 prompt mock 已可用：用户可对单个 API endpoint 预览 prompt，并按
+  `success / empty / error` 生成 mock；Try-it 和 Import report 也会把真实响应或导入
+  diff 作为上下文传入。按 endpoint 保存自定义 prompt 模板/版本仍未完整实现。
+- Provider profile 持久化只保存非 secret 配置；API key 通过后端环境变量或
+  session-only override 提供。
+- OpenAI / Azure Responses provider 已支持可选 reasoning effort 控制；默认不下发
+  该字段，非空时映射为 `reasoning.effort`。
+- Provider profile 已支持结构化输出修复重试次数控制；默认 2 次，允许设置
+  0–5 次，其中 0 表示只返回首轮生成结果和 schema mismatch note。
+- 高级能力（Azure Responses、streaming、tool calling、
+  多 provider 并发策略）仍属于后续阶段。
 
 ### 7.6 Mock 样例
 
@@ -132,9 +172,19 @@ Albert 要建立一条从接口描述到结构化 Mock 资产的本地闭环：
 - OpenAPI 与 cURL 已具备基础解析能力
 - Canonical Schema 已从占位模型进入可用转换能力
 - SQLite 持久化已具备最小可用实现
-- Tauri 已暴露 parse/import/list 命令
-- 前端已具备导入预览与落库回看能力
-- GitHub Actions 已提供基础持续集成保护
+- Tauri 已暴露 parse/import/list/load/export/delete/rename、Mock Server、Provider、
+  AI generation、Try-it validation/cache 等命令
+- 前端已具备导入预览、落库回看、接口详情、Mock Server 控制台、Provider 配置、
+  ResponsePane AI 生成（含当前样例上下文迭代）、Try-it 发送/录制/缓存管理能力，
+  并在 Sidebar 和 Workspace collections 抽屉展示 imported collection 的最近更新时间；
+  重复导入时还会显示 endpoint-level diff 摘要和最近一次 Import report 明细抽屉，
+  changed endpoint 会展示 parameters / responses 等粗粒度变更原因和简短明细
+- 本地 HTTP Mock Server 已具备可用运行时：路由匹配、样例选择、运行时 overrides、
+  请求日志/指标、chaos、auth gates、schema enforcement、proxy upstream、scenarios
+- 请求指纹缓存已具备保存/列表/Replay/Save/Remove/Clear stale/AI refresh/Prompt 预览
+  能力；stale 缓存会进入 Try-it Refresh queue，集中批量 AI refresh、首个 stale
+  prompt 预览和清理入口；最新 Try-it 响应也可直接作为 AI refresh / Prompt 上下文
+- GitHub Actions 与本地验证命令已提供基础持续集成保护
 
 ## 9. 风险与约束
 

@@ -4,6 +4,7 @@ import { JsonView } from "./JsonView";
 import type {
   EndpointTab,
   ExampleKind,
+  GenerationContext,
   MockExample,
   ProviderConfigDraft
 } from "../types";
@@ -25,10 +26,22 @@ interface ResponsePaneProps {
     intent: ExampleKind,
     persist: boolean
   ) => Promise<MockExample | null>;
+  onGenerateWithContext?: (
+    tab: EndpointTab,
+    intent: ExampleKind,
+    persist: boolean,
+    context: GenerationContext
+  ) => Promise<MockExample | null>;
   onGenerateAll?: (tab: EndpointTab, persist: boolean) => Promise<void>;
+  onGenerateAllWithContexts?: (
+    tab: EndpointTab,
+    persist: boolean,
+    contexts: Partial<Record<ExampleKind, GenerationContext>>
+  ) => Promise<void>;
   onPreviewPrompt?: (
     tab: EndpointTab,
-    intent: ExampleKind
+    intent: ExampleKind,
+    generationContext?: GenerationContext | null
   ) => Promise<PromptPreviewPayload>;
   onSaveExample?: (
     tab: EndpointTab,
@@ -50,7 +63,9 @@ export function ResponsePane({
   provider,
   apiKeyOverride,
   onGenerate,
+  onGenerateWithContext,
   onGenerateAll,
+  onGenerateAllWithContexts,
   onPreviewPrompt,
   onSaveExample,
   onExampleUpdated
@@ -100,6 +115,24 @@ export function ResponsePane({
   const canGenerate =
     connected && !!provider.base_url && !!provider.model;
 
+  function buildCurrentExampleContext(
+    intent: ExampleKind
+  ): GenerationContext | null {
+    const exampleForIntent = endpoint.examples.find((e) => e.kind === intent);
+    if (!exampleForIntent || exampleForIntent.payload === undefined) {
+      return null;
+    }
+    return {
+      response_snapshot: {
+        kind: intent,
+        title: exampleForIntent.title,
+        body: exampleForIntent.payload,
+        note: exampleForIntent.note ?? null
+      },
+      note: `current mock example ${intent} for ${tab.method} ${tab.endpoint.path}`
+    };
+  }
+
   async function handleGenerate(intent: ExampleKind) {
     if (!canGenerate) {
       setError(
@@ -112,7 +145,11 @@ export function ResponsePane({
     setGenerating(intent);
     setError(null);
     try {
-      const result = await onGenerate(tab, intent, persist);
+      const context = buildCurrentExampleContext(intent);
+      const result =
+        context && onGenerateWithContext
+          ? await onGenerateWithContext(tab, intent, persist, context)
+          : await onGenerate(tab, intent, persist);
       if (result && onExampleUpdated) {
         onExampleUpdated(tab, result);
       }
@@ -134,11 +171,22 @@ export function ResponsePane({
   }
 
   async function handleGenerateAll() {
-    if (!canGenerate || !onGenerateAll) return;
+    if (!canGenerate || (!onGenerateAll && !onGenerateAllWithContexts)) return;
     setGeneratingAll(true);
     setError(null);
     try {
-      await onGenerateAll(tab, persist);
+      if (onGenerateAllWithContexts) {
+        const contexts: Partial<Record<ExampleKind, GenerationContext>> = {};
+        for (const intent of ["success", "empty", "error"] as ExampleKind[]) {
+          const context = buildCurrentExampleContext(intent);
+          if (context) {
+            contexts[intent] = context;
+          }
+        }
+        await onGenerateAllWithContexts(tab, persist, contexts);
+      } else if (onGenerateAll) {
+        await onGenerateAll(tab, persist);
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -182,7 +230,7 @@ export function ResponsePane({
   }
 
   const missingKey =
-    !apiKeyOverride && !hasProcessEnv(provider.api_key_env);
+    connected && !apiKeyOverride && !hasProcessEnv(provider.api_key_env);
 
   return (
     <section className="response">
@@ -297,7 +345,9 @@ export function ResponsePane({
             <button
               type="button"
               className="btn btn--ghost btn--sm"
-              onClick={() => onPreviewPrompt(tab, example)}
+              onClick={() =>
+                onPreviewPrompt(tab, example, buildCurrentExampleContext(example))
+              }
               disabled={!connected}
               title="Show the system + user prompt"
             >
@@ -305,7 +355,7 @@ export function ResponsePane({
               <span>Preview prompt</span>
             </button>
           ) : null}
-          {onGenerateAll ? (
+          {onGenerateAll || onGenerateAllWithContexts ? (
             <button
               type="button"
               className="btn btn--ghost btn--sm"

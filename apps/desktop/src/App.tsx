@@ -3,6 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandPalette, type CommandItem } from "./components/CommandPalette";
 import { EndpointTabs } from "./components/EndpointTabs";
 import { ImportDialog } from "./components/ImportDialog";
+import {
+  ImportReportPanel,
+  type ImportReport
+} from "./components/ImportReportPanel";
 import { MockServerPanel } from "./components/MockServerPanel";
 import { buildCurlCommand } from "./components/UrlBar";
 import { PromptPreviewModal } from "./components/PromptPreviewModal";
@@ -17,6 +21,7 @@ import { ToastHost } from "./components/ToastHost";
 import { TopBar } from "./components/TopBar";
 import { UrlBar } from "./components/UrlBar";
 import { WorkbenchEmpty } from "./components/WorkbenchEmpty";
+import { WorkspacePanel } from "./components/WorkspacePanel";
 import {
   fallbackParsedCollection,
   fallbackSummary,
@@ -38,6 +43,7 @@ import { useProviderDraft } from "./hooks/useProviderDraft";
 import { useTheme } from "./hooks/useTheme";
 import { useToasts } from "./hooks/useToasts";
 import { seedTryItDraft } from "./hooks/useTryItDraft";
+import { importChangeGenerationContext } from "./lib/importReportContext";
 import type {
   CanonicalApiCollection,
   CanonicalEndpoint,
@@ -63,6 +69,8 @@ function App() {
 
   const [previewCollection, setPreviewCollection] =
     useState<CanonicalApiCollection | null>(null);
+  const [latestImportReport, setLatestImportReport] =
+    useState<ImportReport | null>(null);
 
   const drawers = useAppDrawers();
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
@@ -130,6 +138,16 @@ function App() {
         combo: "Mod+i",
         description: "Open import dialog",
         handler: () => drawers.import.open$()
+      },
+      {
+        combo: "Mod+Shift+i",
+        description: "Open import report",
+        handler: () => drawers.importReport.open$()
+      },
+      {
+        combo: "Mod+Shift+w",
+        description: "Open workspace collections",
+        handler: () => drawers.workspace.toggle()
       },
       {
         combo: "Mod+Shift+p",
@@ -205,7 +223,10 @@ function App() {
         name: collection.name,
         origin: "imported",
         source: collection.source,
-        endpoints: collection.endpoints
+        endpoints: collection.endpoints,
+        createdAt: collection.created_at,
+        updatedAt: collection.updated_at,
+        endpointCount: collection.endpoint_count
       });
     }
     if (result.length === 0) {
@@ -303,10 +324,24 @@ function App() {
     });
     items.push({
       kind: "action",
+      id: "action:open-workspace",
+      label: "Open Workspace collections",
+      subtitle: "⌘⇧W",
+      run: () => drawers.workspace.open$()
+    });
+    items.push({
+      kind: "action",
       id: "action:open-import",
       label: "Import OpenAPI / cURL",
       subtitle: "⌘I",
       run: () => drawers.import.open$()
+    });
+    items.push({
+      kind: "action",
+      id: "action:open-import-report",
+      label: "Open Import report",
+      subtitle: "⌘⇧I",
+      run: () => drawers.importReport.open$()
     });
     items.push({
       kind: "action",
@@ -359,6 +394,10 @@ function App() {
     setPreviewCollection,
     setStatusMessage,
     refreshStoredCollections,
+    onImportComplete: (result, collection) => {
+      setLatestImportReport({ result, collection });
+      drawers.importReport.open$();
+    },
     openTab,
     onClose: () => drawers.import.close()
   });
@@ -408,6 +447,7 @@ function App() {
         workspace={workspaceName}
         theme={theme}
         onToggleTheme={toggleTheme}
+        onWorkspaceClick={() => drawers.workspace.open$()}
         onImportClick={() => drawers.import.open$()}
         onMockServerClick={() => drawers.mockServer.open$()}
         onProvidersClick={() => drawers.providers.open$()}
@@ -471,7 +511,9 @@ function App() {
                   provider={providerDraft}
                   apiKeyOverride={apiKeyOverride}
                   onGenerate={aiActions.generate}
+                  onGenerateWithContext={aiActions.generateWithContext}
                   onGenerateAll={aiActions.generateAll}
+                  onGenerateAllWithContexts={aiActions.generateAllWithContexts}
                   onPreviewPrompt={aiActions.previewPrompt}
                   onSaveExample={aiActions.saveExample}
                 />
@@ -483,6 +525,21 @@ function App() {
                       ? `http://${mockGateway.status.bind_address}`
                       : null
                   }
+                  connected={isTauriRuntime}
+                  onSaveResponseAsExample={aiActions.saveExample}
+                  canGenerateFromCache={
+                    Boolean(providerDraft.base_url) && Boolean(providerDraft.model)
+                  }
+                  onGenerateFromCache={(tab, kind, context) =>
+                    aiActions.generateWithContext(tab, kind, true, context)
+                  }
+                  onPreviewPromptFromCache={(tab, kind, context) =>
+                    aiActions.previewPrompt(tab, kind, context)
+                  }
+                  requestCacheRoutingEnabled={
+                    mockGateway.status.config.use_request_cache ?? false
+                  }
+                  onReloadRequestCache={gatewayActions.reloadRequestCache}
                 />
               </div>
             </div>
@@ -499,6 +556,98 @@ function App() {
         phase={summary.current_phase}
         mockRunning={mockGateway.status.running}
         mockBind={mockGateway.status.bind_address ?? null}
+      />
+
+      <WorkspacePanel
+        open={drawers.workspace.open}
+        collections={sidebarCollections}
+        connected={isTauriRuntime}
+        onClose={drawers.workspace.close}
+        onImportClick={() => {
+          drawers.workspace.close();
+          drawers.import.open$();
+        }}
+        onOpenEndpoint={(collection, endpoint) => {
+          openTab(collection.id, collection.name, endpoint);
+          drawers.workspace.close();
+        }}
+        onRefresh={() => {
+          resetTabs();
+          setPreviewCollection(null);
+          refreshStoredCollections();
+        }}
+        onRenameCollection={collectionActions.rename}
+        onExportCollection={collectionActions.exportOne}
+        onDeleteCollection={collectionActions.remove}
+        busy={refreshBusy}
+      />
+
+      <ImportReportPanel
+        open={drawers.importReport.open}
+        report={latestImportReport}
+        onClose={drawers.importReport.close}
+        onImportClick={() => {
+          drawers.importReport.close();
+          drawers.import.open$();
+        }}
+        onOpenEndpoint={(collection, endpoint) => {
+          openTab(collection.id, collection.name, endpoint);
+          drawers.importReport.close();
+        }}
+        onPreviewEndpointPrompt={(collection, endpoint, change) => {
+          const tab: EndpointTab = {
+            id: `import-report:${collection.id}:${endpoint.method}:${endpoint.path}`,
+            collectionId: collection.id,
+            collectionName: collection.name,
+            method: endpoint.method,
+            path: endpoint.path,
+            inspector: "ai",
+            example: "success",
+            endpoint
+          };
+          void aiActions.previewPrompt(
+            tab,
+            "success",
+            importChangeGenerationContext(change)
+          );
+          drawers.importReport.close();
+        }}
+        onRefreshEndpointMock={(collection, endpoint, change) => {
+          const context = importChangeGenerationContext(change);
+          if (!context) return;
+          const tab: EndpointTab = {
+            id: `import-report:${collection.id}:${endpoint.method}:${endpoint.path}`,
+            collectionId: collection.id,
+            collectionName: collection.name,
+            method: endpoint.method,
+            path: endpoint.path,
+            inspector: "ai",
+            example: "success",
+            endpoint
+          };
+          void aiActions.generateWithContext(tab, "success", true, context);
+          drawers.importReport.close();
+        }}
+        onRefreshChangedMocks={(collection, changes) => {
+          void (async () => {
+            for (const { endpoint, change } of changes) {
+              const context = importChangeGenerationContext(change);
+              if (!context) continue;
+              const tab: EndpointTab = {
+                id: `import-report:${collection.id}:${endpoint.method}:${endpoint.path}`,
+                collectionId: collection.id,
+                collectionName: collection.name,
+                method: endpoint.method,
+                path: endpoint.path,
+                inspector: "ai",
+                example: "success",
+                endpoint
+              };
+              await aiActions.generateWithContext(tab, "success", true, context);
+            }
+          })();
+          drawers.importReport.close();
+        }}
       />
 
       <ImportDialog
@@ -530,6 +679,7 @@ function App() {
         onStart={gatewayActions.start}
         onStop={mockGateway.stop}
         onApplyOverrides={gatewayActions.applyOverrides}
+        onApplyConditionalRules={gatewayActions.applyConditionalRules}
         onApplyChaos={gatewayActions.applyChaos}
         onToggleCaptureBodies={gatewayActions.toggleCaptureBodies}
         onToggleEnforceRequestBodies={gatewayActions.toggleEnforceRequestBodies}
@@ -538,6 +688,8 @@ function App() {
         onApplyResponseHeaders={gatewayActions.applyResponseHeaders}
         onSeedRequiredHeadersFromHints={gatewayActions.seedRequiredHeadersFromHints}
         onApplyProxyUpstream={gatewayActions.applyProxyUpstream}
+        onToggleRequestCache={gatewayActions.toggleRequestCache}
+        onReloadRequestCache={gatewayActions.reloadRequestCache}
         onClearLog={gatewayActions.clearLog}
         onExportBundle={gatewayActions.exportBundle}
         onImportBundle={gatewayActions.importBundle}

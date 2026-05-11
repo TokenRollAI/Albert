@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  ConditionalExampleRule,
   GatewayStatus,
   MockExampleKind,
   RateLimitRule,
@@ -19,6 +20,9 @@ const EMPTY_STATUS: GatewayStatus = {
     port: 4317,
     cors_enabled: true,
     example_overrides: {},
+    conditional_example_rules: {},
+    use_request_cache: false,
+    request_cache_entries: {},
     default_latency_ms: null,
     latency_overrides: {},
     error_rate: 0
@@ -37,6 +41,8 @@ interface StartArgs {
   corsEnabled: boolean;
   collectionIds?: string[];
   exampleOverrides?: Record<string, MockExampleKind>;
+  conditionalExampleRules?: Record<string, ConditionalExampleRule[]>;
+  useRequestCache?: boolean;
   defaultLatencyMs?: number | null;
   latencyOverrides?: Record<string, number>;
   errorRate?: number;
@@ -52,6 +58,8 @@ interface StartArgs {
 
 interface UpdateArgs {
   overrides?: Record<string, MockExampleKind>;
+  conditionalExampleRules?: Record<string, ConditionalExampleRule[]>;
+  useRequestCache?: boolean;
   collectionIds?: string[];
   defaultLatencyMs?: number | null;
   latencyOverrides?: Record<string, number>;
@@ -83,6 +91,8 @@ async function persistConfig(
     port: config.port,
     cors_enabled: config.cors_enabled,
     example_overrides: config.example_overrides,
+    conditional_example_rules: config.conditional_example_rules ?? {},
+    use_request_cache: config.use_request_cache ?? false,
     default_latency_ms: config.default_latency_ms ?? null,
     latency_overrides: config.latency_overrides,
     error_rate: config.error_rate,
@@ -105,6 +115,8 @@ export interface SavedGatewayPreferences {
   port?: number;
   cors_enabled?: boolean;
   example_overrides?: Record<string, MockExampleKind>;
+  conditional_example_rules?: Record<string, ConditionalExampleRule[]>;
+  use_request_cache?: boolean;
   default_latency_ms?: number | null;
   latency_overrides?: Record<string, number>;
   error_rate?: number;
@@ -217,6 +229,7 @@ export function useMockGateway({
       corsEnabled,
       collectionIds,
       exampleOverrides,
+      conditionalExampleRules,
       defaultLatencyMs,
       latencyOverrides,
       errorRate,
@@ -227,6 +240,7 @@ export function useMockGateway({
       rateLimits,
       statusOverrides,
       proxyUpstream,
+      useRequestCache,
       databaseUrl
     }: StartArgs) => {
       if (!enabled) {
@@ -243,6 +257,8 @@ export function useMockGateway({
             cors_enabled: corsEnabled,
             collection_ids: collectionIds ?? null,
             example_overrides: exampleOverrides ?? null,
+            conditional_example_rules: conditionalExampleRules ?? null,
+            use_request_cache: useRequestCache ?? null,
             default_latency_ms: defaultLatencyMs ?? null,
             latency_overrides: latencyOverrides ?? null,
             error_rate: errorRate ?? null,
@@ -310,6 +326,8 @@ export function useMockGateway({
         const next = await invoke<GatewayStatus>("update_mock_server", {
           args: {
             example_overrides: args.overrides ?? null,
+            conditional_example_rules: args.conditionalExampleRules ?? null,
+            use_request_cache: args.useRequestCache ?? null,
             collection_ids: args.collectionIds ?? null,
             default_latency_ms:
               args.defaultLatencyMs === null || args.defaultLatencyMs === 0

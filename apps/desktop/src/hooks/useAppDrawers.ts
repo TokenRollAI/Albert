@@ -15,6 +15,8 @@ export interface DrawerSlot {
 }
 
 export interface AppDrawers {
+  workspace: DrawerSlot;
+  importReport: DrawerSlot;
   import: DrawerSlot;
   mockServer: DrawerSlot;
   providers: DrawerSlot;
@@ -40,6 +42,8 @@ function useDrawerSlot(initial = false): DrawerSlot {
  */
 export function useAppDrawers(): AppDrawers {
   return {
+    workspace: useDrawerSlot(),
+    importReport: useDrawerSlot(),
     import: useDrawerSlot(),
     mockServer: useDrawerSlot(),
     providers: useDrawerSlot(),

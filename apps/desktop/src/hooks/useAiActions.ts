@@ -3,6 +3,7 @@ import { useCallback } from "react";
 import type {
   EndpointTab,
   ExampleKind,
+  GenerationContext,
   MockExample,
   ProviderConfigDraft
 } from "../types";
@@ -36,10 +37,22 @@ export interface AiActions {
     intent: ExampleKind,
     persist: boolean
   ) => Promise<MockExample | null>;
+  generateWithContext: (
+    tab: EndpointTab,
+    intent: ExampleKind,
+    persist: boolean,
+    generationContext: GenerationContext
+  ) => Promise<MockExample | null>;
   generateAll: (tab: EndpointTab, persist: boolean) => Promise<void>;
+  generateAllWithContexts: (
+    tab: EndpointTab,
+    persist: boolean,
+    generationContexts: Partial<Record<ExampleKind, GenerationContext>>
+  ) => Promise<void>;
   previewPrompt: (
     tab: EndpointTab,
-    intent: ExampleKind
+    intent: ExampleKind,
+    generationContext?: GenerationContext | null
   ) => Promise<PromptPreview>;
   saveExample: (
     tab: EndpointTab,
@@ -62,8 +75,13 @@ export function useAiActions({
   updateEndpointExample,
   promptPreviewSetters
 }: UseAiActionsArgs): AiActions {
-  const generate = useCallback<AiActions["generate"]>(
-    async (tab, intent, persist) => {
+  const generateExample = useCallback(
+    async (
+      tab: EndpointTab,
+      intent: ExampleKind,
+      persist: boolean,
+      generationContext: GenerationContext | null
+    ) => {
       if (!isTauriRuntime) {
         throw new Error("AI generation requires the Tauri runtime.");
       }
@@ -76,7 +94,8 @@ export function useAiActions({
             collection_id: tab.collectionId,
             persist,
             database_url: null,
-            api_key_override: apiKeyOverride || null
+            api_key_override: apiKeyOverride || null,
+            generation_context: generationContext
           }
         });
         updateEndpointExample(tab.id, example);
@@ -106,6 +125,20 @@ export function useAiActions({
     ]
   );
 
+  const generate = useCallback<AiActions["generate"]>(
+    async (tab, intent, persist) => {
+      return generateExample(tab, intent, persist, null);
+    },
+    [generateExample]
+  );
+
+  const generateWithContext = useCallback<AiActions["generateWithContext"]>(
+    async (tab, intent, persist, generationContext) => {
+      return generateExample(tab, intent, persist, generationContext);
+    },
+    [generateExample]
+  );
+
   const generateAll = useCallback<AiActions["generateAll"]>(
     async (tab, persist) => {
       if (!isTauriRuntime) {
@@ -124,7 +157,55 @@ export function useAiActions({
               collection_id: tab.collectionId,
               persist,
               database_url: null,
-              api_key_override: apiKeyOverride || null
+              api_key_override: apiKeyOverride || null,
+              generation_context: null
+            }
+          });
+          updateEndpointExample(tab.id, example);
+          results.push({ kind: intent, ok: true });
+        } catch (error) {
+          results.push({ kind: intent, ok: false });
+          toasts.error(`Generate ${intent} failed: ${String(error)}`);
+        }
+      }
+      if (persist) {
+        await refreshStoredCollections();
+      }
+      const okCount = results.filter((r) => r.ok).length;
+      toasts.success(
+        `Generated ${okCount}/${intents.length} variant${okCount === 1 ? "" : "s"}.`
+      );
+    },
+    [
+      isTauriRuntime,
+      providerDraft,
+      apiKeyOverride,
+      toasts,
+      refreshStoredCollections,
+      updateEndpointExample
+    ]
+  );
+
+  const generateAllWithContexts = useCallback<AiActions["generateAllWithContexts"]>(
+    async (tab, persist, generationContexts) => {
+      if (!isTauriRuntime) {
+        toasts.warn("AI generation requires the Tauri runtime.");
+        return;
+      }
+      const intents: ExampleKind[] = ["success", "empty", "error"];
+      const results: Array<{ kind: ExampleKind; ok: boolean }> = [];
+      for (const intent of intents) {
+        try {
+          const example = await invoke<MockExample>("generate_mock_example", {
+            request: {
+              endpoint: tab.endpoint,
+              intent,
+              provider: providerDraft,
+              collection_id: tab.collectionId,
+              persist,
+              database_url: null,
+              api_key_override: apiKeyOverride || null,
+              generation_context: generationContexts[intent] ?? null
             }
           });
           updateEndpointExample(tab.id, example);
@@ -153,7 +234,7 @@ export function useAiActions({
   );
 
   const previewPrompt = useCallback<AiActions["previewPrompt"]>(
-    async (tab, intent) => {
+    async (tab, intent, generationContext = null) => {
       promptPreviewSetters.setOpen(true);
       promptPreviewSetters.setLoading(true);
       promptPreviewSetters.setError(null);
@@ -162,7 +243,8 @@ export function useAiActions({
           "preview_generation_prompt",
           {
             endpoint: tab.endpoint,
-            intent
+            intent,
+            generation_context: generationContext
           }
         );
         promptPreviewSetters.setPreview(preview);
@@ -223,5 +305,12 @@ export function useAiActions({
     ]
   );
 
-  return { generate, generateAll, previewPrompt, saveExample };
+  return {
+    generate,
+    generateWithContext,
+    generateAll,
+    generateAllWithContexts,
+    previewPrompt,
+    saveExample
+  };
 }

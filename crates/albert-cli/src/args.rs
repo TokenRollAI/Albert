@@ -28,6 +28,7 @@ pub enum Command {
     Doctor,
     Ping,
     Verify,
+    Bench,
     Help,
     Version,
 }
@@ -52,6 +53,8 @@ pub struct CliArgs {
     pub auto_stop_secs: Option<u64>,
     /// Capture request bodies (≤4KB) into the request log.
     pub capture_bodies: bool,
+    /// Serve matching cached Try-it responses before default examples.
+    pub use_request_cache: bool,
     /// New name for rename command.
     pub new_name: Option<String>,
     /// Watch poll interval in seconds (defaults to 1.0).
@@ -74,6 +77,13 @@ pub struct CliArgs {
     /// of returning 404. Blank / whitespace-only values are treated as
     /// "disabled" to keep shell scripts happy.
     pub proxy_upstream: Option<String>,
+    /// `bench --iterations N`: total requests to send per route.
+    /// Clamped to `[1, 10_000]` to keep accidental typos from
+    /// accidentally load-testing a partner API for a million hits.
+    pub bench_iterations: u32,
+    /// `bench --concurrency N`: concurrent in-flight requests per
+    /// route. Clamped to `[1, 64]`.
+    pub bench_concurrency: u32,
 }
 
 impl Default for CliArgs {
@@ -92,6 +102,7 @@ impl Default for CliArgs {
             export_collection_id: None,
             auto_stop_secs: None,
             capture_bodies: false,
+            use_request_cache: false,
             new_name: None,
             watch_interval_ms: None,
             ping_url: None,
@@ -99,6 +110,8 @@ impl Default for CliArgs {
             emit_json: false,
             scenario_old_name: None,
             proxy_upstream: None,
+            bench_iterations: 50,
+            bench_concurrency: 4,
         }
     }
 }
@@ -189,6 +202,7 @@ where
         "doctor" => Command::Doctor,
         "ping" => Command::Ping,
         "verify" => Command::Verify,
+        "bench" => Command::Bench,
         "help" | "--help" | "-h" => Command::Help,
         "version" | "--version" | "-V" => Command::Version,
         other => return Err(CliError::UnknownCommand(other.to_string())),
@@ -281,6 +295,9 @@ where
             "capture-bodies" => {
                 out.capture_bodies = true;
             }
+            "use-request-cache" => {
+                out.use_request_cache = true;
+            }
             "print-config" => {
                 out.print_config = true;
             }
@@ -304,6 +321,24 @@ where
                 } else {
                     Some(trimmed.to_string())
                 };
+            }
+            "iterations" => {
+                let v = take_value(&mut i)?;
+                let parsed = v.parse::<u32>().map_err(|err| CliError::BadValue {
+                    flag: flag.clone(),
+                    value: v.clone(),
+                    reason: err.to_string(),
+                })?;
+                out.bench_iterations = parsed.clamp(1, 10_000);
+            }
+            "concurrency" => {
+                let v = take_value(&mut i)?;
+                let parsed = v.parse::<u32>().map_err(|err| CliError::BadValue {
+                    flag: flag.clone(),
+                    value: v.clone(),
+                    reason: err.to_string(),
+                })?;
+                out.bench_concurrency = parsed.clamp(1, 64);
             }
             "interval-ms" => {
                 let v = take_value(&mut i)?;
@@ -355,6 +390,9 @@ pub fn help_text() -> String {
     s.push_str("    doctor     Run health checks (db, env, provider reachability)\n");
     s.push_str("    ping       Probe a running mock gateway via /__albert endpoints\n");
     s.push_str("    verify     Hit every declared route on a running gateway\n");
+    s.push_str(
+        "    bench      Lightweight load test: hit every route N times and report p50/p95\n",
+    );
     s.push_str("    help       Print this help\n");
     s.push_str("    version    Print the crate version\n\n");
     s.push_str("SHARED OPTIONS:\n");
@@ -367,6 +405,7 @@ pub fn help_text() -> String {
     s.push_str("    --error-rate <0..1>      Chance of serving the error example\n");
     s.push_str("    --collection <id>        Only serve the named collection(s)\n");
     s.push_str("    --capture-bodies         Record request bodies in the log (≤4KB)\n");
+    s.push_str("    --use-request-cache      Serve matching Try-it cache responses\n");
     s.push_str("    --auto-stop-secs <n>     Stop after N seconds (useful in tests)\n");
     s.push_str("    --proxy-upstream <url>   Forward unmatched routes to this base URL\n");
     s.push_str("    --print-config           Print resolved config as JSON and exit\n\n");
@@ -376,8 +415,10 @@ pub fn help_text() -> String {
     s.push_str("    <file>                   Path to watch (positional, required)\n");
     s.push_str("    --interval-ms <n>        Poll interval in ms (default 1000, min 100)\n");
     s.push_str("    --auto-stop-secs <n>     Exit after N seconds (useful in tests)\n\n");
-    s.push_str("PING / VERIFY OPTIONS:\n");
-    s.push_str("    --url <base>             Gateway base URL (default http://127.0.0.1:4317)\n\n");
+    s.push_str("PING / VERIFY / BENCH OPTIONS:\n");
+    s.push_str("    --url <base>             Gateway base URL (default http://127.0.0.1:4317)\n");
+    s.push_str("    --iterations <n>         (bench) requests per route (default 50, max 10000)\n");
+    s.push_str("    --concurrency <n>        (bench) parallel requests per route (default 4)\n\n");
     s.push_str("RENAME OPTIONS:\n");
     s.push_str("    --id <collection_id>     Collection to rename\n");
     s.push_str("    --name <new_name>        New display name\n\n");
@@ -414,6 +455,7 @@ mod tests {
             "--error-rate=0.25",
             "--collection",
             "api",
+            "--use-request-cache",
         ])
         .unwrap();
         assert_eq!(args.command, Command::Serve);
@@ -423,6 +465,7 @@ mod tests {
         assert_eq!(args.default_latency_ms, Some(50));
         assert!((args.error_rate - 0.25).abs() < 1e-4);
         assert_eq!(args.collections, vec!["api".to_string()]);
+        assert!(args.use_request_cache);
     }
 
     #[test]
@@ -463,5 +506,29 @@ mod tests {
     fn empty_proxy_upstream_flag_is_treated_as_none() {
         let args = parse_args(["serve", "--proxy-upstream", "   "]).unwrap();
         assert!(args.proxy_upstream.is_none());
+    }
+
+    #[test]
+    fn parses_bench_options() {
+        let args = parse_args([
+            "bench",
+            "--url",
+            "http://127.0.0.1:9999",
+            "--iterations",
+            "12",
+            "--concurrency=3",
+        ])
+        .unwrap();
+        assert_eq!(args.command, Command::Bench);
+        assert_eq!(args.ping_url.as_deref(), Some("http://127.0.0.1:9999"));
+        assert_eq!(args.bench_iterations, 12);
+        assert_eq!(args.bench_concurrency, 3);
+    }
+
+    #[test]
+    fn clamps_bench_limits() {
+        let args = parse_args(["bench", "--iterations", "0", "--concurrency", "999"]).unwrap();
+        assert_eq!(args.bench_iterations, 1);
+        assert_eq!(args.bench_concurrency, 64);
     }
 }

@@ -8,7 +8,7 @@ import type {
 
 export const fallbackSummary: AppBootstrapSummary = {
   project_name: "Albert",
-  current_phase: "Phase 2 - Parsing And Persistence",
+  current_phase: "Phase 4 - AI-Assisted Mocking",
   ui_surfaces: [
     "Overview",
     "Import",
@@ -53,8 +53,8 @@ export const fallbackSummary: AppBootstrapSummary = {
   provider_capabilities: [
     {
       name: "OpenAI adapter",
-      stage: "scaffolded",
-      note: "Chat Completions boundary is defined."
+      stage: "partial",
+      note: "Chat Completions generation, JSON mode, schema validation, and one repair retry are wired."
     },
     {
       name: "Responses API",
@@ -65,13 +65,13 @@ export const fallbackSummary: AppBootstrapSummary = {
   gateway_capabilities: [
     {
       name: "Static mock strategy",
-      stage: "scaffolded",
-      note: "Success, empty, and error example states are modeled."
+      stage: "partial",
+      note: "Success, empty, error states and runtime overrides are modeled."
     },
     {
       name: "HTTP listener runtime",
-      stage: "not_implemented",
-      note: "Rust server integration begins in Phase 3."
+      stage: "partial",
+      note: "Tauri runtime starts a local mock gateway when available."
     }
   ]
 };
@@ -214,9 +214,48 @@ export const fallbackParsedCollection: CanonicalApiCollection = {
         }
       ],
       examples: [
-        { kind: "success", title: "Success" },
-        { kind: "empty", title: "Empty" },
-        { kind: "error", title: "Error" }
+        {
+          kind: "success",
+          title: "Success",
+          payload: {
+            data: [
+              {
+                id: "ord_1001",
+                status: "processing",
+                total_amount: 128.5,
+                created_at: "2026-01-01T00:00:00Z"
+              }
+            ],
+            meta: {
+              page: 1,
+              total: 1
+            }
+          },
+          note: "Fallback example for the static desktop preview."
+        },
+        {
+          kind: "empty",
+          title: "Empty",
+          payload: {
+            data: [],
+            meta: {
+              page: 1,
+              total: 0
+            }
+          },
+          note: "Fallback empty-state example."
+        },
+        {
+          kind: "error",
+          title: "Error",
+          payload: {
+            error: {
+              code: "invalid_status",
+              message: "status must be one of pending, processing, or shipped"
+            }
+          },
+          note: "Fallback error example."
+        }
       ]
     }
   ]

@@ -320,6 +320,64 @@ async fn verify_hits_every_route() {
 }
 
 #[tokio::test]
+async fn bench_reports_route_latency() {
+    let temp = TempDir::new().expect("tempdir");
+    let db_path = temp.path().join("albert.db");
+    let openapi_path = temp.path().join("spec.json");
+    fs::write(&openapi_path, OPENAPI).unwrap();
+
+    let args = parse_args([
+        "import".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        openapi_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    run_with_args(args).await.expect("import");
+
+    let store = albert_storage::SqliteStore::new(db_path.to_string_lossy().to_string());
+    let collections = store.load_all_collections().unwrap();
+    let gateway = albert_gateway::MockGateway::new();
+    let status = gateway
+        .start(
+            collections,
+            albert_gateway::GatewayConfig {
+                port: 0,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let bind = status.bind_address.clone().unwrap();
+
+    let args = parse_args([
+        "bench".to_string(),
+        "--url".to_string(),
+        format!("http://{bind}"),
+        "--iterations".to_string(),
+        "3".to_string(),
+        "--concurrency".to_string(),
+        "2".to_string(),
+    ])
+    .unwrap();
+    assert_eq!(args.command, Command::Bench);
+    let outcome = run_with_args(args).await.expect("bench");
+    let message = match outcome {
+        RunOutcome::Message(msg) => msg,
+        other => panic!("unexpected: {other:?}"),
+    };
+    assert!(message.contains("bench: 3 req/route"), "{message}");
+    assert!(message.contains("GET /ping"), "{message}");
+    assert!(message.contains("count="), "{message}");
+    assert!(message.contains("p50="), "{message}");
+    assert!(message.contains("p95="), "{message}");
+    assert!(message.contains("errors=0"), "{message}");
+    assert!(message.contains("3 total requests"), "{message}");
+
+    gateway.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn ping_reports_running_gateway() {
     // Stand up a local mock gateway on an ephemeral port.
     let gateway = albert_gateway::MockGateway::new();
@@ -821,6 +879,7 @@ async fn serve_print_config_emits_json_and_exits() {
         "0".to_string(),
         "--error-rate".to_string(),
         "0.1".to_string(),
+        "--use-request-cache".to_string(),
         "--print-config".to_string(),
     ])
     .unwrap();
@@ -832,8 +891,89 @@ async fn serve_print_config_emits_json_and_exits() {
     let parsed: serde_json::Value = serde_json::from_str(&message).unwrap();
     assert_eq!(parsed["gateway"]["host"], "10.0.0.1");
     assert_eq!(parsed["gateway"]["port"], 0);
+    assert_eq!(parsed["gateway"]["use_request_cache"], true);
     // Clamped float comparison — serde_json preserves the exact literal.
     assert!(parsed["gateway"]["error_rate"].as_f64().unwrap() > 0.09);
+}
+
+#[tokio::test]
+async fn cli_serve_can_load_request_cache_entries() {
+    let temp = TempDir::new().unwrap();
+    let db_path = temp.path().join("albert.db");
+    let openapi_path = temp.path().join("spec.json");
+    fs::write(&openapi_path, OPENAPI).unwrap();
+
+    let import_args = parse_args([
+        "import".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        openapi_path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+    run_with_args(import_args).await.expect("import");
+
+    let store = albert_storage::SqliteStore::new(db_path.to_string_lossy().to_string());
+    store.migrate().unwrap();
+    let collection = store.load_all_collections().unwrap().remove(0);
+    let cached = store
+        .upsert_request_cache(&albert_storage::RequestCacheInput {
+            collection_id: collection.id.clone(),
+            method: "GET".to_string(),
+            path: "/ping".to_string(),
+            request_snapshot: serde_json::json!({
+                "query": "mode=cache",
+                "headers": {},
+                "body": null
+            }),
+            response_snapshot: serde_json::json!({
+                "status": 202,
+                "headers": { "content-type": "application/json" },
+                "body": { "source": "cli-cache" },
+                "elapsed_ms": 1,
+                "size_bytes": 24
+            }),
+        })
+        .unwrap();
+
+    let _ = cached;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let serve_args = parse_args([
+        "serve".to_string(),
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--port".to_string(),
+        port.to_string(),
+        "--use-request-cache".to_string(),
+        "--auto-stop-secs".to_string(),
+        "2".to_string(),
+    ])
+    .unwrap();
+    let server = tokio::spawn(async move { run_with_args(serve_args).await });
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    let bind = format!("127.0.0.1:{port}");
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{bind}/ping?mode=cache"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 202);
+    assert_eq!(
+        resp.headers()
+            .get("x-albert-mock-source")
+            .and_then(|v| v.to_str().ok()),
+        Some("cache")
+    );
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body, serde_json::json!({"source": "cli-cache"}));
+    let outcome = server.await.unwrap().unwrap();
+    assert!(matches!(outcome, RunOutcome::Served(_)));
 }
 
 #[tokio::test]

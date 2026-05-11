@@ -26,8 +26,9 @@ pub mod templating;
 pub mod validator;
 
 pub use config::{
-    GatewayConfig, GatewayConfigBundle, GatewayRouteSummary, GatewayStatus, RateLimitRule,
-    RequiredHeader, planned_capabilities, supported_example_kinds,
+    CachedResponse, ConditionalExampleRule, GatewayConfig, GatewayConfigBundle,
+    GatewayRouteSummary, GatewayStatus, RateLimitRule, RequestCondition, RequiredHeader,
+    planned_capabilities, supported_example_kinds,
 };
 pub use error::GatewayError;
 pub use route::{MatchedRoute, MockRoute, build_routes, route_key};
@@ -47,6 +48,9 @@ use state::{AppState, LatencyConfig};
 pub struct ReconfigureOptions {
     pub collections: Vec<CanonicalApiCollection>,
     pub overrides: BTreeMap<String, MockExampleKind>,
+    pub conditional_example_rules: BTreeMap<String, Vec<ConditionalExampleRule>>,
+    pub use_request_cache: bool,
+    pub request_cache_entries: BTreeMap<String, CachedResponse>,
     pub default_latency_ms: Option<u64>,
     pub latency_overrides: BTreeMap<String, u64>,
     pub latency_jitter_ms: BTreeMap<String, u64>,
@@ -114,7 +118,13 @@ impl MockGateway {
 
         let response_headers = Arc::new(config.response_headers.clone());
         let required_headers = Arc::new(config.required_headers.clone());
+        let conditional_example_rules = Arc::new(config.conditional_example_rules.clone());
         let status_overrides = Arc::new(config.status_overrides.clone());
+        let request_cache = Arc::new(if config.use_request_cache {
+            config.request_cache_entries.clone()
+        } else {
+            BTreeMap::new()
+        });
         let started_at = handlers::epoch_ms_now();
         let collections_arc = Arc::new(collections.clone());
         let state = AppState::new(
@@ -126,7 +136,9 @@ impl MockGateway {
             config.enforce_request_bodies,
             response_headers,
             required_headers,
+            conditional_example_rules,
             status_overrides,
+            request_cache,
             config.rate_limits.clone(),
             collections_arc,
             started_at,
@@ -203,6 +215,9 @@ impl MockGateway {
         self.reconfigure(ReconfigureOptions {
             collections,
             overrides,
+            conditional_example_rules: config.conditional_example_rules,
+            use_request_cache: config.use_request_cache,
+            request_cache_entries: config.request_cache_entries,
             default_latency_ms: config.default_latency_ms,
             latency_overrides: config.latency_overrides,
             latency_jitter_ms: config.latency_jitter_ms,
@@ -231,6 +246,7 @@ impl MockGateway {
         let ReconfigureOptions {
             collections,
             overrides,
+            conditional_example_rules,
             default_latency_ms,
             latency_overrides,
             latency_jitter_ms,
@@ -242,6 +258,8 @@ impl MockGateway {
             rate_limits,
             status_overrides,
             proxy_upstream,
+            use_request_cache,
+            request_cache_entries,
         } = opts;
         let mut guard = self.inner.lock().await;
         let Some(running) = guard.as_mut() else {
@@ -253,6 +271,9 @@ impl MockGateway {
         let table = Arc::new(RouteTable::from_routes(routes));
         running.state.replace_table(table);
         running.state.replace_overrides(Arc::new(overrides.clone()));
+        running
+            .state
+            .replace_conditional_example_rules(Arc::new(conditional_example_rules.clone()));
         running.state.replace_latency(LatencyConfig::new(
             default_latency_ms,
             latency_overrides.clone(),
@@ -275,8 +296,16 @@ impl MockGateway {
             .replace_status_overrides(Arc::new(status_overrides.clone()));
         running
             .state
+            .replace_request_cache(Arc::new(if use_request_cache {
+                request_cache_entries.clone()
+            } else {
+                BTreeMap::new()
+            }));
+        running
+            .state
             .replace_collections(Arc::new(collections.clone()));
         running.config.example_overrides = overrides;
+        running.config.conditional_example_rules = conditional_example_rules;
         running.config.default_latency_ms = default_latency_ms;
         running.config.latency_overrides = latency_overrides;
         running.config.latency_jitter_ms = latency_jitter_ms;
@@ -287,6 +316,8 @@ impl MockGateway {
         running.config.required_headers = required_headers;
         running.config.rate_limits = rate_limits;
         running.config.status_overrides = status_overrides;
+        running.config.use_request_cache = use_request_cache;
+        running.config.request_cache_entries = request_cache_entries;
         running.state.replace_proxy_upstream(proxy_upstream.clone());
         running.config.proxy_upstream = proxy_upstream;
         running.route_summaries = summaries;
@@ -354,12 +385,16 @@ impl MockGateway {
             rate_limits,
             status_overrides,
             example_overrides,
+            conditional_example_rules,
+            use_request_cache,
+            request_cache_entries,
             proxy_upstream,
             ..
         } = bundle.config;
         self.reconfigure(ReconfigureOptions {
             collections,
             overrides: example_overrides,
+            conditional_example_rules,
             default_latency_ms,
             latency_overrides,
             latency_jitter_ms,
@@ -370,6 +405,8 @@ impl MockGateway {
             required_headers,
             rate_limits,
             status_overrides,
+            use_request_cache,
+            request_cache_entries,
             proxy_upstream,
         })
         .await
@@ -2206,6 +2243,287 @@ mod tests {
             log.iter()
                 .any(|e| e.request_id.as_deref() == Some("missing-id-xyz"))
         );
+
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn request_cache_can_serve_matching_try_it_response() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "orders",
+            vec![endpoint(
+                HttpMethod::Get,
+                "/orders",
+                json!({"source": "default"}),
+            )],
+        );
+        let snapshot = serde_json::json!({
+            "query": "status=paid",
+            "headers": { "x-scenario": "vip" },
+            "body": null,
+        });
+        let fingerprint = albert_core::request_fingerprint("GET", "/orders", &snapshot).unwrap();
+        let mut cache = BTreeMap::new();
+        cache.insert(
+            fingerprint.clone(),
+            CachedResponse {
+                collection_id: "orders".to_string(),
+                method: HttpMethod::Get,
+                path: "/orders".to_string(),
+                fingerprint: fingerprint.clone(),
+                status: 202,
+                headers: BTreeMap::new(),
+                body: json!({"source": "cache", "status": "paid"}),
+                hit_count: 3,
+                last_seen_at: Some("1700000000".to_string()),
+            },
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    use_request_cache: true,
+                    request_cache_entries: cache,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("{base}/orders?status=paid"))
+            .header("x-scenario", "vip")
+            .header("accept", "application/json")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 202);
+        assert_eq!(
+            resp.headers()
+                .get("x-albert-mock-source")
+                .and_then(|v| v.to_str().ok()),
+            Some("cache")
+        );
+        assert_eq!(
+            resp.headers()
+                .get("x-albert-cache-fingerprint")
+                .and_then(|v| v.to_str().ok()),
+            Some(fingerprint.as_str())
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body, json!({"source": "cache", "status": "paid"}));
+
+        let miss: serde_json::Value = client
+            .get(format!("{base}/orders?status=open"))
+            .header("x-scenario", "vip")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(miss, json!({"source": "default"}));
+
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn conditional_example_rules_select_by_query_header_and_body() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "orders",
+            vec![
+                endpoint(HttpMethod::Get, "/orders", json!({"source": "default"})),
+                endpoint(HttpMethod::Post, "/orders", json!({"source": "created"})),
+            ],
+        );
+        let mut rules = BTreeMap::new();
+        rules.insert(
+            "GET /orders".to_string(),
+            vec![
+                ConditionalExampleRule {
+                    name: "VIP scenario".to_string(),
+                    example: MockExampleKind::Empty,
+                    when: vec![
+                        RequestCondition::Query {
+                            name: "status".to_string(),
+                            equals: "empty".to_string(),
+                        },
+                        RequestCondition::Header {
+                            name: "x-scenario".to_string(),
+                            equals: "vip".to_string(),
+                        },
+                    ],
+                },
+                ConditionalExampleRule {
+                    name: "Error scenario".to_string(),
+                    example: MockExampleKind::Error,
+                    when: vec![RequestCondition::Query {
+                        name: "status".to_string(),
+                        equals: "failed".to_string(),
+                    }],
+                },
+            ],
+        );
+        rules.insert(
+            "POST /orders".to_string(),
+            vec![ConditionalExampleRule {
+                name: "Request body asks for failure".to_string(),
+                example: MockExampleKind::Error,
+                when: vec![RequestCondition::Body {
+                    path: "status".to_string(),
+                    equals: json!("failed"),
+                }],
+            }],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    conditional_example_rules: rules,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let client = reqwest::Client::new();
+
+        let resp = client
+            .get(format!("{base}/orders?status=empty"))
+            .header("x-scenario", "vip")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(
+            resp.headers()
+                .get("x-albert-mock-kind")
+                .and_then(|v| v.to_str().ok()),
+            Some("empty")
+        );
+        assert_eq!(
+            resp.headers()
+                .get("x-albert-mock-source")
+                .and_then(|v| v.to_str().ok()),
+            Some("conditional")
+        );
+
+        let resp = client
+            .get(format!("{base}/orders?status=failed"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 400);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body, json!({"error": "forced"}));
+
+        // Explicit query override remains highest precedence.
+        let resp = client
+            .get(format!("{base}/orders?status=failed&__albert_mock=success"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(
+            resp.headers()
+                .get("x-albert-mock-source")
+                .and_then(|v| v.to_str().ok()),
+            Some("query")
+        );
+
+        let resp = client
+            .post(format!("{base}/orders"))
+            .json(&json!({"status": "failed"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 400);
+        let log = gateway.recent_requests(10).await;
+        assert!(
+            log.iter()
+                .any(|entry| entry.source == "conditional"
+                    && entry.kind == Some(MockExampleKind::Error)),
+            "expected conditional log entry, got {log:?}"
+        );
+
+        gateway.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn conditional_example_rules_beat_request_cache_when_both_match() {
+        let gateway = MockGateway::new();
+        let col = collection(
+            "orders",
+            vec![endpoint(
+                HttpMethod::Get,
+                "/orders",
+                json!({"source": "default"}),
+            )],
+        );
+        let snapshot = serde_json::json!({
+            "query": "status=failed",
+            "headers": {},
+            "body": null,
+        });
+        let fingerprint = albert_core::request_fingerprint("GET", "/orders", &snapshot).unwrap();
+        let mut cache = BTreeMap::new();
+        cache.insert(
+            fingerprint.clone(),
+            CachedResponse {
+                collection_id: "orders".to_string(),
+                method: HttpMethod::Get,
+                path: "/orders".to_string(),
+                fingerprint,
+                status: 202,
+                headers: BTreeMap::new(),
+                body: json!({"source": "cache"}),
+                hit_count: 1,
+                last_seen_at: None,
+            },
+        );
+        let mut rules = BTreeMap::new();
+        rules.insert(
+            "GET /orders".to_string(),
+            vec![ConditionalExampleRule {
+                name: "failed requests use error mock".to_string(),
+                example: MockExampleKind::Error,
+                when: vec![RequestCondition::Query {
+                    name: "status".to_string(),
+                    equals: "failed".to_string(),
+                }],
+            }],
+        );
+        let status = gateway
+            .start(
+                vec![col],
+                GatewayConfig {
+                    port: 0,
+                    use_request_cache: true,
+                    request_cache_entries: cache,
+                    conditional_example_rules: rules,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("start");
+        let base = format!("http://{}", status.bind_address.clone().unwrap());
+        let resp = reqwest::get(format!("{base}/orders?status=failed"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 400);
+        assert_eq!(
+            resp.headers()
+                .get("x-albert-mock-source")
+                .and_then(|v| v.to_str().ok()),
+            Some("conditional")
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body, json!({"error": "forced"}));
 
         gateway.stop().await.expect("stop");
     }

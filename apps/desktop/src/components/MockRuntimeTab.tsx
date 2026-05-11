@@ -31,6 +31,8 @@ interface MockRuntimeTabProps {
   ) => Promise<void>;
   onSeedRequiredHeadersFromHints: () => Promise<void>;
   onApplyProxyUpstream?: (upstream: string | null) => Promise<void>;
+  onToggleRequestCache?: (enabled: boolean) => Promise<void>;
+  onReloadRequestCache?: () => Promise<void>;
   scenarios?: {
     list: () => Promise<StoredScenarioSummary[]>;
     save: (name: string) => Promise<void>;
@@ -62,6 +64,8 @@ export function MockRuntimeTab({
   onApplyResponseHeaders,
   onSeedRequiredHeadersFromHints,
   onApplyProxyUpstream,
+  onToggleRequestCache,
+  onReloadRequestCache,
   scenarios
 }: MockRuntimeTabProps) {
   const initialHost =
@@ -119,6 +123,9 @@ export function MockRuntimeTab({
 
   const requiredHeaderCount = Object.keys(
     status.config.required_headers ?? {}
+  ).length;
+  const requestCacheEntryCount = Object.keys(
+    status.config.request_cache_entries ?? {}
   ).length;
 
   return (
@@ -293,6 +300,52 @@ export function MockRuntimeTab({
           value={status.config.proxy_upstream ?? null}
           onApply={onApplyProxyUpstream}
         />
+      ) : null}
+
+      {onToggleRequestCache ? (
+        <section className="panel">
+          <div className="panel__title panel__title--row">
+            <h3>Request cache routing</h3>
+            <span className="panel__meta">
+              {status.config.use_request_cache
+                ? `${requestCacheEntryCount} cached`
+                : "off"}
+            </span>
+          </div>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={status.config.use_request_cache ?? false}
+              onChange={(event) =>
+                void onToggleRequestCache(event.target.checked)
+              }
+              disabled={!status.running}
+            />
+            <span>Serve matching cached Try-it responses before default examples</span>
+          </label>
+          {onReloadRequestCache ? (
+            <div className="row-actions">
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() => void onReloadRequestCache()}
+                disabled={
+                  !status.running || !(status.config.use_request_cache ?? false)
+                }
+              >
+                <Icon name="refresh" size={12} />
+                <span>Reload request cache</span>
+              </button>
+            </div>
+          ) : null}
+          <p className="hint">
+            When on, Albert loads recent request fingerprints into the running
+            gateway. Reload after new Try-it captures to inject fresh cache
+            rows. A matching method, path, query, headers, and body returns
+            the captured response with <code>x-albert-mock-source: cache</code>.
+            Query overrides and route overrides still take precedence.
+          </p>
+        </section>
       ) : null}
 
       {scenarios ? (

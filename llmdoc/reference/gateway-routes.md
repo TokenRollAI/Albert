@@ -40,8 +40,52 @@ Order of precedence:
 1. Request query override: `?__albert_mock=success|empty|error`.
 2. Per-route override in `GatewayConfig.example_overrides`
    (key: `"METHOD /path"`).
-3. The endpoint's `success` example.
-4. Any available example (first one).
+3. Per-route conditional example rules in
+   `GatewayConfig.conditional_example_rules` (key: `"METHOD /path"`). Rules
+   match simple query/header/body equality conditions and choose
+   `success | empty | error`; matching responses include
+   `x-albert-mock-source: conditional`.
+4. Opt-in request-cache routing when `GatewayConfig.use_request_cache` is true
+   and the injected `request_cache_entries` contains the normalized
+   method/path/query/header/body fingerprint.
+5. The endpoint's `success` example.
+6. Any available example (first one).
+
+Request-cache routing is an in-memory map injected by the Tauri/CLI host; the
+gateway does not read SQLite on the request path. Tauri can reload the map via
+`update_mock_server`; CLI `serve --use-request-cache` loads it once at startup
+and needs a restart to pick up later cache rows. Cache hits respond with
+`x-albert-mock-source: cache` and `x-albert-cache-fingerprint`.
+
+Conditional example rules are runtime config. They are serialized in gateway
+config bundles, surfaced by `/__albert/config`, persisted in gateway
+preferences, and editable from the desktop Mock Server Routes tab. Rule shape:
+
+```json
+{
+  "GET /orders": [
+    {
+      "name": "VIP empty list",
+      "example": "empty",
+      "when": [
+        { "source": "query", "name": "status", "equals": "empty" },
+        { "source": "header", "name": "x-scenario", "equals": "vip" }
+      ]
+    },
+    {
+      "name": "body-driven error",
+      "example": "error",
+      "when": [
+        { "source": "body", "path": "status", "equals": "failed" }
+      ]
+    }
+  ]
+}
+```
+
+Body paths are dot-separated object keys with numeric array indexes
+(`items.0.sku`). Query values are compared against the raw query-string value;
+header names are matched case-insensitively.
 
 Status code mapping:
 

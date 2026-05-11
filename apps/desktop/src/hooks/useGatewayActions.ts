@@ -4,6 +4,7 @@ import { seedRequiredHeadersFromEndpoints } from "../lib/authHints";
 import { seedTryItDraft } from "./useTryItDraft";
 import type {
   CanonicalEndpoint,
+  ConditionalExampleRule,
   MockExampleKind,
   RateLimitRule,
   RequestLogEntry,
@@ -30,6 +31,8 @@ interface UseGatewayActionsArgs {
       statusOverrides?: Record<string, number>;
       proxyUpstream?: string | null;
       exampleOverrides?: Record<string, MockExampleKind>;
+      conditionalExampleRules?: Record<string, ConditionalExampleRule[]>;
+      useRequestCache?: boolean;
     }) => Promise<{ running: boolean; bind_address?: string | null } | null>;
     update: (args: {
       overrides?: Record<string, MockExampleKind>;
@@ -42,6 +45,8 @@ interface UseGatewayActionsArgs {
       responseHeaders?: Record<string, Record<string, string>>;
       statusOverrides?: Record<string, number>;
       proxyUpstream?: string | null;
+      conditionalExampleRules?: Record<string, ConditionalExampleRule[]>;
+      useRequestCache?: boolean;
     }) => Promise<unknown>;
     savedPreferences?: {
       default_latency_ms?: number | null;
@@ -55,6 +60,8 @@ interface UseGatewayActionsArgs {
       status_overrides?: Record<string, number>;
       proxy_upstream?: string | null;
       example_overrides?: Record<string, MockExampleKind>;
+      conditional_example_rules?: Record<string, ConditionalExampleRule[]>;
+      use_request_cache?: boolean;
     } | null;
     clearLog?: () => Promise<void>;
     exportBundle?: () => Promise<unknown>;
@@ -80,6 +87,9 @@ export interface GatewayActions {
   applyOverrides: (
     overrides: Record<string, MockExampleKind>
   ) => Promise<void>;
+  applyConditionalRules: (
+    rules: Record<string, ConditionalExampleRule[]>
+  ) => Promise<void>;
   applyChaos: (defaultLatencyMs: number, errorRate: number) => Promise<void>;
   toggleCaptureBodies: (enabled: boolean) => Promise<void>;
   toggleEnforceRequestBodies: (enabled: boolean) => Promise<void>;
@@ -92,6 +102,8 @@ export interface GatewayActions {
   ) => Promise<void>;
   seedRequiredHeadersFromHints: () => Promise<void>;
   applyProxyUpstream: (upstream: string | null) => Promise<void>;
+  toggleRequestCache: (enabled: boolean) => Promise<void>;
+  reloadRequestCache: () => Promise<void>;
   clearLog: () => Promise<void>;
   exportBundle: () => Promise<void>;
   importBundle: (bundleJson: string) => Promise<void>;
@@ -136,7 +148,9 @@ export function useGatewayActions({
         rateLimits: saved?.rate_limits,
         statusOverrides: saved?.status_overrides,
         proxyUpstream: saved?.proxy_upstream ?? null,
-        exampleOverrides: saved?.example_overrides
+        exampleOverrides: saved?.example_overrides,
+        conditionalExampleRules: saved?.conditional_example_rules,
+        useRequestCache: saved?.use_request_cache ?? false
       });
       if (result?.running && result.bind_address) {
         toasts.success(
@@ -170,6 +184,31 @@ export function useGatewayActions({
           errorRate > 0
             ? `Chaos: ${defaultLatencyMs}ms latency, ${Math.round(errorRate * 100)}% errors.`
             : `Latency floor set to ${defaultLatencyMs}ms.`
+        );
+      }
+    },
+    [mockGateway, toasts]
+  );
+
+  const applyConditionalRules = useCallback<
+    GatewayActions["applyConditionalRules"]
+  >(
+    async (rules) => {
+      const result = await mockGateway.update({
+        conditionalExampleRules: rules
+      });
+      if (result) {
+        const routeCount = Object.values(rules).filter(
+          (routeRules) => routeRules.length > 0
+        ).length;
+        const ruleCount = Object.values(rules).reduce(
+          (sum, routeRules) => sum + routeRules.length,
+          0
+        );
+        toasts.info(
+          ruleCount === 0
+            ? "Conditional mock rules cleared."
+            : `Applied ${ruleCount} conditional rule${ruleCount === 1 ? "" : "s"} across ${routeCount} route${routeCount === 1 ? "" : "s"}.`
         );
       }
     },
@@ -262,6 +301,27 @@ export function useGatewayActions({
     },
     [mockGateway, toasts]
   );
+
+  const toggleRequestCache = useCallback<GatewayActions["toggleRequestCache"]>(
+    async (enabled) => {
+      const result = await mockGateway.update({ useRequestCache: enabled });
+      if (!result) return;
+      toasts.info(
+        enabled
+          ? "Request cache routing enabled."
+          : "Request cache routing disabled."
+      );
+    },
+    [mockGateway, toasts]
+  );
+
+  const reloadRequestCache = useCallback<
+    GatewayActions["reloadRequestCache"]
+  >(async () => {
+    const result = await mockGateway.update({ useRequestCache: true });
+    if (!result) return;
+    toasts.info("Request cache routing reloaded.");
+  }, [mockGateway, toasts]);
 
   const seedRequiredHeadersFromHints = useCallback<
     GatewayActions["seedRequiredHeadersFromHints"]
@@ -418,6 +478,7 @@ export function useGatewayActions({
   return {
     start,
     applyOverrides,
+    applyConditionalRules,
     applyChaos,
     toggleCaptureBodies,
     toggleEnforceRequestBodies,
@@ -426,6 +487,8 @@ export function useGatewayActions({
     applyResponseHeaders,
     seedRequiredHeadersFromHints,
     applyProxyUpstream,
+    toggleRequestCache,
+    reloadRequestCache,
     clearLog,
     exportBundle,
     importBundle,

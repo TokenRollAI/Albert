@@ -18,7 +18,9 @@
 - 提供项目概览、导入、接口浏览、Provider 配置、Mock Server 状态面板
 - 承载后续项目管理和交互式配置
 - 通过 Tauri command 与 Rust 核心能力通信
-- 当前 UI 仅作为临时工作台，用于承接 Phase 2 的真实导入链路
+- 当前 UI 已从临时工作台推进为可用的产品化控制台：支持导入、接口浏览、
+  Mock Server 运行配置、Provider profile、AI mock 生成、Try-it 请求发送、
+  响应录制和请求指纹缓存管理
 
 ### 2.2 领域核心层
 
@@ -48,7 +50,8 @@
 
 - 管理 SQLite schema 与迁移
 - 提供仓储接口
-- 保存项目、接口定义、标准化 schema、Mock 样例、Provider 配置
+- 保存项目、接口定义、标准化 schema、Mock 样例、Provider 配置、Mock
+  Server 场景/偏好、请求指纹缓存
 
 ### 2.5 网关层
 
@@ -57,7 +60,9 @@
 职责：
 
 - 承接本地 Mock Server 的请求匹配与调度
-- 一期只定义边界，不启动真实 HTTP 监听
+- 运行真实本地 HTTP Mock Server（axum + tokio），支持路由匹配、样例选择、
+  运行时配置热更新、请求日志/指标、延迟/错误注入、鉴权 gates、请求 body
+  schema enforcement、proxy upstream、OpenAPI/status/config 辅助路由
 
 ### 2.6 AI Provider 层
 
@@ -65,8 +70,19 @@
 
 职责：
 
-- 提供 OpenAI Chat Completions 接口适配器
-- 为后续结构化输出和多 Provider 抽象保留兼容位
+- 提供 OpenAI-compatible Chat Completions、Azure OpenAI Chat Completions、
+  OpenAI Responses API 和 Azure OpenAI Responses API 适配
+- 构造基于 Canonical Schema 的 prompt/schema hint，并支持 JSON-object
+  生成、响应解析、schema 校验和可配置 bounded repair retry
+- 使用 Provider profile 中的生成控制参数：`temperature` 默认 0.7 并限制在
+  0 到 2；`max_output_tokens` 为空时不下发，Chat/Azure Chat 请求映射为
+  `max_tokens`，OpenAI/Azure Responses 请求映射为 `max_output_tokens`；
+  可选 `reasoning_effort` 会在 Responses 请求中映射为
+  `reasoning.effort`，Chat/Azure Chat 当前不下发该参数；可选
+  `schema_repair_attempts` 控制 schema 校验失败后的修复重试次数，默认 2，
+  范围 0–5，0 表示禁用修复重试
+- 接收可选 `generation_context`，让最新 Try-it 响应或 Try-it 缓存中的真实
+  请求/响应上下文参与单次 AI mock 刷新
 
 ## 3. Canonical API Schema
 
@@ -75,6 +91,10 @@
 - cURL、OpenAPI、未来的 Postman / GraphQL 需要统一落点
 - AI Prompt 和结构化输出更适合围绕 JSON Schema 风格数据组织
 - 存储层不应与任意上游协议格式强耦合
+- 当前 Canonical Schema 已覆盖常见 JSON Schema 约束，以及
+  `contains` / `dependentRequired` / `dependentSchemas` / `if` / `then` /
+  `else` / `prefixItems` / object-level `unevaluatedProperties: false` /
+  `unevaluatedItems: false` / 布尔 JSON Schema 等用于提高 AI 生成和修复重试准确度的高级约束
 
 推荐结构：
 
@@ -95,22 +115,36 @@
 3. Rust parser 层识别输入类型
 4. 解析为 Canonical API Schema
 5. 写入存储层
-6. UI 展示接口与样例占位
+6. UI 展示接口、schema、默认样例、导入/更新时间和可编辑 mock 资产
+7. 重复导入同一 collection id 时，Tauri 导入命令会在覆盖保存前比较旧 snapshot
+   和新解析结果，返回 endpoint-level diff 摘要（added / removed / changed /
+   unchanged）；当前 changed 比较接口契约并忽略 mock examples，同时附带粗粒度
+   变更原因（metadata、parameters、request body、responses、auth）和简短明细
+   （参数、请求体、响应状态码/content type/schema 等）。前端在导入成功的
+   status/toast 中展示摘要，并保存最近一次导入报告供 UI 抽屉查看明细和原因
 
 当前命令面：
 
 - `bootstrap_summary`
 - `parse_api_description`
 - `import_api_description`
+- `import_bundle`
 - `list_imported_collections`
 - `list_imported_endpoints`
+- `load_collection_snapshot`
+- `export_collection_json`
+- `export_all_collections_json`
+- `delete_collection`
+- `rename_collection`
 
 ### 4.2 资产查看流（当前已实现）
 
 1. 用户进入接口详情页
 2. UI 读取 Canonical Endpoint 与 MockExample
 3. 根据 `success / empty / error` 切换展示
-4. 后续 phase 再接 AI 生成与网关回放
+4. ResponsePane 支持复制、编辑、保存和 AI 生成/批量生成样例
+5. Try-it 面板可向运行中的 Mock Server 发送请求、保存真实响应为样例、查看最近
+   请求历史和请求指纹缓存
 
 ### 4.3 本地持久化流（当前已实现）
 
@@ -120,6 +154,46 @@
 4. 保存 `api_endpoints`
 5. 保存请求/响应 schema 到 `api_schemas`
 6. 保存默认 `success / empty / error` mock examples
+7. `api_collections` 记录 `created_at` / `updated_at`；重复导入、重命名和 mock
+   example 资产编辑会刷新 `updated_at`，`list_imported_collections` 返回这些
+   metadata 并按最近更新倒序排列，Sidebar 用它显示最近导入/更新时间
+8. 后续编辑/AI 生成/录制响应通过 `replace_mock_example` / `save_mock_example`
+   同步更新样例表和 collection snapshot JSON
+9. 导入差异摘要不新增数据库表，直接使用即将覆盖的 `raw_snapshot` 与新
+   `CanonicalApiCollection` 比较；完整 Schema Diff Engine 和版本历史仍是后续演进
+
+### 4.4 Mock Server 运行流（当前已实现）
+
+1. 前端 Mock Server 面板调用 `start_mock_server`
+2. Tauri 从 SQLite 解析 collection 快照并交给 `MockGateway`
+3. `albert-gateway` 生成 `RouteTable` 并绑定本地 HTTP 监听
+4. 请求按 method + path template 匹配，选择 query override、运行时 override 或
+   endpoint 默认样例；Mock Server Routes tab 还可配置 per-route
+   `conditional_example_rules`，按 query/header/body equality 条件选择
+   `success / empty / error` 样例
+5. 运行期间可通过 `update_mock_server` 热更新 chaos、headers、auth gates、rate
+   limits、status overrides、schema enforcement、proxy upstream 等配置
+6. 请求日志和指标通过 `mock_server_requests` / `mock_server_metrics` 返回 UI
+
+### 4.5 AI 与请求缓存流（当前已实现）
+
+1. ResponsePane 调用 `generate_mock_example` 生成并可持久化样例；目标 mock 槽位
+   已有样例时，单个生成、批量生成和 prompt 预览会把该样例作为
+   `generation_context`
+2. Providers 面板管理非 secret provider profiles，并支持 session-only API key
+   override、连接测试、temperature、max output tokens 与 reasoning effort
+   生成参数
+3. Try-it 成功请求会 best-effort 写入 `request_fingerprint_cache`
+4. 最新 Try-it 响应可直接作为 AI refresh / Prompt preview 上下文；缓存行也可
+   Replay、Save as mock、Remove、Clear stale、Prompt preview、AI refresh；
+   stale 缓存存在时，Try-it 显示 Refresh queue，把批量 AI refresh、首个 stale
+   prompt 预览和清理操作集中在缓存列表之前
+5. Mock Server 的 Request cache routing 开关可在启动/更新时把近期缓存响应注入
+   gateway 内存；Runtime 面板会显示已注入条目数，并可通过 Reload request cache
+   在不重启监听器的情况下重新注入新录制缓存；Try-it 在成功保存新指纹后也会在
+   routing 已开启时提供内联 reload 入口。`albert-cli serve --use-request-cache`
+   也可在 headless 模式启动时注入缓存。运行时命中相同请求指纹会直接返回缓存
+   响应。Gateway 不在请求时访问 SQLite，后台自动刷新仍未实现
 
 ## 5. 数据持久化建议
 
@@ -131,28 +205,45 @@
 - `api_schemas`
 - `mock_examples`
 - `provider_configs`
+- `gateway_preferences`
+- `gateway_scenarios`
+- `request_fingerprint_cache`
 
 建议策略：
 
 - 原始输入可选保留一份快照，便于重新解析
 - 存库主体应是标准化后的结构
 - 样例与 endpoint 分离，便于后续扩展状态与版本
-- 当前实现已支持 collection、endpoint、schema、example、provider config 的基础落库
+- 当前实现已支持 collection、endpoint、schema、example、provider config、
+  gateway scenario/preference、request fingerprint cache 的基础落库；collection
+  summary 已包含创建/更新时间，用于工作区导入记录的第一层可见性
 
 ## 6. UI 信息架构
 
-- `Overview`: 当前项目状态、实现进度、后续 phase
-- `Import`: OpenAPI / cURL 导入入口与规则说明
-- `Endpoints`: 接口清单、方法、路径、状态
-- `Endpoint Detail`: 请求结构、响应结构、Mock 样例
-- `Providers`: OpenAI 配置入口
-- `Server`: Mock Server 规划状态和未来运行参数
+- `TopBar`: 导入入口、全局工作区标题、Workspace collections 入口、主题切换
+- `ImportReportPanel`: 最近一次导入报告抽屉，展示 added / changed / removed /
+  unchanged 计数和 endpoint 列表；added/changed 可直接打开新 snapshot 中仍存在的
+  endpoint，也可直接打开该 endpoint 的 success prompt preview；changed 行展示粗粒度
+  变更原因和简短明细，并把这些信息作为 prompt preview / AI Refresh success mock 的
+  generation context note；报告头部可批量 Refresh 全部可刷新 changed endpoint，removed
+  只展示
+- `WorkspacePanel`: 右侧工作区抽屉，汇总当前 imported collections 的数量、
+  endpoint 数、SQLite/Preview 来源、最近更新时间、方法分布，并复用打开、
+  重命名、导出、删除、刷新和导入动作；当前仍是导入记录 first slice，不承担完整
+  多项目切换
+- `Sidebar`: collection/endpoint 列表、搜索、标签过滤、collection 管理和最近更新
+  metadata
+- `Endpoint Detail`: 请求参数/headers/body/responses/schema/AI mock tabs
+- `ResponsePane`: mock 样例查看、编辑、AI 生成、prompt 预览
+- `Try-it`: 请求构造、发送、响应录制、历史、请求指纹缓存和 AI refresh
+- `Providers`: provider profile、API key override、环境变量状态、连接测试
+- `Mock Server`: runtime、routes、requests、scenarios、chaos、auth/schema/proxy 配置
 
 当前说明：
 
-- 当前桌面界面应按“占位工具工作台”理解
-- 现阶段更关注命令与数据链路是否成立，而不是最终 UI 形态
-- 后续可以重新设计窗口结构，而不影响 parser、storage、gateway 的边界
+- 当前桌面界面已是可用控制台，但仍可继续向更完整的项目/工作区管理演进
+- UI 仍不应反向决定领域模型；复杂行为继续通过 canonical types 和 Tauri command
+  边界进入 Rust crates
 
 ## 7. 模块边界与依赖方向
 
@@ -175,10 +266,10 @@
 
 ## 9. 后续演进位
 
-- OpenAI Responses API 适配
-- AI 结构化输出与修复重试
+- Azure Responses、streaming/tool calling、reasoning control 等高级 Provider 变体
 - 静态样例与动态生成结合
-- 本地 HTTP 网关运行时
-- 文档 diff 与样例失效刷新
-- 多 Provider 兼容层
-- 前端导入体验、collection 切换、详情页细化
+- 文档 diff / Schema Diff Engine 与样例失效刷新；当前仅有重复导入时的
+  endpoint-level diff 摘要
+- 请求指纹缓存驱动的后台自动录制、过期样例刷新和网关侧自动样例选择
+- 更完整的多环境/provider matrix
+- 工作区历史、项目切换、导入记录与团队协作边界

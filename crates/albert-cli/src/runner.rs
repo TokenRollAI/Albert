@@ -5,8 +5,10 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use albert_gateway::{GatewayConfig, GatewayStatus, MockGateway};
+use albert_core::{CanonicalApiCollection, HttpMethod};
+use albert_gateway::{CachedResponse, GatewayConfig, GatewayStatus, MockGateway};
 use albert_storage::SqliteStore;
+use reqwest::{Client, RequestBuilder};
 
 use crate::args::{CliArgs, Command, help_text};
 use crate::ingest::{Ingested, ingest_file};
@@ -47,24 +49,19 @@ pub async fn run_with_args(args: CliArgs) -> Result<RunOutcome, String> {
         Command::Doctor => run_doctor(args).await,
         Command::Ping => run_ping(args).await,
         Command::Verify => run_verify(args).await,
+        Command::Bench => run_bench(args).await,
         Command::Watch => run_watch(args).await,
         Command::Serve => run_serve(args).await,
     }
 }
 
-async fn run_verify(args: CliArgs) -> Result<RunOutcome, String> {
-    let base = args
-        .ping_url
-        .clone()
-        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
-        .trim_end_matches('/')
-        .to_string();
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("client build: {e}"))?;
+#[derive(Debug, Clone)]
+struct GatewayRoute {
+    method: String,
+    path: String,
+}
 
-    // Pull the registered route list from /__albert/routes.
+async fn fetch_gateway_routes(client: &Client, base: &str) -> Result<Vec<GatewayRoute>, String> {
     let routes_url = format!("{base}/__albert/routes");
     let resp = client
         .get(&routes_url)
@@ -81,7 +78,7 @@ async fn run_verify(args: CliArgs) -> Result<RunOutcome, String> {
         .json()
         .await
         .map_err(|e| format!("routes body parse: {e}"))?;
-    let routes: Vec<(String, String)> = body
+    Ok(body
         .get("routes")
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -89,11 +86,58 @@ async fn run_verify(args: CliArgs) -> Result<RunOutcome, String> {
                 .filter_map(|entry| {
                     let method = entry.get("method")?.as_str()?.to_string();
                     let path = entry.get("path")?.as_str()?.to_string();
-                    Some((method, path))
+                    Some(GatewayRoute { method, path })
                 })
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default())
+}
+
+fn concrete_route_path(path: &str) -> String {
+    path.split('/')
+        .map(|seg| {
+            if let Some(name) = seg
+                .strip_prefix('{')
+                .and_then(|rest| rest.strip_suffix('}'))
+            {
+                return format!("_{name}");
+            }
+            if let Some(name) = seg.strip_prefix(':') {
+                return format!("_{name}");
+            }
+            seg.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn route_request(client: &Client, method: &str, target: &str) -> Result<RequestBuilder, String> {
+    match method.to_ascii_uppercase().as_str() {
+        "GET" => Ok(client.get(target)),
+        "HEAD" => Ok(client.head(target)),
+        "OPTIONS" => Ok(client.request(reqwest::Method::OPTIONS, target)),
+        "POST" => Ok(client.post(target).json(&serde_json::json!({}))),
+        "PUT" => Ok(client.put(target).json(&serde_json::json!({}))),
+        "PATCH" => Ok(client.patch(target).json(&serde_json::json!({}))),
+        "DELETE" => Ok(client.delete(target)),
+        other => Err(format!("{other}: unsupported method")),
+    }
+}
+
+async fn run_verify(args: CliArgs) -> Result<RunOutcome, String> {
+    let base = args
+        .ping_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+
+    // Pull the registered route list from /__albert/routes.
+    let routes = fetch_gateway_routes(&client, &base).await?;
 
     if routes.is_empty() {
         return Ok(RunOutcome::Message(format!(
@@ -105,35 +149,17 @@ async fn run_verify(args: CliArgs) -> Result<RunOutcome, String> {
     let mut failures: Vec<String> = Vec::new();
     let mut lines = Vec::new();
 
-    for (method, path) in &routes {
+    for route in &routes {
         // Substitute path-parameter placeholders with a plausible token so
         // the route actually matches. Real parameter validation should be
         // done elsewhere; this just avoids 404s on templated paths.
-        let concrete_path = path.replace("{", ":").replace("}", "");
-        let concrete_path = concrete_path
-            .split('/')
-            .map(|seg| {
-                if let Some(name) = seg.strip_prefix(':') {
-                    // Use a sentinel per-param so logs are easy to read.
-                    format!("_{name}")
-                } else {
-                    seg.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("/");
+        let concrete_path = concrete_route_path(&route.path);
         let target = format!("{base}{concrete_path}");
 
-        let req = match method.to_ascii_uppercase().as_str() {
-            "GET" => client.get(&target),
-            "HEAD" => client.head(&target),
-            "OPTIONS" => client.request(reqwest::Method::OPTIONS, &target),
-            "POST" => client.post(&target).json(&serde_json::json!({})),
-            "PUT" => client.put(&target).json(&serde_json::json!({})),
-            "PATCH" => client.patch(&target).json(&serde_json::json!({})),
-            "DELETE" => client.delete(&target),
-            other => {
-                failures.push(format!("{other} {path}: unsupported method"));
+        let req = match route_request(&client, &route.method, &target) {
+            Ok(req) => req,
+            Err(err) => {
+                failures.push(format!("{} {}: {err}", route.method, route.path));
                 continue;
             }
         };
@@ -142,16 +168,16 @@ async fn run_verify(args: CliArgs) -> Result<RunOutcome, String> {
             Ok(resp) => {
                 let status = resp.status();
                 if status.as_u16() >= 500 {
-                    failures.push(format!("{method} {path}: HTTP {status}"));
-                    lines.push(format!("[fail] {method} {path} → {status}"));
+                    failures.push(format!("{} {}: HTTP {status}", route.method, route.path));
+                    lines.push(format!("[fail] {} {} → {status}", route.method, route.path));
                 } else {
                     passes += 1;
-                    lines.push(format!("[ ok ] {method} {path} → {status}"));
+                    lines.push(format!("[ ok ] {} {} → {status}", route.method, route.path));
                 }
             }
             Err(err) => {
-                failures.push(format!("{method} {path}: {err}"));
-                lines.push(format!("[fail] {method} {path}: {err}"));
+                failures.push(format!("{} {}: {err}", route.method, route.path));
+                lines.push(format!("[fail] {} {}: {err}", route.method, route.path));
             }
         }
     }
@@ -174,6 +200,137 @@ async fn run_verify(args: CliArgs) -> Result<RunOutcome, String> {
             failures.join("\n- ")
         ))
     }
+}
+
+/// Lightweight load-test entry point. Hits every route exposed by
+/// `/__albert/routes` `--iterations` times with up to `--concurrency`
+/// in flight per route, reporting `{count, p50, p95, errors}` per
+/// endpoint plus a total throughput summary. Not a production
+/// benchmarking tool; a dev-ergonomic "did I make this faster?"
+/// sanity check that lives in the same binary as the mock server.
+async fn run_bench(args: CliArgs) -> Result<RunOutcome, String> {
+    let base = args
+        .ping_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:4317".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let iterations = args.bench_iterations.max(1);
+    let concurrency = args.bench_concurrency.max(1).min(iterations);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+
+    let routes = fetch_gateway_routes(&client, &base).await?;
+
+    if routes.is_empty() {
+        return Ok(RunOutcome::Message(format!(
+            "{base} has no routes to benchmark"
+        )));
+    }
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "bench: {iterations} req/route x {} routes @ concurrency {concurrency} -> {base}",
+        routes.len()
+    ));
+
+    let overall_started = std::time::Instant::now();
+    let mut overall_count: u64 = 0;
+    let mut overall_errors: u64 = 0;
+
+    for route in &routes {
+        let concrete_path = concrete_route_path(&route.path);
+        let target = format!("{base}{concrete_path}");
+        let m = route.method.clone();
+
+        // Run `iterations` requests with `concurrency` in flight via a
+        // simple semaphore. Measuring per-request elapsed in ms.
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency as usize));
+        let mut handles = Vec::with_capacity(iterations as usize);
+        let started_route = std::time::Instant::now();
+        for _ in 0..iterations {
+            let permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| format!("semaphore: {e}"))?;
+            let client = client.clone();
+            let target = target.clone();
+            let method_str = m.clone();
+            handles.push(tokio::spawn(async move {
+                let _permit = permit; // drop on task end
+                let started = std::time::Instant::now();
+                let req = match route_request(&client, &method_str, &target) {
+                    Ok(req) => req,
+                    Err(_) => return (0u64, true),
+                };
+                match req.send().await {
+                    Ok(resp) => {
+                        let elapsed = started.elapsed().as_millis() as u64;
+                        let err = resp.status().as_u16() >= 500;
+                        (elapsed, err)
+                    }
+                    Err(_) => (0, true),
+                }
+            }));
+        }
+        let mut samples = Vec::with_capacity(iterations as usize);
+        let mut errors = 0u64;
+        for h in handles {
+            match h.await {
+                Ok((elapsed, err)) => {
+                    if err {
+                        errors += 1;
+                    } else {
+                        samples.push(elapsed);
+                    }
+                }
+                Err(_) => errors += 1,
+            }
+        }
+        samples.sort_unstable();
+        let p50 = percentile_u64(&samples, 50);
+        let p95 = percentile_u64(&samples, 95);
+        let max = samples.last().copied().unwrap_or(0);
+        let seconds = started_route.elapsed().as_secs_f64().max(1e-6);
+        let rps = (iterations as f64) / seconds;
+        lines.push(format!(
+            "  {method:>7} {path:<36}  count={count:>5}  p50={p50:>4}ms  p95={p95:>4}ms  max={max:>4}ms  {rps:>6.1} rps  errors={errors}",
+            method = &route.method,
+            path = &route.path,
+            count = iterations,
+        ));
+        overall_count += iterations as u64;
+        overall_errors += errors;
+    }
+    let total_secs = overall_started.elapsed().as_secs_f64();
+    lines.push(format!(
+        "\n{count} total requests in {total_secs:.2}s ({rps:.1} rps overall, {overall_errors} error(s))",
+        count = overall_count,
+        rps = (overall_count as f64) / total_secs.max(1e-6),
+    ));
+    if overall_errors > 0 {
+        return Err(lines.join("\n"));
+    }
+    Ok(RunOutcome::Message(lines.join("\n")))
+}
+
+/// Nearest-rank percentile over a pre-sorted slice. Returns 0 for an
+/// empty slice. Duplicates the `RouteMetrics::percentile` used by the
+/// gateway; we could re-export it, but keeping it local avoids
+/// spreading percentile code across crates.
+fn percentile_u64(sorted: &[u64], pct: u8) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let pct = pct.clamp(1, 100) as usize;
+    let idx = pct
+        .saturating_mul(sorted.len())
+        .div_ceil(100)
+        .saturating_sub(1);
+    sorted[idx.min(sorted.len() - 1)]
 }
 
 /// GET /__albert/openapi.json from a running gateway and pretty-print
@@ -902,11 +1059,14 @@ fn write_file(path: &Path, body: &str) -> Result<(), String> {
 
 async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
     let print_config = args.print_config;
-    let config = GatewayConfig {
+    let mut config = GatewayConfig {
         host: args.host.clone(),
         port: args.port,
         cors_enabled: args.cors,
         example_overrides: BTreeMap::new(),
+        conditional_example_rules: BTreeMap::new(),
+        use_request_cache: args.use_request_cache,
+        request_cache_entries: BTreeMap::new(),
         default_latency_ms: args.default_latency_ms,
         latency_overrides: BTreeMap::new(),
         latency_jitter_ms: BTreeMap::new(),
@@ -954,6 +1114,9 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
             args.database_url
         ));
     }
+    if config.use_request_cache {
+        config.request_cache_entries = load_gateway_request_cache(&store, &collections)?;
+    }
 
     let gateway = MockGateway::new();
     let status = gateway
@@ -973,6 +1136,80 @@ async fn run_serve(args: CliArgs) -> Result<RunOutcome, String> {
     }
     gateway.stop().await.map_err(|e| format!("stop: {e}"))?;
     Ok(RunOutcome::Served(Box::new(status)))
+}
+
+fn load_gateway_request_cache(
+    store: &SqliteStore,
+    collections: &[CanonicalApiCollection],
+) -> Result<BTreeMap<String, CachedResponse>, String> {
+    let mut out = BTreeMap::new();
+    for collection in collections {
+        for endpoint in &collection.endpoints {
+            let entries = store
+                .list_request_cache(&collection.id, endpoint.method.as_str(), &endpoint.path, 25)
+                .map_err(|error| error.to_string())?;
+            for entry in entries {
+                let Some(cached) = cached_response_from_entry(entry) else {
+                    continue;
+                };
+                out.insert(cached.fingerprint.clone(), cached);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn cached_response_from_entry(entry: albert_storage::RequestCacheEntry) -> Option<CachedResponse> {
+    let response = entry.response_snapshot.as_object()?;
+    let status = response
+        .get("status")
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u16::try_from(value).ok())?;
+    let body = response
+        .get("body")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let headers = response
+        .get("headers")
+        .and_then(|value| value.as_object())
+        .map(|map| {
+            map.iter()
+                .map(|(key, value)| {
+                    (
+                        key.to_ascii_lowercase(),
+                        value
+                            .as_str()
+                            .map(ToString::to_string)
+                            .unwrap_or_else(|| value.to_string()),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(CachedResponse {
+        collection_id: entry.collection_id,
+        method: method_from_cache_entry(&entry.method)?,
+        path: entry.path,
+        fingerprint: entry.fingerprint,
+        status,
+        headers,
+        body,
+        hit_count: entry.hit_count,
+        last_seen_at: Some(entry.last_seen_at),
+    })
+}
+
+fn method_from_cache_entry(method: &str) -> Option<HttpMethod> {
+    match method.trim().to_ascii_uppercase().as_str() {
+        "GET" => Some(HttpMethod::Get),
+        "POST" => Some(HttpMethod::Post),
+        "PUT" => Some(HttpMethod::Put),
+        "PATCH" => Some(HttpMethod::Patch),
+        "DELETE" => Some(HttpMethod::Delete),
+        "OPTIONS" => Some(HttpMethod::Options),
+        "HEAD" => Some(HttpMethod::Head),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use albert_core::{HttpMethod, MockExample, MockExampleKind};
+use albert_core::{HttpMethod, MockExample, MockExampleKind, request_fingerprint};
 use axum::{
     body::{Body, to_bytes},
     extract::{Request, State},
@@ -13,6 +13,7 @@ use tokio::time::sleep;
 
 const MAX_CAPTURED_BODY_BYTES: usize = 4 * 1024;
 
+use crate::config::{ConditionalExampleRule, RequestCondition};
 use crate::route::route_key;
 use crate::state::{AppState, RateVerdict, RequestLogEntry};
 use crate::templating::apply_templates;
@@ -154,7 +155,9 @@ pub(crate) async fn bundle_export_handler(State(state): State<AppState>) -> Resp
     let latency = state.snapshot_latency();
     let response_headers = state.snapshot_response_headers();
     let required_headers = state.snapshot_required_headers();
+    let conditional_example_rules = state.snapshot_conditional_example_rules();
     let status_overrides = state.snapshot_status_overrides();
+    let request_cache = state.snapshot_request_cache();
     let error_rate = state.snapshot_error_rate();
     let capture_bodies = state.snapshot_capture_bodies();
     let enforce_request_bodies = state.snapshot_enforce_request_bodies();
@@ -173,6 +176,8 @@ pub(crate) async fn bundle_export_handler(State(state): State<AppState>) -> Resp
             "port": 0,
             "cors_enabled": true,
             "example_overrides": &*overrides,
+            "use_request_cache": !request_cache.is_empty(),
+            "request_cache_entries": &*request_cache,
             "default_latency_ms": latency.default_ms,
             "latency_overrides": latency.per_route,
             "latency_jitter_ms": latency.jitter_per_route,
@@ -181,6 +186,7 @@ pub(crate) async fn bundle_export_handler(State(state): State<AppState>) -> Resp
             "enforce_request_bodies": enforce_request_bodies,
             "response_headers": &*response_headers,
             "required_headers": &*required_headers,
+            "conditional_example_rules": &*conditional_example_rules,
             "rate_limits": rate_limits,
             "status_overrides": &*status_overrides,
         },
@@ -257,8 +263,16 @@ pub(crate) async fn bundle_import_handler(
     _state.replace_enforce_request_bodies(bundle.config.enforce_request_bodies);
     _state.replace_response_headers(std::sync::Arc::new(bundle.config.response_headers.clone()));
     _state.replace_required_headers(std::sync::Arc::new(bundle.config.required_headers.clone()));
+    _state.replace_conditional_example_rules(std::sync::Arc::new(
+        bundle.config.conditional_example_rules.clone(),
+    ));
     _state.replace_rate_limits(bundle.config.rate_limits.clone());
     _state.replace_status_overrides(std::sync::Arc::new(bundle.config.status_overrides.clone()));
+    _state.replace_request_cache(std::sync::Arc::new(if bundle.config.use_request_cache {
+        bundle.config.request_cache_entries.clone()
+    } else {
+        std::collections::BTreeMap::new()
+    }));
     _state.replace_collections(std::sync::Arc::new(collections));
     (StatusCode::NO_CONTENT, HeaderMap::new()).into_response()
 }
@@ -282,7 +296,9 @@ pub(crate) async fn config_handler(State(state): State<AppState>) -> Response {
     let latency = state.snapshot_latency();
     let response_headers = state.snapshot_response_headers();
     let required_headers = state.snapshot_required_headers();
+    let conditional_example_rules = state.snapshot_conditional_example_rules();
     let status_overrides = state.snapshot_status_overrides();
+    let request_cache = state.snapshot_request_cache();
     let error_rate = state.snapshot_error_rate();
     let capture_bodies = state.snapshot_capture_bodies();
     let rate_limits = state.snapshot_rate_limit_rules();
@@ -296,8 +312,11 @@ pub(crate) async fn config_handler(State(state): State<AppState>) -> Response {
         "capture_bodies": capture_bodies,
         "response_headers": &*response_headers,
         "required_headers": &*required_headers,
+        "conditional_example_rules": &*conditional_example_rules,
         "rate_limits": rate_limits,
         "status_overrides": &*status_overrides,
+        "use_request_cache": !request_cache.is_empty(),
+        "request_cache_entries": &*request_cache,
     });
     (StatusCode::OK, axum::Json(payload)).into_response()
 }
@@ -338,6 +357,11 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     let method = request.method().clone();
     let path = request.uri().path().to_string();
     let query = request.uri().query().map(|q| q.to_string());
+    let request_body_for_cache = method != Method::GET
+        && method != Method::HEAD
+        && !state.snapshot_request_cache().is_empty();
+    let conditional_rules = state.snapshot_conditional_example_rules();
+    let has_conditional_rules = !conditional_rules.is_empty();
     let capture_bodies = state.snapshot_capture_bodies();
     // Snapshot request headers before we consume the body; required-header
     // gating needs them and we don't want the Request value moved into the
@@ -359,7 +383,9 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     // most once — axum's Body can't be re-read after capture.
     let enforce_bodies = state.snapshot_enforce_request_bodies();
     let wants_body =
-        (capture_bodies || enforce_bodies) && method != Method::GET && method != Method::HEAD;
+        (capture_bodies || enforce_bodies || request_body_for_cache || has_conditional_rules)
+            && method != Method::GET
+            && method != Method::HEAD;
     let captured_body = if wants_body {
         capture_request_body(request).await
     } else {
@@ -535,7 +561,99 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
 
     let (override_kind, query_selected) = parse_query_override(query.as_deref());
     let fallback_override = overrides.get(&matched_key).cloned();
-    let mut chosen_override = override_kind.clone().or(fallback_override.clone());
+    let conditional_kind = if !query_selected && fallback_override.is_none() {
+        conditional_rules.get(&matched_key).and_then(|rules| {
+            let snapshot = build_request_snapshot(
+                query.as_deref(),
+                &request_headers,
+                captured_body.raw_bytes_as_str(),
+            )?;
+            select_conditional_example(rules, &snapshot)
+        })
+    } else {
+        None
+    };
+    let request_cache = state.snapshot_request_cache();
+    let cache_match = if !query_selected
+        && fallback_override.is_none()
+        && conditional_kind.is_none()
+        && !request_cache.is_empty()
+    {
+        build_request_snapshot(
+            query.as_deref(),
+            &request_headers,
+            captured_body.raw_bytes_as_str(),
+        )
+        .and_then(|snapshot| {
+            request_fingerprint(route.method.as_str(), &route.path, &snapshot).ok()
+        })
+        .and_then(|fingerprint| request_cache.get(&fingerprint).cloned())
+    } else {
+        None
+    };
+    if let Some(cached) = cache_match {
+        let status_line_code = cached.status.clamp(100, 599);
+        state.record(RequestLogEntry {
+            at_epoch_ms: epoch_ms_now(),
+            method: method.to_string(),
+            path: path.clone(),
+            query: query.clone(),
+            matched_route: Some(matched_key.clone()),
+            collection_name: Some(route.collection_name.clone()),
+            status: status_line_code,
+            kind: None,
+            source: "cache",
+            latency_ms: 0,
+            request_body: captured_string,
+            request_id: Some(request_id.clone()),
+        });
+        let status = StatusCode::from_u16(status_line_code).unwrap_or(StatusCode::OK);
+        let body = serde_json::to_vec(&cached.body).unwrap_or_else(|_| b"{}".to_vec());
+        let body = if strip_body {
+            Body::empty()
+        } else {
+            Body::from(body)
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        if let Ok(name) = HeaderName::from_bytes(b"x-request-id")
+            && let Ok(value) = HeaderValue::from_str(&request_id)
+        {
+            headers.insert(name, value);
+        }
+        if let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-route")
+            && let Ok(value) = HeaderValue::from_str(&matched_key)
+        {
+            headers.insert(name, value);
+        }
+        if let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-source") {
+            headers.insert(name, HeaderValue::from_static("cache"));
+        }
+        if let Ok(name) = HeaderName::from_bytes(b"x-albert-cache-fingerprint")
+            && let Ok(value) = HeaderValue::from_str(&cached.fingerprint)
+        {
+            headers.insert(name, value);
+        }
+        for (name, value) in cached.headers {
+            if !is_safe_cached_response_header(&name) {
+                continue;
+            }
+            if let Ok(header_name) = HeaderName::from_bytes(name.as_bytes())
+                && let Ok(header_value) = HeaderValue::from_str(&value)
+            {
+                headers.insert(header_name, header_value);
+            }
+        }
+        return (status, headers, body).into_response();
+    }
+
+    let mut chosen_override = override_kind
+        .clone()
+        .or(fallback_override.clone())
+        .or(conditional_kind.clone());
     let error_rate = state.snapshot_error_rate();
     let error_injected = if error_rate > 0.0 && roll_probability(error_rate) {
         chosen_override = Some(MockExampleKind::Error);
@@ -591,6 +709,8 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
         "error-rate"
     } else if status_applied_override {
         "status-override"
+    } else if conditional_kind.is_some() {
+        "conditional"
     } else if override_kind.is_some() || fallback_override.is_some() {
         "override"
     } else {
@@ -641,8 +761,14 @@ pub(crate) async fn mock_handler(State(state): State<AppState>, request: Request
     {
         headers.insert(name, value);
     }
-    if query_selected && let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-source") {
-        headers.insert(name, HeaderValue::from_static("query"));
+    if let Some(source) = match source {
+        "query" => Some("query"),
+        "conditional" => Some("conditional"),
+        _ => None,
+    } && let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-source")
+        && let Ok(value) = HeaderValue::from_str(source)
+    {
+        headers.insert(name, value);
     }
     if latency_ms > 0
         && let Ok(name) = HeaderName::from_bytes(b"x-albert-mock-latency-ms")
@@ -675,6 +801,139 @@ fn render_example(example: &MockExample, override_status: Option<u16>) -> (Statu
         .unwrap_or(fallback);
     let body = serde_json::to_vec(&example.payload).unwrap_or_else(|_| b"{}".to_vec());
     (status, Body::from(body))
+}
+
+fn build_request_snapshot(
+    query: Option<&str>,
+    headers: &[(String, String)],
+    body_text: Option<&str>,
+) -> Option<serde_json::Value> {
+    let mut headers_json = serde_json::Map::new();
+    for (name, value) in headers {
+        if !is_cache_relevant_request_header(name) {
+            continue;
+        }
+        headers_json.insert(name.clone(), serde_json::Value::String(value.clone()));
+    }
+    let body = match body_text {
+        Some(text) if !text.trim().is_empty() => match serde_json::from_str(text) {
+            Ok(parsed) => parsed,
+            Err(_) => serde_json::Value::String(text.to_string()),
+        },
+        _ => serde_json::Value::Null,
+    };
+    Some(serde_json::json!({
+        "query": query.unwrap_or("").trim_start_matches('?'),
+        "headers": headers_json,
+        "body": body,
+    }))
+}
+
+fn select_conditional_example(
+    rules: &[ConditionalExampleRule],
+    snapshot: &serde_json::Value,
+) -> Option<MockExampleKind> {
+    rules
+        .iter()
+        .find(|rule| {
+            !rule.when.is_empty()
+                && rule
+                    .when
+                    .iter()
+                    .all(|condition| condition_matches(condition, snapshot))
+        })
+        .map(|rule| rule.example.clone())
+}
+
+fn condition_matches(condition: &RequestCondition, snapshot: &serde_json::Value) -> bool {
+    match condition {
+        RequestCondition::Query { name, equals } => {
+            query_value(snapshot, name).is_some_and(|value| value == equals.as_str())
+        }
+        RequestCondition::Header { name, equals } => snapshot
+            .get("headers")
+            .and_then(|headers| headers.get(name.to_ascii_lowercase()))
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| value == equals.as_str()),
+        RequestCondition::Body { path, equals } => {
+            body_path_value(snapshot, path).is_some_and(|value| value == equals)
+        }
+    }
+}
+
+fn query_value<'a>(snapshot: &'a serde_json::Value, name: &str) -> Option<&'a str> {
+    let query = snapshot.get("query")?.as_str()?;
+    for pair in query.split('&') {
+        let mut iter = pair.splitn(2, '=');
+        let key = iter.next().unwrap_or("");
+        let value = iter.next().unwrap_or("");
+        if key == name {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn body_path_value<'a>(
+    snapshot: &'a serde_json::Value,
+    path: &str,
+) -> Option<&'a serde_json::Value> {
+    let mut current = snapshot.get("body")?;
+    for raw_segment in path.split('.') {
+        let segment = raw_segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        if let Ok(index) = segment.parse::<usize>() {
+            current = current.as_array()?.get(index)?;
+        } else {
+            current = current.as_object()?.get(segment)?;
+        }
+    }
+    Some(current)
+}
+
+fn is_cache_relevant_request_header(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower.starts_with("sec-") {
+        return false;
+    }
+    !matches!(
+        lower.as_str(),
+        "accept"
+            | "accept-encoding"
+            | "accept-language"
+            | "cache-control"
+            | "connection"
+            | "host"
+            | "origin"
+            | "pragma"
+            | "referer"
+            | "user-agent"
+    )
+}
+
+fn is_safe_cached_response_header(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    !matches!(
+        lower.as_str(),
+        "content-length"
+            | "transfer-encoding"
+            | "connection"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "upgrade"
+            | "set-cookie"
+            | "content-type"
+            | "x-request-id"
+            | "x-albert-mock-route"
+            | "x-albert-mock-kind"
+            | "x-albert-mock-source"
+            | "x-albert-cache-fingerprint"
+    )
 }
 
 pub(crate) fn parse_query_override(query: Option<&str>) -> (Option<MockExampleKind>, bool) {
