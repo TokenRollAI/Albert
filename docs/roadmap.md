@@ -75,10 +75,11 @@
 - Canonical `SchemaNode` 保守支持 array tuple 约束 `prefixItems` 与
   `unevaluatedItems: false`：validator 会先校验固定位置 tuple，再在没有 tail
   `items` schema 时拒绝额外数组项，OpenAI prompt schema hint 同步输出。
-- Tauri 命令 `generate_mock_example` 支持会话级别 API key override、
+- Tauri 命令 `generate_mock_example` 支持会话级别 API key 输入、
   `persist=true` 时 `SqliteStore::replace_mock_example` 同步更新样例与快照。
-- Tauri 命令 `provider_env_status` 与 Providers 面板可区分会话 override、
-  后端环境变量存在、缺失和静态浏览器不可检查状态。
+- Tauri 命令 `provider_env_status` 与 Providers 面板可区分会话 API key、
+  后端环境变量存在、缺失和静态浏览器不可检查状态；用户界面默认直接输入
+  API key，profile 不保存密钥。
 - Tauri 命令 `list_provider_configs` / `save_provider_config` /
   `delete_provider_config` 与 Providers 面板的 Saved profiles 区域打通
   SQLite `provider_configs`，支持保存、载入、复制派生、删除 Provider 配置

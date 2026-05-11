@@ -81,12 +81,12 @@ function renderPane(options: { connected: boolean; apiKeyOverride?: string }) {
 describe("ResponsePane", () => {
   test("does not show API key warning when Tauri runtime is unavailable", () => {
     renderPane({ connected: false });
-    expect(screen.queryByText(/No API key override entered/i)).toBeNull();
+    expect(screen.queryByText(/No API key entered/i)).toBeNull();
   });
 
-  test("shows API key warning only when runtime is connected and no override is present", () => {
+  test("shows API key warning only when runtime is connected and no key is present", () => {
     renderPane({ connected: true });
-    expect(screen.getByText(/No API key override entered/i)).not.toBeNull();
+    expect(screen.getByText(/No API key entered/i)).not.toBeNull();
   });
 
   test("renders persisted mock payload instead of the placeholder fallback", () => {

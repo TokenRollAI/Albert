@@ -87,4 +87,13 @@ describe("RequestPanel auth chip", () => {
       screen.queryByRole("note", { name: /endpoint auth requirement/i })
     ).toBeNull();
   });
+
+  test("shows implemented AI mock guidance", () => {
+    const tab = { ...makeTab(null), inspector: "ai" as const };
+    render(<RequestPanel tab={tab} onSelectInspector={() => {}} />);
+
+    expect(screen.getByText("AI Mock Generation")).toBeTruthy();
+    expect(screen.getByText(/Mock Response panel on the right/i)).toBeTruthy();
+    expect(screen.queryByText(/not implemented yet/i)).toBeNull();
+  });
 });

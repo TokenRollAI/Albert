@@ -135,10 +135,52 @@ code {
 
 .shell__main {
   display: grid;
-  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-w) 6px minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
   border-top: 1px solid var(--border);
+}
+
+.shell__resizer,
+.workbench__resizer {
+  position: relative;
+  z-index: 2;
+  background: var(--bg);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.shell__resizer {
+  border-right: 1px solid var(--border);
+}
+
+.workbench__resizer {
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.shell__resizer::before,
+.workbench__resizer::before {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.shell__resizer:hover::before,
+.shell__resizer:focus-visible::before,
+.workbench__resizer:hover::before,
+.workbench__resizer:focus-visible::before,
+.is-resizing-pane .shell__resizer::before,
+.is-resizing-pane .workbench__resizer::before {
+  background: var(--accent);
+}
+
+.is-resizing-pane {
+  cursor: col-resize;
+  user-select: none;
 }
 
 /* ---------- TopBar ---------- */
@@ -575,9 +617,10 @@ body[data-theme="light"] .btn--primary {
 
 .workbench__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--response-w);
+  grid-template-columns: minmax(0, 1fr) 6px var(--response-w);
   gap: 0;
   min-height: 0;
+  min-width: 0;
 }
 
 .workbench__editor {
@@ -970,9 +1013,11 @@ body[data-theme="light"] .btn--primary {
 
 /* Response pane */
 .response {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   background: var(--bg-surface);
 }
 
@@ -1057,6 +1102,9 @@ body[data-theme="light"] .btn--primary {
 }
 
 .response__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
   overflow: auto;
   padding: 10px 14px 16px;
 }
@@ -1332,6 +1380,9 @@ body[data-theme="light"] .modal__overlay {
   .workbench__grid {
     grid-template-columns: minmax(0, 1fr);
   }
+  .workbench__resizer {
+    display: none;
+  }
   .response {
     border-top: 1px solid var(--border);
   }
@@ -1344,6 +1395,9 @@ body[data-theme="light"] .modal__overlay {
   .shell__main {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(150px, 28vh) minmax(0, 1fr);
+  }
+  .shell__resizer {
+    display: none;
   }
   .sidebar {
     display: grid;
@@ -2706,6 +2760,8 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 .workbench__response .response {
   flex: 1 1 auto;
@@ -3289,6 +3345,7 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
 .response__editor {
   flex: 1;
   width: 100%;
+  height: 100%;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   color: var(--text);
@@ -3296,8 +3353,8 @@ body[data-theme="light"] .jsont--string { color: var(--success); }
   font-size: 12px;
   padding: 10px 12px;
   border-radius: 6px;
-  resize: vertical;
-  min-height: 220px;
+  resize: none;
+  min-height: 0;
   outline: none;
 }
 .response__editor:focus {

@@ -392,9 +392,8 @@ export function ResponsePane({
 
       {missingKey ? (
         <div className="banner banner--warn">
-          <Icon name="info" size={12} /> No API key override entered. Ensure{" "}
-          <code>{provider.api_key_env}</code> is exported where the backend
-          started, or paste a key in the Providers panel.
+          <Icon name="info" size={12} /> No API key entered. Paste a key in
+          the Providers panel before generating AI mocks.
         </div>
       ) : null}
 

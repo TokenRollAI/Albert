@@ -236,7 +236,7 @@
 - `Endpoint Detail`: 请求参数/headers/body/responses/schema/AI mock tabs
 - `ResponsePane`: mock 样例查看、编辑、AI 生成、prompt 预览
 - `Try-it`: 请求构造、发送、响应录制、历史、请求指纹缓存和 AI refresh
-- `Providers`: provider profile、API key override、环境变量状态、连接测试
+- `Providers`: provider profile、session-only API key 输入、连接测试
 - `Mock Server`: runtime、routes、requests、scenarios、chaos、auth/schema/proxy 配置
 
 当前说明：

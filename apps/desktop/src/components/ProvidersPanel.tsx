@@ -281,15 +281,11 @@ export function ProvidersPanel({
 
   const envStatusLabel = !connected
     ? "Tauri required"
-    : envStatus
-      ? envStatus.override_present
-        ? "override active"
-        : envStatus.env_present
-          ? `${envStatus.env_var} found`
-          : envStatus.env_var
-            ? `${envStatus.env_var} missing`
-            : "env var missing"
-      : "checking key source";
+    : envStatus?.usable
+      ? "API key active"
+      : envStatus
+        ? "API key required"
+        : "checking API key";
   const envStatusClass = envStatus?.usable
     ? "provider-env-status provider-env-status--ok"
     : connected && !envStatus
@@ -483,8 +479,7 @@ export function ProvidersPanel({
                         {profile.provider_name}
                       </span>
                       <span className="provider-profiles__meta">
-                        {profileEnvironment(profile)} · {profile.model} ·{" "}
-                        {profile.api_key_env}
+                        {profileEnvironment(profile)} · {profile.model}
                       </span>
                     </button>
                     <button
@@ -649,14 +644,13 @@ export function ProvidersPanel({
                 </>
               ) : null}
               <label className="field">
-                <span className="field__label">API key env var</span>
+                <span className="field__label">API key</span>
                 <input
-                  type="text"
-                  value={draft.api_key_env}
-                  onChange={(event) =>
-                    onUpdateDraft({ api_key_env: event.target.value })
-                  }
-                  spellCheck={false}
+                  type="password"
+                  value={apiKeyOverride}
+                  onChange={(event) => onUpdateApiKey(event.target.value)}
+                  autoComplete="off"
+                  placeholder="Paste API key for this session"
                 />
               </label>
               <div className="provider-generation-controls">
@@ -753,24 +747,10 @@ export function ProvidersPanel({
                   />
                 </label>
               </div>
-              <label className="field">
-                <span className="field__label">
-                  API key override (session only)
-                </span>
-                <input
-                  type="password"
-                  value={apiKeyOverride}
-                  onChange={(event) => onUpdateApiKey(event.target.value)}
-                  autoComplete="off"
-                  placeholder="Paste key to override the env variable"
-                />
-              </label>
             </div>
             <p className="hint">
-              The override stays in memory for this session only. For persistent
-              credentials, export <code>{draft.api_key_env}</code> in the
-              environment where the Tauri backend runs (e.g. via{" "}
-              <code>.env</code>).
+              API keys stay in memory for this session only and are never saved
+              into provider profiles.
             </p>
 
             <div className="row-actions">

@@ -58,7 +58,7 @@
   profile 持久化和 Providers 面板选择，并仅在 OpenAI Responses 请求中下发
   `reasoning.effort`；Chat/Azure Chat 的 reasoning 兼容策略仍待定。
 - Provider 配置是否允许多环境切换：当前支持 Saved profiles、复制派生 profile、
-  session API key override，并已增加 profile 级 `environment` 标签与 Providers
+  session-only API key 输入，并已增加 profile 级 `environment` 标签与 Providers
   面板环境过滤；workspace-scoped provider sets、并发 provider routing 和按
   endpoint/collection 自动选 provider 仍待定。
 - 单 API endpoint 的 prompt mock 已可用：ResponsePane 可预览并生成单 endpoint 的

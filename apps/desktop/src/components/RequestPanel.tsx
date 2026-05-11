@@ -240,11 +240,14 @@ function AiView() {
       <div className="ai-view__card">
         <h4>AI Mock Generation</h4>
         <p>
-          OpenAI-backed mock payload generation arrives in Phase 4. Once wired,
-          this panel will let you describe the scenario, pick a provider, and
-          persist the generated payload as a mock example.
+          Endpoint-level AI mock generation is available from the Mock Response
+          panel on the right. Choose Success, Empty, or Error, preview the
+          prompt, then generate and persist the payload for this API.
         </p>
-        <p className="muted">Not implemented yet.</p>
+        <p className="muted">
+          Configure a provider from the Providers button first. Try-it captures
+          and Import report changes can also be used as generation context.
+        </p>
       </div>
     </div>
   );

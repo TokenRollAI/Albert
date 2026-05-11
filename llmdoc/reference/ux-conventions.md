@@ -134,7 +134,7 @@ counts.
 - Saved profiles can be filtered by environment label. Blank legacy labels are
   grouped as `default`; presets seed `local` for OpenAI-compatible defaults and
   `staging` for Azure examples.
-- API key override remains session-only and is never saved into profiles.
+- API key entry is session-only and is never saved into profiles.
 - Generation controls live in the Active provider form. Temperature is edited
   with a range control plus numeric input, clamped from `0` to `2`, and defaults
   to `0.7`. Max output tokens is a numeric input; blank means "provider

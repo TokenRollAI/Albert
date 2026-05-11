@@ -97,12 +97,12 @@ afterEach(() => {
 });
 
 describe("ProvidersPanel", () => {
-  test("shows backend env status when provider env var is present", async () => {
+  test("shows API key status when a key source is available", async () => {
     mockInvoke();
 
     renderPanel();
 
-    expect(await screen.findByText("OPENAI_API_KEY found")).toBeDefined();
+    expect(await screen.findByText("API key active")).toBeDefined();
     expect(invoke).toHaveBeenCalledWith("provider_env_status", {
       args: {
         provider: draft,
@@ -111,7 +111,7 @@ describe("ProvidersPanel", () => {
     });
   });
 
-  test("refreshes key source status when an API key override is entered", async () => {
+  test("refreshes key status when an API key is entered", async () => {
     vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
       if (command === "list_provider_configs") return Promise.resolve([]);
       if (command === "provider_env_status") {
@@ -124,7 +124,7 @@ describe("ProvidersPanel", () => {
           override_present: !!override,
           usable: !!override,
           message: override
-            ? "Session API key override is active."
+            ? "Session API key is active."
             : "OPENAI_API_KEY is not set in the Tauri backend environment."
         });
       }
@@ -133,8 +133,8 @@ describe("ProvidersPanel", () => {
     const onUpdateApiKey = vi.fn();
     const { rerender } = renderPanel({ onUpdateApiKey });
 
-    expect(await screen.findByText("OPENAI_API_KEY missing")).toBeDefined();
-    fireEvent.change(screen.getByLabelText(/API key override/i), {
+    expect(await screen.findByText("API key required")).toBeDefined();
+    fireEvent.change(screen.getByLabelText("API key"), {
       target: { value: "sk-test" }
     });
     expect(onUpdateApiKey).toHaveBeenCalledWith("sk-test");
@@ -151,7 +151,7 @@ describe("ProvidersPanel", () => {
       />
     );
 
-    expect(await screen.findByText("override active")).toBeDefined();
+    expect(await screen.findByText("API key active")).toBeDefined();
     expect(invoke).toHaveBeenLastCalledWith("provider_env_status", {
       args: {
         provider: draft,
@@ -320,7 +320,7 @@ describe("ProvidersPanel", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByText("AZURE_OPENAI_API_KEY found")).toBeDefined()
+      expect(screen.getByText("API key active")).toBeDefined()
     );
     expect(screen.getByLabelText(/Azure deployment/i)).toBeDefined();
     expect(screen.getByLabelText(/Azure API version/i)).toBeDefined();
@@ -384,7 +384,7 @@ describe("ProvidersPanel", () => {
 
     expect(screen.queryByLabelText(/Azure deployment/i)).toBeNull();
     expect(screen.queryByLabelText(/Azure API version/i)).toBeNull();
-    await waitFor(() => expect(screen.getByText("OPENAI_API_KEY found")).toBeDefined());
+    await waitFor(() => expect(screen.getByText("API key active")).toBeDefined());
 
     fireEvent.change(screen.getByLabelText(/API type/i), {
       target: { value: "openai_compatible" }

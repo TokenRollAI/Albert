@@ -1,5 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent
+} from "react";
 import { CommandPalette, type CommandItem } from "./components/CommandPalette";
 import { EndpointTabs } from "./components/EndpointTabs";
 import { ImportDialog } from "./components/ImportDialog";
@@ -54,8 +62,29 @@ import type {
   SidebarCollection
 } from "./types";
 
+const SIDEBAR_WIDTH_KEY = "albert.layout.sidebarWidth";
+const RESPONSE_WIDTH_KEY = "albert.layout.responseWidth";
+const DEFAULT_SIDEBAR_WIDTH = 268;
+const DEFAULT_RESPONSE_WIDTH = 400;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function loadLayoutWidth(key: string, fallback: number, min: number, max: number) {
+  if (typeof window === "undefined") return fallback;
+  const value = Number(window.localStorage.getItem(key));
+  return Number.isFinite(value) ? clamp(value, min, max) : fallback;
+}
+
 function App() {
   const { theme, toggleTheme } = useTheme();
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    loadLayoutWidth(SIDEBAR_WIDTH_KEY, DEFAULT_SIDEBAR_WIDTH, 220, 560)
+  );
+  const [responseWidth, setResponseWidth] = useState(() =>
+    loadLayoutWidth(RESPONSE_WIDTH_KEY, DEFAULT_RESPONSE_WIDTH, 320, 760)
+  );
 
   const {
     storedCollections,
@@ -205,6 +234,64 @@ function App() {
   );
 
   useKeyboardShortcuts(shortcutBindings);
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    window.localStorage.setItem(RESPONSE_WIDTH_KEY, String(responseWidth));
+  }, [responseWidth]);
+
+  const startSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = sidebarWidth;
+
+      function handleMove(moveEvent: PointerEvent) {
+        setSidebarWidth(
+          clamp(startWidth + moveEvent.clientX - startX, 220, 560)
+        );
+      }
+
+      function handleUp() {
+        document.removeEventListener("pointermove", handleMove);
+        document.removeEventListener("pointerup", handleUp);
+        document.body.classList.remove("is-resizing-pane");
+      }
+
+      document.body.classList.add("is-resizing-pane");
+      document.addEventListener("pointermove", handleMove);
+      document.addEventListener("pointerup", handleUp, { once: true });
+    },
+    [sidebarWidth]
+  );
+
+  const startResponseResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = responseWidth;
+
+      function handleMove(moveEvent: PointerEvent) {
+        setResponseWidth(
+          clamp(startWidth - (moveEvent.clientX - startX), 320, 760)
+        );
+      }
+
+      function handleUp() {
+        document.removeEventListener("pointermove", handleMove);
+        document.removeEventListener("pointerup", handleUp);
+        document.body.classList.remove("is-resizing-pane");
+      }
+
+      document.body.classList.add("is-resizing-pane");
+      document.addEventListener("pointermove", handleMove);
+      document.addEventListener("pointerup", handleUp, { once: true });
+    },
+    [responseWidth]
+  );
 
   const sidebarCollections: SidebarCollection[] = useMemo(() => {
     const result: SidebarCollection[] = [];
@@ -457,7 +544,15 @@ function App() {
         gatewayBind={mockGateway.status.bind_address ?? null}
       />
 
-      <div className="shell__main">
+      <div
+        className="shell__main"
+        style={
+          {
+            "--sidebar-w": `${sidebarWidth}px`,
+            "--response-w": `${responseWidth}px`
+          } as CSSProperties
+        }
+      >
         <Sidebar
           ref={sidebarRef}
           collections={sidebarCollections}
@@ -473,6 +568,14 @@ function App() {
           onDeleteCollection={collectionActions.remove}
           onRenameCollection={collectionActions.rename}
           busy={refreshBusy}
+        />
+        <div
+          className="shell__resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize collections sidebar"
+          title="Drag to resize collections"
+          onPointerDown={startSidebarResize}
         />
 
         <main className="workbench">
@@ -503,6 +606,14 @@ function App() {
                   onSelectInspector={(key) => setInspector(activeTab.id, key)}
                 />
               </div>
+              <div
+                className="workbench__resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize mock response panel"
+                title="Drag to resize mock response"
+                onPointerDown={startResponseResize}
+              />
               <div className="workbench__response">
                 <ResponsePane
                   tab={activeTab}
